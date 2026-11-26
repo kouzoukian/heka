@@ -44,6 +44,7 @@ pub const GREEN: &str = "Green";
 pub const PINK: &str = "Pink";
 pub const ORANGE: &str = "Orange";
 pub const WHITE: &str = "White";
+pub const RAINBOW: &str = "Rainbow";
 pub const CUSTOM_COLOUR: &str = "Custom colour";
 pub const HUE: &str = "Hue";
 pub const SATURATION: &str = "Saturation";

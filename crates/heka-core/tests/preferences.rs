@@ -1,5 +1,7 @@
-use heka_core::feedback::{Feedback, Lightbar, PlayerLights, Rumble};
-use heka_core::preferences::{Preferences, RumbleStrength};
+use std::time::Duration;
+
+use heka_core::feedback::{Feedback, Lightbar, PlayerLights, RAINBOW_PERIOD, Rumble};
+use heka_core::preferences::{LightbarChoice, Preferences, RumbleStrength};
 
 const PINK: Lightbar = Lightbar {
     red: 255,
@@ -30,7 +32,7 @@ fn the_default_preferences_change_nothing() {
             lightbar,
             player_lights: None,
         };
-        assert_eq!(Preferences::default().apply(asked), asked);
+        assert_eq!(Preferences::default().apply(asked, Duration::ZERO), asked);
     }
 }
 
@@ -57,10 +59,10 @@ fn rumble_strength_scales_both_motors_to_the_nearest_step() {
 #[test]
 fn the_chosen_colour_shows_while_no_game_has_set_one() {
     let preferences = Preferences {
-        lightbar: Some(PINK),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         ..Preferences::default()
     };
-    let shown = |asked| preferences.apply(coloured(asked)).lightbar;
+    let shown = |asked| preferences.apply(coloured(asked), Duration::ZERO).lightbar;
 
     assert_eq!(shown(None), Some(PINK));
     assert_eq!(shown(Some(Lightbar::DARK)), Some(PINK));
@@ -74,7 +76,39 @@ fn the_player_lights_are_the_players_choice() {
         ..Preferences::default()
     };
     assert_eq!(
-        preferences.apply(Feedback::OFF).player_lights,
+        preferences
+            .apply(Feedback::OFF, Duration::ZERO)
+            .player_lights,
         Some(PlayerLights::Three)
     );
+}
+
+#[test]
+fn the_rainbow_goes_round_the_colours_and_starts_again() {
+    let at = |sixths| {
+        let colour = Lightbar::rainbow(RAINBOW_PERIOD * sixths / 6);
+        (colour.red, colour.green, colour.blue)
+    };
+
+    assert_eq!(at(0), (255, 0, 0));
+    assert_eq!(at(1), (255, 255, 0));
+    assert_eq!(at(2), (0, 255, 0));
+    assert_eq!(at(3), (0, 255, 255));
+    assert_eq!(at(4), (0, 0, 255));
+    assert_eq!(at(5), (255, 0, 255));
+    assert_eq!(at(6), at(0));
+}
+
+#[test]
+fn the_rainbow_shows_while_no_game_has_set_a_colour() {
+    let preferences = Preferences {
+        lightbar: Some(LightbarChoice::RAINBOW),
+        ..Preferences::default()
+    };
+    let later = RAINBOW_PERIOD / 3;
+    let shown = |asked| preferences.apply(coloured(asked), later).lightbar;
+
+    assert_eq!(shown(None), Some(Lightbar::rainbow(later)));
+    assert_eq!(shown(Some(Lightbar::DARK)), Some(Lightbar::rainbow(later)));
+    assert_eq!(shown(Some(GREEN)), Some(GREEN));
 }

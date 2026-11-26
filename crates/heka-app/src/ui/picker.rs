@@ -37,6 +37,13 @@ pub fn swatch(colour: Lightbar) -> Div {
     div().size(px(10.)).rounded_full().bg(drawn(colour))
 }
 
+pub fn rainbow_swatch() -> Div {
+    div().flex().size(px(10.)).children((0..5u8).map(|stripe| {
+        let hue = f32::from(stripe) / 5.;
+        div().flex_1().h_full().bg(hsla(hue, 1., 0.5, 1.))
+    }))
+}
+
 pub fn picker(state: &Entity<ColorPickerState>, custom: Option<Lightbar>, cx: &App) -> Popover {
     let theme = cx.theme();
     let trigger = Button::new("custom-colour")

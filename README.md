@@ -113,10 +113,11 @@ stays, with everything released, and carries on when the Controller returns.
 - **Name**, shown in place of the Controller's model, up to 24 characters.
 - **Rumble**, how strongly the Controller rumbles when a game asks: off, 25%, 50%,
   75% or 100%.
-- **Light bar**, a colour of your own: one of six, or any other from the picker, typed
-  as a hex value or set with the hue, saturation and lightness sliders. A colour set by
-  a game wins, so with the PS4 Output Type yours shows while the game sets none.
-  **Default** leaves the light bar alone.
+- **Light bar**, a colour of your own: one of six, any other from the picker (typed as
+  a hex value or set with the hue, saturation and lightness sliders), or **Rainbow**,
+  which goes round all the colours every 6 seconds. A colour set by a game wins, so with
+  the PS4 Output Type yours shows while the game sets none. **Default** leaves the light
+  bar alone.
 - **Player lights** (DualSense only), the pattern of player 1 to 4 on the white lights
   under the touchpad. **Default** leaves them alone.
 - **Hide from games**, on unless you turn it off. See

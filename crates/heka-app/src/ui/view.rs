@@ -13,6 +13,7 @@ use gpui_component::{ActiveTheme, Root, TitleBar};
 use gpui_kit_assets::IconName;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
+use heka_core::preferences::LightbarChoice;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 
 use crate::ui::detail::{Showing, ToggleSettings};
@@ -168,7 +169,7 @@ impl MainView {
             .find(|entry| Some(entry.mac) == self.filled);
         if let Some(entry) = entry {
             let mut preferences = entry.preferences;
-            preferences.lightbar = Some(colour);
+            preferences.lightbar = Some(LightbarChoice::Colour(colour));
             self.backend
                 .command(Command::SetPreferences(entry.mac, preferences));
         }
@@ -184,7 +185,10 @@ impl MainView {
         let Some(entry) = entry else {
             return;
         };
-        let chosen = entry.preferences.lightbar.unwrap_or(Lightbar::DEFAULT);
+        let chosen = match entry.preferences.lightbar {
+            Some(LightbarChoice::Colour(colour)) => colour,
+            _ => Lightbar::DEFAULT,
+        };
         if another {
             let nickname = entry.nickname.clone().unwrap_or_default();
             let model = entry.name;

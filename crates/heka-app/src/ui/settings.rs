@@ -7,13 +7,13 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Sizable, Theme};
 use heka_core::feedback::{Lightbar, PlayerLights};
-use heka_core::preferences::RumbleStrength;
+use heka_core::preferences::{LightbarChoice, RumbleStrength};
 
 use crate::text;
 use crate::ui::banners::{clamped, strip};
 use crate::ui::detail::row;
 use crate::ui::model::{ControllerEntry, SendCommand};
-use crate::ui::picker::{picker, swatch};
+use crate::ui::picker::{picker, rainbow_swatch, swatch};
 use crate::ui::segmented::{Segment, segmented};
 
 const NAME_WIDTH: f32 = 220.;
@@ -124,16 +124,25 @@ fn lightbar_switch(
             id(entry, "lightbar", name),
             name,
             swatch(light),
-            chosen == Some(light),
-            entry.prefer(|preferences| preferences.lightbar = Some(light)),
+            chosen == Some(LightbarChoice::Colour(light)),
+            entry.prefer(|preferences| preferences.lightbar = Some(LightbarChoice::Colour(light))),
         )
     });
-    let custom = chosen.filter(|chosen| COLOURS.iter().all(|(_, light)| light != chosen));
-    segmented(std::iter::once(default).chain(colours), send, cx.theme()).child(picker(
-        colour_picker,
-        custom,
-        cx,
-    ))
+    let rainbow = Segment::picture(
+        id(entry, "lightbar", text::RAINBOW),
+        text::RAINBOW,
+        rainbow_swatch(),
+        chosen == Some(LightbarChoice::RAINBOW),
+        entry.prefer(|preferences| preferences.lightbar = Some(LightbarChoice::RAINBOW)),
+    );
+    let custom = match chosen {
+        Some(LightbarChoice::Colour(colour)) => {
+            Some(colour).filter(|colour| COLOURS.iter().all(|(_, light)| light != colour))
+        }
+        _ => None,
+    };
+    let segments = std::iter::once(default).chain(colours).chain([rainbow]);
+    segmented(segments, send, cx.theme()).child(picker(colour_picker, custom, cx))
 }
 
 fn player_lights_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {

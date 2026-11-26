@@ -13,6 +13,7 @@ Per Controller, keyed by MAC address, heka remembers Stopped, the Output Type, t
 The defaults keep full rumble, leave the lights to the Controller and Hide it.
 
 - Rumble strength is a percentage, rounded per motor. A running Bridge follows changes through shared `LivePreferences`.
+- The player's lightbar choice is a colour or an effect, saved as a colour object or a name (`"rainbow"`). An effect moves in 50 ms steps, so it adds at most 20 output reports a second, and the Feedback thread draws it from the time since its Bridge started.
 - A colour a game set wins over the player's. A dark lightbar counts as no colour, because a PS4 Virtual Controller reports one with every rumble, also for games that never set a colour.
 - `Feedback` with no lightbar leaves the Controller's as it is (an Xbox Virtual Controller has none). Player lights are only ever chosen by the player, never by a game; a DualShock 4 has none.
 - Rumble in `Feedback` is in Xbox terms: 0 to 255, large low-frequency (left) and small high-frequency (right) motors.

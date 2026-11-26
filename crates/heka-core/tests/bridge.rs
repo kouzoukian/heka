@@ -14,7 +14,7 @@ use heka_core::feedback::{
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
 };
-use heka_core::preferences::{LivePreferences, Preferences, RumbleStrength};
+use heka_core::preferences::{LightbarChoice, LivePreferences, Preferences, RumbleStrength};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::virtual_controller::{OutputType, VirtualController, VirtualError};
 
@@ -593,7 +593,7 @@ fn chosen_lights_show_as_soon_as_the_bridge_starts() {
         _steps,
         ..
     } = following(Preferences {
-        lightbar: Some(PINK),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         player_lights: Some(PlayerLights::Two),
         ..Preferences::default()
     });
@@ -608,6 +608,26 @@ fn chosen_lights_show_as_soon_as_the_bridge_starts() {
         })
     );
     bridge.stop();
+}
+
+#[test]
+fn a_rainbow_keeps_changing_the_lightbar_with_nothing_from_the_game() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        lightbar: Some(LightbarChoice::RAINBOW),
+        ..Preferences::default()
+    });
+    wait_until(|| written.lock().unwrap().reports.len() >= 3);
+    bridge.stop();
+
+    let written = written.lock().unwrap();
+    assert_ne!(written.reports[0], written.reports[1]);
+    assert_ne!(written.reports[1], written.reports[2]);
 }
 
 #[test]
@@ -647,7 +667,7 @@ fn a_running_bridge_follows_changed_preferences() {
 
     preferences.set(Preferences {
         rumble: RumbleStrength::OFF,
-        lightbar: Some(PINK),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         ..Preferences::default()
     });
     wait_until(|| written.lock().unwrap().reports.len() == 2);
@@ -671,7 +691,7 @@ fn lights_no_longer_chosen_go_back_to_how_they_started() {
         game: _game,
         _steps,
     } = following(Preferences {
-        lightbar: Some(PINK),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         player_lights: Some(PlayerLights::One),
         ..Preferences::default()
     });

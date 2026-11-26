@@ -1,4 +1,5 @@
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,19 +34,50 @@ impl Default for RumbleStrength {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LightbarChoice {
+    Colour(Lightbar),
+    Effect(LightbarEffect),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LightbarEffect {
+    Rainbow,
+}
+
+impl LightbarChoice {
+    pub const RAINBOW: Self = Self::Effect(LightbarEffect::Rainbow);
+
+    pub fn colour(self, elapsed: Duration) -> Lightbar {
+        match self {
+            Self::Colour(colour) => colour,
+            Self::Effect(LightbarEffect::Rainbow) => Lightbar::rainbow(elapsed),
+        }
+    }
+
+    pub fn moves(self) -> bool {
+        matches!(self, Self::Effect(_))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub rumble: RumbleStrength,
-    pub lightbar: Option<Lightbar>,
+    pub lightbar: Option<LightbarChoice>,
     pub player_lights: Option<PlayerLights>,
     pub hide: bool,
 }
 
 impl Preferences {
-    pub fn apply(&self, asked: Feedback) -> Feedback {
+    pub fn apply(&self, asked: Feedback, elapsed: Duration) -> Feedback {
         let lightbar = match asked.lightbar {
             Some(colour) if colour != Lightbar::DARK => Some(colour),
-            dark_or_none => self.lightbar.or(dark_or_none),
+            dark_or_none => self
+                .lightbar
+                .map(|choice| choice.colour(elapsed))
+                .or(dark_or_none),
         };
         Feedback {
             rumble: self.rumble.scale(asked.rumble),

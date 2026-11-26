@@ -2,11 +2,11 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights};
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
-use crate::preferences::LivePreferences;
+use crate::preferences::{LightbarChoice, LivePreferences};
 use crate::state::ControllerState;
 use crate::virtual_controller::{VirtualController, VirtualError};
 
@@ -301,13 +301,14 @@ fn run_feedback(
         writer,
         shown: Feedback::OFF,
     };
+    let started = Instant::now();
     let mut applied = preferences.get();
-    output.show(applied.apply(asked));
+    output.show(applied.apply(asked, started.elapsed()));
     while !stop.load(Ordering::Relaxed) {
         let event = source.next(FEEDBACK_POLL);
         let chosen = preferences.get();
         if chosen != applied {
-            let mut next = chosen.apply(asked);
+            let mut next = chosen.apply(asked, started.elapsed());
             if applied.lightbar.is_some() {
                 next.lightbar = next.lightbar.or(Some(Lightbar::DEFAULT));
             }
@@ -320,7 +321,10 @@ fn run_feedback(
         match event {
             FeedbackEvent::Feedback(feedback) => {
                 asked = feedback;
-                output.show(applied.apply(feedback));
+                output.show(applied.apply(feedback, started.elapsed()));
+            }
+            FeedbackEvent::Timeout if applied.lightbar.is_some_and(LightbarChoice::moves) => {
+                output.show(applied.apply(asked, started.elapsed()));
             }
             FeedbackEvent::Timeout => {}
             FeedbackEvent::Closed => break,

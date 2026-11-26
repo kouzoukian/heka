@@ -14,7 +14,7 @@ use heka_core::link::{
     ReportFormat,
 };
 use heka_core::mac::MacAddress;
-use heka_core::preferences::Preferences;
+use heka_core::preferences::{LightbarChoice, Preferences};
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
@@ -680,7 +680,7 @@ const PINK: Lightbar = Lightbar {
 
 fn pink() -> Preferences {
     Preferences {
-        lightbar: Some(PINK),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         ..Preferences::default()
     }
 }

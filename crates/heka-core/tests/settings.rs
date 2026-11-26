@@ -1,6 +1,6 @@
 use heka_core::feedback::{Lightbar, PlayerLights};
 use heka_core::mac::MacAddress;
-use heka_core::preferences::{Preferences, RumbleStrength};
+use heka_core::preferences::{LightbarChoice, Preferences, RumbleStrength};
 use heka_core::settings::{ControllerSettings, MAX_NICKNAME_CHARS, Settings};
 use heka_core::virtual_controller::OutputType;
 
@@ -84,11 +84,11 @@ fn a_nickname_and_preferences_survive_a_save_and_load() {
         MAC,
         Preferences {
             rumble: RumbleStrength::percent(25),
-            lightbar: Some(Lightbar {
+            lightbar: Some(LightbarChoice::Colour(Lightbar {
                 red: 1,
                 green: 2,
                 blue: 3,
-            }),
+            })),
             player_lights: Some(PlayerLights::Four),
             hide: false,
         },
@@ -109,6 +109,15 @@ fn preferences_are_written_beside_the_other_fields() {
     let controller = Settings::load(Some(text)).controller(MAC);
 
     assert!(controller.stopped);
+    let saved = Lightbar {
+        red: 9,
+        green: 8,
+        blue: 7,
+    };
+    assert_eq!(
+        controller.preferences.lightbar,
+        Some(LightbarChoice::Colour(saved))
+    );
     assert_eq!(controller.nickname.as_deref(), Some("Sofa"));
     assert_eq!(controller.preferences.rumble, RumbleStrength::percent(50));
     assert_eq!(
@@ -116,6 +125,22 @@ fn preferences_are_written_beside_the_other_fields() {
         Some(PlayerLights::Two)
     );
     assert!(!controller.preferences.hide);
+}
+
+#[test]
+fn a_rainbow_lightbar_survives_a_save_and_load() {
+    let mut settings = Settings::default();
+    settings.set_preferences(
+        MAC,
+        Preferences {
+            lightbar: Some(LightbarChoice::RAINBOW),
+            ..Preferences::default()
+        },
+    );
+
+    let text = settings.to_json();
+    assert!(text.contains(r#""lightbar": "rainbow""#));
+    assert_eq!(Settings::load(Some(&text)), settings);
 }
 
 #[test]

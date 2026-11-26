@@ -30,7 +30,28 @@ impl Lightbar {
         green: 0,
         blue: 128,
     };
+
+    pub fn rainbow(elapsed: Duration) -> Self {
+        let into = elapsed.as_millis() / RAINBOW_STEP_MS * RAINBOW_STEP_MS;
+        let period = RAINBOW_PERIOD.as_millis();
+        let hue = (into % period * HUE_SECTORS * 255 / period) as u16;
+        let rising = (hue % 255) as u8;
+        let falling = 255 - rising;
+        let (red, green, blue) = match hue / 255 {
+            0 => (255, rising, 0),
+            1 => (falling, 255, 0),
+            2 => (0, 255, rising),
+            3 => (0, falling, 255),
+            4 => (rising, 0, 255),
+            _ => (255, 0, falling),
+        };
+        Self { red, green, blue }
+    }
 }
+
+pub const RAINBOW_PERIOD: Duration = Duration::from_secs(6);
+const RAINBOW_STEP_MS: u128 = 50;
+const HUE_SECTORS: u128 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
