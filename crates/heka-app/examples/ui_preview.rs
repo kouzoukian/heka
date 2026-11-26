@@ -40,6 +40,7 @@ impl Fake {
         let card = |last: u8, state, active_link, battery, output_type| CardModel {
             mac: MacAddress([0x02, 0, 0, 0, 0, last]),
             name: text::DUALSENSE,
+            experimental: false,
             active_link,
             battery,
             output_type,
@@ -79,6 +80,8 @@ impl Fake {
                 OutputType::Xbox,
             ),
         ];
+        cards[2].name = text::DUALSHOCK4;
+        cards[2].experimental = true;
         cards[3].error = Some("made-up error for the preview".into());
         if missing {
             // Without ViGEmBus nothing is Bridged, but input still shows.

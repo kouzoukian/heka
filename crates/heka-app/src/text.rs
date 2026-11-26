@@ -4,12 +4,16 @@
 //! and are shown as they arrive.
 
 use heka_core::lifecycle::MAX_BRIDGES;
+use heka_core::link::ControllerModel;
 use heka_core::state::{Battery, Charge};
 
 pub const APP_NAME: &str = "heka";
 
 // Controller cards.
 pub const DUALSENSE: &str = "DualSense";
+pub const DUALSHOCK4: &str = "DualShock 4";
+/// On a DualShock 4's card: heka's support has not been tried on one.
+pub const EXPERIMENTAL: &str = "Experimental support";
 pub const BRIDGED: &str = "Bridged";
 pub const STOPPED: &str = "Stopped";
 pub const NOT_BRIDGED: &str = "Not Bridged";
@@ -24,6 +28,14 @@ pub const OUTPUT_TYPE: &str = "Output";
 pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
 pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Controller.";
+
+/// A Controller's name on its card.
+pub fn controller(model: ControllerModel) -> &'static str {
+    match model {
+        ControllerModel::DualSense => DUALSENSE,
+        ControllerModel::DualShock4 => DUALSHOCK4,
+    }
+}
 
 pub fn held(seconds_left: u64) -> String {
     format!("Held, {seconds_left} s left")
@@ -68,7 +80,8 @@ pub const TRIANGLE_SYMBOL: &str = "△";
 // Empty window.
 pub const STARTING: &str = "Looking for Controllers";
 pub const NO_CONTROLLER: &str = "No Controller connected";
-pub const CONNECT_HINT: &str = "Connect a DualSense with a USB cable or over Bluetooth.";
+pub const CONNECT_HINT: &str =
+    "Connect a DualSense or DualShock 4 (experimental) with a USB cable or over Bluetooth.";
 
 // Tray menu.
 pub const TRAY_OPEN: &str = "Open heka";

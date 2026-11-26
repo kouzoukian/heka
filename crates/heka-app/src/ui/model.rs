@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use heka_core::lifecycle::Phase;
-use heka_core::link::LinkKind;
+use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::setup::Missing;
 use heka_core::state::Battery;
@@ -110,6 +110,8 @@ pub enum CardState {
 pub struct CardModel {
     pub mac: MacAddress,
     pub name: &'static str,
+    /// heka's support for this kind of Controller is experimental.
+    pub experimental: bool,
     /// `None` when the Controller has no Link.
     pub active_link: Option<LinkKind>,
     /// As the Controller last reported it, `None` while heka reads no input.
@@ -130,6 +132,7 @@ impl CardModel {
         // Taken apart so that a new field cannot go unnoticed here.
         let ControllerView {
             mac,
+            model,
             phase,
             output_type,
             active_link,
@@ -147,7 +150,8 @@ impl CardModel {
         let input = live.latest();
         Self {
             mac: *mac,
-            name: text::DUALSENSE,
+            name: text::controller(*model),
+            experimental: *model == ControllerModel::DualShock4,
             active_link: *active_link,
             battery: input.and_then(|input| input.battery),
             output_type: *output_type,
