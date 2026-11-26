@@ -13,19 +13,21 @@ use heka_core::virtual_controller::OutputType;
 use crate::log::Recent;
 use crate::text;
 use crate::ui::about::about;
+use crate::ui::app_settings::app_settings;
 use crate::ui::assets::{battery_icon, link_icon};
 use crate::ui::banners::{clamped, notice_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
 use crate::ui::log;
 use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
-use crate::ui::model::{Command, ControllerEntry, EntryState, Screen, SendCommand};
+use crate::ui::model::{AppEntry, Command, ControllerEntry, EntryState, Screen, SendCommand};
 use crate::ui::panel::{entry_color, faint};
 use crate::ui::segmented::{Segment, segmented};
 use crate::ui::settings::{Fields, settings};
 
 pub enum Showing<'a> {
     Live,
-    Settings(Fields<'a>),
+    ControllerSettings(Fields<'a>),
+    AppSettings(AppEntry),
     Log(&'a Recent),
     About,
 }
@@ -41,9 +43,9 @@ pub fn pane(
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
-    let in_settings = matches!(showing, Showing::Settings(_));
+    let in_settings = matches!(showing, Showing::ControllerSettings(_));
     let tabs = match &showing {
-        Showing::Live | Showing::Settings(_) => tab_strip(
+        Showing::Live | Showing::ControllerSettings(_) => tab_strip(
             entry.map(|entry| controller_tab(entry, theme)),
             entry.into_iter().flat_map(|entry| {
                 [
@@ -51,6 +53,11 @@ pub fn pane(
                     toggle(entry, send),
                 ]
             }),
+            theme,
+        ),
+        Showing::AppSettings(_) => tab_strip(
+            Some(page_tab(IconName::Settings, text::APP_SETTINGS, theme)),
+            [],
             theme,
         ),
         Showing::Log(recent) => tab_strip(
@@ -77,12 +84,15 @@ pub fn pane(
     let body = match (entry, showing) {
         (_, Showing::Log(recent)) => log::entries(recent, cx).into_any_element(),
         (_, Showing::About) => scrolling().child(about(cx)).into_any_element(),
+        (_, Showing::AppSettings(app)) => scrolling()
+            .child(app_settings(app, send, cx))
+            .into_any_element(),
         (Some(entry), Showing::Live) => controller(scrolling())
             .child(properties(entry, send, cx))
             .children(entry.detail().map(|detail| note(entry, detail, cx)))
             .child(drawing(entry.output_type, entry.pad, cx))
             .into_any_element(),
-        (Some(entry), Showing::Settings(fields)) => controller(scrolling())
+        (Some(entry), Showing::ControllerSettings(fields)) => controller(scrolling())
             .child(settings(entry, fields, send, cx))
             .into_any_element(),
         (None, _) => controller(scrolling())
@@ -175,7 +185,11 @@ pub(super) fn selected_button(button: Button, selected: bool, theme: &Theme) -> 
 
 fn settings_button(in_settings: bool, toggle: &ToggleSettings, theme: &Theme) -> Button {
     let toggle = Rc::clone(toggle);
-    let button = tool_button("settings", IconName::Settings, text::SETTINGS);
+    let button = tool_button(
+        "controller-settings",
+        IconName::SlidersHorizontal,
+        text::CONTROLLER_SETTINGS,
+    );
     selected_button(button, in_settings, theme).on_click(move |_, window, cx| toggle(window, cx))
 }
 

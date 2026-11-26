@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app_settings::AppSettings;
 use crate::mac::MacAddress;
 use crate::preferences::Preferences;
 use crate::virtual_controller::OutputType;
@@ -22,6 +23,7 @@ pub struct ControllerSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Settings {
+    app: AppSettings,
     controllers: BTreeMap<MacAddress, ControllerSettings>,
 }
 
@@ -31,11 +33,11 @@ impl Settings {
         else {
             return Self::default();
         };
-        let Some(Value::Object(entries)) = root.get("controllers") else {
-            return Self::default();
-        };
-        let controllers = entries
-            .iter()
+        let controllers = root
+            .get("controllers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
             .filter_map(|(mac, entry)| {
                 let mac = mac.parse().ok()?;
                 let mut entry = ControllerSettings::deserialize(entry).ok()?;
@@ -43,11 +45,26 @@ impl Settings {
                 Some((mac, entry))
             })
             .collect();
-        Self { controllers }
+        Self {
+            app: AppSettings::load(root.get("app")),
+            controllers,
+        }
+    }
+
+    pub fn can_read(text: &str) -> bool {
+        matches!(serde_json::from_str(text), Ok(Value::Object(_)))
     }
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("settings always serialize")
+    }
+
+    pub fn app(&self) -> &AppSettings {
+        &self.app
+    }
+
+    pub fn set_app(&mut self, app: AppSettings) {
+        self.app = app;
     }
 
     pub fn controller(&self, mac: MacAddress) -> ControllerSettings {

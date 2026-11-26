@@ -69,24 +69,28 @@ pub fn setup_banners(missing: &[Missing], send: &SendCommand, cx: &App) -> Optio
                 strip("check-drivers-strip", 1, theme)
                     .child(clamped(text::AFTER_INSTALLING.into()))
                     .child(
-                        Button::new("check-drivers")
-                            .outline()
-                            .h(CONTROL)
-                            .px(GAP)
-                            .accessibility_label(text::CHECK_AGAIN)
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(GAP)
-                                    .text_size(SMALL_TEXT)
-                                    .child(icon(IconName::RefreshCw))
-                                    .child(text::CHECK_AGAIN),
-                            )
+                        text_button("check-drivers", IconName::RefreshCw, text::CHECK_AGAIN)
                             .on_click(move |_, _, _| send(Command::CheckDrivers)),
                     ),
             ),
     )
+}
+
+pub fn text_button(id: &'static str, name: IconName, words: &'static str) -> Button {
+    Button::new(id)
+        .outline()
+        .h(CONTROL)
+        .px(GAP)
+        .accessibility_label(words)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(GAP)
+                .text_size(SMALL_TEXT)
+                .child(icon(name))
+                .child(words),
+        )
 }
 
 fn driver_banner(missing: &Missing, cx: &App) -> Stateful<Div> {

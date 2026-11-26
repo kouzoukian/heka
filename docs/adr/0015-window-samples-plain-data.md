@@ -12,10 +12,10 @@
 
 ## View state
 
-The view keeps what only the window knows: the selected Controller, which page the pane shows (the Controller, its settings, the log or About), and what the settings' fields hold.
+The view keeps what only the window knows: the selected Controller, which page the pane shows (the Controller, its settings, the app settings, the log or About), and what the settings' fields hold.
 
 - Selection starts on the first Controller and follows it wherever it moves; when it leaves, the one taking its place is shown.
-- The log and About belong to no Controller: no panel row is marked while they show, and choosing one returns to it.
+- The app settings, the log and About belong to no Controller: no panel row is marked while they show, and choosing one returns to it.
 - The name field is filled only when the settings show another Controller, leaving typing alone. The name is sent as it is typed, so closing the window loses none.
 - The colour picker also follows the lightbar switch while closed. Only the player's changes are sent. The Controller follows a dragged colour, and a typed one once the whole hex value is there (#50). Confirming the colour the picker opened with chooses it too. Every choice is sent, even one the last sample already shows, since that sample may be older than the previous command.
 - Ignoring a failed update of the weak view handle is correct: the view is gone only while its window closes.

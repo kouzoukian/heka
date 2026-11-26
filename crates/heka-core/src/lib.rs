@@ -1,3 +1,4 @@
+pub mod app_settings;
 pub mod autostart;
 pub mod bridge;
 pub mod calibration;
@@ -21,4 +22,5 @@ pub mod supervisor;
 pub mod threads;
 pub mod virtual_controller;
 pub mod watch;
+pub mod window_placement;
 pub mod xbox;

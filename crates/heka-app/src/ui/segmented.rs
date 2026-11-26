@@ -7,6 +7,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Selectable, Theme};
 
+use crate::text;
 use crate::ui::metrics::{CONTROL, GAP, SMALL_TEXT};
 use crate::ui::model::{Command, SendCommand};
 
@@ -53,6 +54,24 @@ impl Segment {
             command,
         }
     }
+}
+
+pub fn on_off(
+    id: impl std::fmt::Display,
+    on: bool,
+    choose: impl Fn(bool) -> Command,
+    send: &SendCommand,
+    theme: &Theme,
+) -> Div {
+    let segments = [(text::ON, true), (text::OFF, false)].map(|(words, value)| {
+        Segment::words(
+            format!("{id}-{words}"),
+            words,
+            on == value,
+            Some(choose(value)),
+        )
+    });
+    segmented(segments, send, theme)
 }
 
 pub fn segmented(

@@ -1,26 +1,41 @@
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heka_app::{log, text};
 use heka_core::settings::Settings;
 
-fn path() -> Option<PathBuf> {
+pub fn folder() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("heka").join("settings.json"))
+    Some(PathBuf::from(appdata).join("heka"))
 }
 
-pub fn load() -> Settings {
+fn path() -> Option<PathBuf> {
+    Some(folder()?.join("settings.json"))
+}
+
+pub fn load() -> (Settings, Option<String>) {
     let Some(path) = path() else {
-        return Settings::default();
+        return (Settings::default(), None);
     };
-    match fs::read_to_string(&path) {
-        Ok(text) => Settings::load(Some(&text)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Settings::load(None),
+    match fs::read(&path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) if Settings::can_read(&text) => (Settings::load(Some(&text)), None),
+            _ => (Settings::load(None), Some(set_aside(&path))),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => (Settings::load(None), None),
         Err(error) => {
-            log::line(&text::log::cannot_read_settings(&path, &error.to_string()));
-            Settings::load(None)
+            let unreadable = text::log::cannot_read_settings(&path, &error.to_string());
+            (Settings::load(None), Some(unreadable))
         }
+    }
+}
+
+fn set_aside(path: &Path) -> String {
+    let copy = path.with_extension("json.unreadable");
+    match fs::copy(path, &copy) {
+        Ok(_) => text::log::settings_set_aside(path, &copy),
+        Err(error) => text::log::cannot_read_settings(path, &error.to_string()),
     }
 }
 

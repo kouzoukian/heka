@@ -19,7 +19,7 @@
 
 ## Start with Windows
 
-The setting is the Run entry itself (`HKCU\...\Run`, value `heka`), so nothing else has to be kept in step: heka starts with Windows exactly when the entry is there. It runs heka with `--tray`. heka is a portable zip that may be moved, so at start an existing entry is pointed at the running copy; this never turns the setting on. An entry that cannot be read counts as off, and removing a missing one succeeds. The byte count the registry returns includes the terminating null. The registry code is never called by tests.
+The setting is the Run entry itself (`HKCU\...\Run`, value `heka`), so nothing else has to be kept in step: heka starts with Windows exactly when the entry is there. The window reads it with every sample and the tray menu's check follows it with every poll, so neither holds a copy. It runs heka with `--tray`. heka is a portable zip that may be moved, so at start an existing entry is pointed at the running copy; this never turns the setting on. An entry that cannot be read counts as off, and removing a missing one succeeds. The byte count the registry returns includes the terminating null. The registry code is never called by tests.
 
 ## One copy per session
 
@@ -28,7 +28,9 @@ The first copy creates the auto-reset event `Local\heka.show-window` and waits o
 ## Tray and process lifetime
 
 - Release builds open no console window; debug builds keep it for messages.
-- Closing the window leaves heka in the tray; only Quit ends it, removing every Virtual Controller and restoring every Hidden Controller first. If the tray icon cannot be added, for example before the taskbar runs, closing the window quits and the window is shown.
+- Closing the window leaves heka in the tray, unless the player chose that it quits. Quitting, from the tray menu or by closing the window, removes every Virtual Controller and restores every Hidden Controller first. Either way it goes through the tray's task, so the tray icon is gone first.
+- heka opens no window when started with `--tray`, or when the player chose to start in the tray. A second launch still opens it.
+- If the tray icon cannot be added, for example before the taskbar runs, closing the window quits and the window is shown.
 - GPUI has no tray API. `tray-icon` creates a hidden window on the GPUI thread, so GPUI's message loop dispatches its messages (`examples/tray_spike.rs` proves it). Its events, and requests from a second copy, are drained every 100 ms. Left click opens the window; the menu is on the right button. The tray icon is gone before the app quits, so it never lingers.
 
 ## Icon and version information
@@ -40,3 +42,7 @@ The first copy creates the auto-reset event `Local\heka.show-window` and waits o
 - `crates/heka-app/icon/draw.py` (Python with Pillow) draws `heka.ico`, and `heka.png` for the About view; all three are committed, so building needs no Python. The icon has a drawing for each small and large icon size from 100% to 200% scaling (16 to 64 px) and some larger ones, with the d-pad and the top of the body on whole pixels. Sizes below 256 px are stored as bitmaps and 256 px as PNG, the usual form of a Windows icon.
 
 The two metric calls take no pointers, which is what makes that `unsafe` block sound.
+
+## Windows' view of the window
+
+`IsIconic` and `MonitorFromWindow` fail harmlessly for a handle that names no window, so any value is sound to pass. The monitor's handle is GPUI's display id.

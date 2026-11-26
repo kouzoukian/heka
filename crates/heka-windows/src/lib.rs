@@ -6,3 +6,4 @@ pub mod hidhide;
 pub mod metrics;
 pub mod single_instance;
 pub mod vigem;
+pub mod window;

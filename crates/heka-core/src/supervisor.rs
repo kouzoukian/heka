@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
@@ -338,6 +339,10 @@ impl Supervisor {
     ) -> Vec<Change> {
         let changes = self.lifecycle.set_output_type(mac, output_type, now);
         self.apply(changes, now)
+    }
+
+    pub fn set_app_settings(&mut self, app: AppSettings) {
+        self.lifecycle.settings_mut().set_app(app);
     }
 
     pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {

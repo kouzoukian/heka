@@ -7,7 +7,15 @@ use heka_core::state::{Battery, Charge};
 
 icon_assets!(
     ExtraIcons,
-    [Bluetooth, Gamepad2, Palette, ScrollText, Unplug, Usb]
+    [
+        Bluetooth,
+        Gamepad2,
+        Palette,
+        ScrollText,
+        SlidersHorizontal,
+        Unplug,
+        Usb
+    ]
 );
 
 pub const APP_ICON: &str = "heka/icon.png";

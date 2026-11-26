@@ -1,6 +1,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use heka_core::app_settings::{AppChange, CloseAction};
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
@@ -9,6 +10,7 @@ use heka_core::setup::Missing;
 use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
 use heka_core::virtual_controller::OutputType;
+use heka_core::window_placement::WindowPlacement;
 
 use crate::log::Recent;
 use crate::text;
@@ -18,6 +20,8 @@ pub trait Backend {
     fn screen(&self, now: Instant) -> Screen;
 
     fn command(&self, command: Command);
+
+    fn window_placement(&self) -> Option<WindowPlacement>;
 }
 
 pub type SendCommand = Rc<dyn Fn(Command)>;
@@ -31,6 +35,17 @@ pub enum Command {
     ChangePreference(MacAddress, PreferenceChange),
     CheckDrivers,
     OpenLogFolder,
+    SetStartWithWindows(bool),
+    ChangeAppSetting(AppChange),
+    RememberWindow(WindowPlacement),
+    OpenSettingsFolder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AppEntry {
+    pub start_with_windows: bool,
+    pub start_in_tray: bool,
+    pub on_close: CloseAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +55,7 @@ pub struct Screen {
     pub notices: Vec<Notice>,
     pub controllers: Vec<ControllerEntry>,
     pub log: Recent,
+    pub app: AppEntry,
 }
 
 impl Screen {

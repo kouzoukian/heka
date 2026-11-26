@@ -34,6 +34,16 @@ fn a_corrupt_settings_file_gives_defaults() {
 }
 
 #[test]
+fn only_a_file_holding_an_object_can_be_read() {
+    for text in ["{}", r#"{"controllers": 3}"#] {
+        assert!(Settings::can_read(text), "{text}");
+    }
+    for text in ["", "{", "not json", "[1, 2]", "\u{feff}{}"] {
+        assert!(!Settings::can_read(text), "{text}");
+    }
+}
+
+#[test]
 fn stopped_survives_a_save_and_load() {
     let mut settings = Settings::default();
     settings.set_stopped(MAC, true);

@@ -12,22 +12,28 @@ use gpui::{App, QuitMode};
 use heka_app::log::{self, Log, LogFile};
 use heka_app::text;
 use heka_app::ui::assets::Assets;
-use heka_app::ui::view;
-use heka_core::autostart::{self, Autostart};
+use heka_app::ui::view::{self, Page};
+use heka_core::app_settings::CloseAction;
+use heka_core::autostart::Autostart;
 use heka_windows::autostart::RunKey;
 use heka_windows::clock;
 use heka_windows::single_instance::{self, Instance};
 
 use bridging::Bridging;
+use tray::Request;
 use window_backend::WindowBackend;
 
-fn show_main_window(cx: &mut App, bridging: &Arc<Bridging>) {
-    if let Some(window) = cx.windows().first() {
+fn show_main_window(cx: &mut App, backend: &Rc<WindowBackend>, page: Option<Page>) {
+    if let Some(&window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
+        if let Some(page) = page {
+            view::show_page(window, page, cx);
+        }
         return;
     }
-    let backend = Rc::new(WindowBackend(Arc::clone(bridging)));
-    view::open_window(cx, backend).expect("failed to open the main window");
+    let backend = Rc::clone(backend);
+    view::open_window(cx, backend, page.unwrap_or_default())
+        .expect("failed to open the main window");
 }
 
 fn main() {
@@ -36,8 +42,14 @@ fn main() {
         Ok(Instance::First(instance)) => (Some(instance), None),
         Err(error) => (None, Some(error)),
     };
-    let in_tray = autostart::opens_in_tray(std::env::args_os());
-    start_log(in_tray);
+    let log_error = start_log();
+    let (settings, unreadable) = settings_file::load();
+    let app = settings.app().clone();
+    let in_tray = app.opens_in_tray(std::env::args_os());
+    log::line(&text::log::started(env!("CARGO_PKG_VERSION"), in_tray));
+    for message in log_error.into_iter().chain(unreadable) {
+        log::line(&message);
+    }
     if let Some(error) = unchecked {
         log::line(&text::log::cannot_check_for_running_copy(
             &error.to_string(),
@@ -50,7 +62,7 @@ fn main() {
     application.run(move |cx: &mut App| {
         view::init(cx);
 
-        let bridging = Arc::new(Bridging::start());
+        let bridging = Arc::new(Bridging::start(settings));
         cx.on_app_quit({
             let bridging = Arc::clone(&bridging);
             move |_| {
@@ -60,27 +72,38 @@ fn main() {
         })
         .detach();
 
-        let (show_requests_sender, show_requests) = mpsc::channel();
+        let backend = Rc::new(WindowBackend::new(bridging, autostart(), app));
+        let (requests_sender, requests) = mpsc::channel();
         if let Some(instance) = instance {
+            let requests = requests_sender.clone();
             instance.on_second_launch(move || {
-                let _ = show_requests_sender.send(());
+                let _ = requests.send(Request::Show);
             });
         }
-        let tray = tray::install(cx, autostart(), show_requests, {
-            let bridging = Arc::clone(&bridging);
-            move |cx| show_main_window(cx, &bridging)
+        cx.on_window_closed({
+            let backend = Rc::clone(&backend);
+            move |_, _| {
+                if backend.on_close() == CloseAction::Quit {
+                    let _ = requests_sender.send(Request::Quit);
+                }
+            }
+        })
+        .detach();
+        let tray = tray::install(cx, Rc::clone(&backend), requests, {
+            let backend = Rc::clone(&backend);
+            move |cx, page| show_main_window(cx, &backend, page)
         });
         if let Err(error) = &tray {
             log::line(&text::log::cannot_add_tray_icon(error));
             cx.set_quit_mode(QuitMode::Default);
         }
         if !in_tray || tray.is_err() {
-            show_main_window(cx, &bridging);
+            show_main_window(cx, &backend, None);
         }
     });
 }
 
-fn start_log(in_tray: bool) {
+fn start_log() -> Option<String> {
     let file = log::folder().map(|folder| LogFile::start(&folder, log::FILE_LIMIT));
     let (sink, error) = match file {
         Some(Ok(file)) => (Some(Box::new(file) as Box<dyn log::Sink>), None),
@@ -89,10 +112,7 @@ fn start_log(in_tray: bool) {
     };
     log::install(Log::start(sink, clock::local_time));
     log::catch_panics();
-    log::line(&text::log::started(env!("CARGO_PKG_VERSION"), in_tray));
-    if let Some(error) = error {
-        log::line(&text::log::cannot_write(&error.to_string()));
-    }
+    error.map(|error| text::log::cannot_write(&error.to_string()))
 }
 
 fn autostart() -> Autostart<RunKey> {

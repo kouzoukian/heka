@@ -128,19 +128,34 @@ Rumble and lights apply while the Controller is Bridged.
 
 ### Log and About
 
-The two buttons at the right of the status bar open them; press the same button again, or
-select a Controller, to go back.
+The last two buttons at the right of the status bar open them; press the same button again,
+or select a Controller, to go back.
 
 - **Log** lists what heka did in this run, newest first. **Copy log** puts it on the
   clipboard and **Open log folder** shows the log files. See [The log](#the-log).
 - **About heka** shows the version, the licenses and a link to this repository.
 
+### App settings
+
+The gear in the status bar, Ctrl+, in the window and **Settings** in the tray menu open
+what concerns heka as a whole.
+
+- **Start with Windows**, off by default, the same choice as in the tray menu. Windows then
+  starts heka in the tray.
+- **Start in the tray**, off by default: no window opens when you start heka yourself
+  either.
+- **Closing the window**: **Keep running** (the default) or **Quit**.
+- **Settings folder**, where heka keeps `settings.json`.
+
+heka reopens its window at the size and place you left it, or centred if that is no longer
+on a screen.
+
 ### Tray
 
-Closing the window leaves heka running in the notification area, with every Bridge. Click
-the tray icon to open the window again. Right-click it for **Start with Windows** (off by
-default; heka then starts in the tray) and **Quit**. Quitting removes the Virtual
-Controllers and restores the Hidden Controllers.
+Unless you choose otherwise in [App settings](#app-settings), closing the window leaves heka
+running in the notification area, with every Bridge. Click the tray icon to open the window
+again. Right-click it for **Open heka**, **Settings**, **Start with Windows** and **Quit**.
+Quitting removes the Virtual Controllers and restores the Hidden Controllers.
 
 ## Hiding Controllers
 

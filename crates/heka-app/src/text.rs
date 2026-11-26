@@ -36,7 +36,7 @@ pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
 pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Controller.";
 
-pub const SETTINGS: &str = "Controller settings";
+pub const CONTROLLER_SETTINGS: &str = "Controller settings";
 pub const ROW_NAME: &str = "Name";
 pub const ROW_RUMBLE: &str = "Rumble";
 pub const ROW_LIGHTBAR: &str = "Light bar";
@@ -148,6 +148,18 @@ pub const CONNECT_HINT: &str =
 pub const TRAY_OPEN: &str = "Open heka";
 pub const START_WITH_WINDOWS: &str = "Start with Windows";
 pub const QUIT: &str = "Quit";
+
+pub const APP_SETTINGS: &str = "Settings";
+pub const APP_SETTINGS_TIP: &str = "Settings (Ctrl+,)";
+pub const START_WITH_WINDOWS_TIP: &str = "The same choice as the tray menu item.";
+pub const ROW_START_IN_TRAY: &str = "Start in the tray";
+pub const START_IN_TRAY_TIP: &str = "Also when started by hand.";
+pub const ROW_CLOSING: &str = "Closing the window";
+pub const CLOSING_TIP: &str = "Keep running leaves heka in the tray.";
+pub const KEEP_RUNNING: &str = "Keep running";
+pub const FILES: &str = "Files";
+pub const ROW_SETTINGS_FOLDER: &str = "Settings folder";
+pub const OPEN_FOLDER: &str = "Open folder";
 
 pub mod setup {
     use heka_core::setup::{Driver, DriverError, Missing};
@@ -533,6 +545,14 @@ pub mod log {
         format!("cannot read {}: {error}", path.display())
     }
 
+    pub fn settings_set_aside(path: &Path, copy: &Path) -> String {
+        format!(
+            "{} is not a settings file; a copy was kept as {}",
+            path.display(),
+            copy.display()
+        )
+    }
+
     pub fn cannot_save_settings(path: &Path, error: &str) -> String {
         format!("cannot save {}: {error}", path.display())
     }
@@ -555,5 +575,9 @@ pub mod log {
 
     pub fn cannot_open_log_folder(error: &str) -> String {
         format!("cannot open the log folder: {error}")
+    }
+
+    pub fn cannot_open_settings_folder(error: &str) -> String {
+        format!("cannot open the settings folder: {error}")
     }
 }

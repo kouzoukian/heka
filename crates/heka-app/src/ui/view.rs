@@ -2,9 +2,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Bounds, Context, Div, Entity, Hsla, IntoElement, ParentElement, Render,
-    Result, Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div,
-    prelude::FluentBuilder as _, px, size,
+    AnyWindowHandle, App, AppContext, Context, Div, Entity, Hsla, IntoElement, KeyBinding,
+    ParentElement, Render, Result, Styled, TitlebarOptions, Window, WindowHandle, WindowOptions,
+    actions, div, prelude::FluentBuilder as _, px, size,
 };
 use gpui_component::button::Button;
 use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
@@ -21,24 +21,32 @@ use crate::ui::detail::{Showing, ToggleSettings, selected_button, tool_button};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
 use crate::ui::settings::Fields;
-use crate::ui::{detail, panel, picker};
+use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(15);
 
-const SIZE: (f32, f32) = (840., 680.);
-const MIN_SIZE: (f32, f32) = (640., 560.);
+actions!(heka, [OpenAppSettings]);
 
 pub fn init(cx: &mut App) {
     gpui_component::init(cx);
     theme::apply(cx).expect("the built-in font and theme load");
+    cx.bind_keys([KeyBinding::new("ctrl-,", OpenAppSettings, None)]);
+    cx.on_action(|_: &OpenAppSettings, cx| {
+        cx.defer(|cx| {
+            if let Some(&window) = cx.windows().first() {
+                show_page(window, Page::AppSettings, cx);
+            }
+        });
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
     #[default]
     Controller,
-    Settings,
+    ControllerSettings,
+    AppSettings,
     Log,
     About,
 }
@@ -50,35 +58,42 @@ impl Page {
 
     pub fn of_a_controller(self) -> Self {
         match self {
-            Self::Controller | Self::Settings => self,
-            Self::Log | Self::About => Self::Controller,
+            Self::Controller | Self::ControllerSettings => self,
+            Self::AppSettings | Self::Log | Self::About => Self::Controller,
         }
     }
 }
 
-pub fn open_window(cx: &mut App, backend: Rc<dyn Backend>) -> Result<WindowHandle<Root>> {
-    open_window_on(cx, backend, Page::default())
+pub fn show_page(window: AnyWindowHandle, page: Page, cx: &mut App) {
+    let Some(window) = window.downcast::<Root>() else {
+        return;
+    };
+    let _ = window.update(cx, |root, _, cx| {
+        if let Ok(view) = root.view().clone().downcast::<MainView>() {
+            view.update(cx, |view, cx| view.show(page, cx));
+        }
+    });
 }
 
-pub fn open_window_on(
+pub fn open_window(
     cx: &mut App,
     backend: Rc<dyn Backend>,
     page: Page,
 ) -> Result<WindowHandle<Root>> {
+    let (window_bounds, display_id) = placement::opening(backend.window_placement().as_ref(), cx);
+    let min_size = size(px(placement::MIN_SIZE.0), px(placement::MIN_SIZE.1));
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(text::APP_NAME.into()),
             ..TitleBar::title_bar_options()
         }),
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(SIZE.0), px(SIZE.1)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
+        window_bounds: Some(window_bounds),
+        display_id,
+        window_min_size: Some(min_size),
         ..TitleBar::window_options()
     };
-    cx.open_window(options, |window, cx| {
+    cx.open_window(options, move |window, cx| {
+        placement::keep_size(window, window_bounds);
         let view = cx.new(|cx| MainView::new(backend, page, window, cx));
         cx.new(|cx| Root::new(view, window, cx))
     })
@@ -145,6 +160,12 @@ impl MainView {
             },
         )
         .detach();
+        cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
+            if let Some(placement) = placement::current(window, cx) {
+                this.backend.command(Command::RememberWindow(placement));
+            }
+        })
+        .detach();
         let screen = backend.screen(Instant::now());
         let mut selection = Selection::default();
         selection.follow(&screen.controllers);
@@ -176,7 +197,11 @@ impl MainView {
     }
 
     fn toggle_page(&mut self, page: Page, cx: &mut Context<Self>) {
-        self.page = self.page.toggled(page);
+        self.show(self.page.toggled(page), cx);
+    }
+
+    fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
         self.filled = None;
         cx.notify();
     }
@@ -190,7 +215,7 @@ impl MainView {
     }
 
     fn fill_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page != Page::Settings {
+        if self.page != Page::ControllerSettings {
             return;
         }
         let entry = self.selection.shown(&self.screen.controllers);
@@ -233,14 +258,17 @@ impl MainView {
         let send: SendCommand = Rc::new(move |command: Command| backend.command(command));
         let view = cx.weak_entity();
         let toggle_settings: ToggleSettings = Rc::new(move |_, cx: &mut App| {
-            let _ = view.update(cx, |view, cx| view.toggle_page(Page::Settings, cx));
+            let _ = view.update(cx, |view, cx| {
+                view.toggle_page(Page::ControllerSettings, cx)
+            });
         });
         let showing = match self.page {
             Page::Controller => Showing::Live,
-            Page::Settings => Showing::Settings(Fields {
+            Page::ControllerSettings => Showing::ControllerSettings(Fields {
                 name: &self.name,
                 colour: &self.colour,
             }),
+            Page::AppSettings => Showing::AppSettings(self.screen.app),
             Page::Log => Showing::Log(&self.screen.log),
             Page::About => Showing::About,
         };
@@ -276,6 +304,12 @@ impl MainView {
     }
 
     fn status_bar(&self, cx: &mut Context<Self>) -> StatusBar {
+        let settings = self.page_button(
+            Page::AppSettings,
+            IconName::Settings,
+            text::APP_SETTINGS_TIP,
+            cx,
+        );
         let log = self.page_button(Page::Log, IconName::ScrollText, text::LOG, cx);
         let about = self.page_button(Page::About, IconName::Info, text::ABOUT, cx);
         let screen = &self.screen;
@@ -304,7 +338,14 @@ impl MainView {
             .text_size(SMALL_TEXT)
             .left(counts)
             .right(screen.summary())
-            .right(div().flex().gap(GAP).child(log).child(about))
+            .right(
+                div()
+                    .flex()
+                    .gap(GAP)
+                    .child(settings)
+                    .child(log)
+                    .child(about),
+            )
     }
 }
 

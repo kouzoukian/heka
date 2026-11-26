@@ -1,34 +1,45 @@
+use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use gpui::{App, AsyncApp};
-use heka_app::{log, text};
-use heka_core::autostart::{Autostart, RunEntry};
+use heka_app::text;
+use heka_app::ui::model::{Backend, Command};
+use heka_app::ui::view::Page;
 use heka_windows::metrics;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+use crate::window_backend::WindowBackend;
+
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const APP_ICON: u16 = 1;
 
+pub enum Request {
+    Show,
+    Quit,
+}
+
 struct Items {
     open: MenuItem,
+    settings: MenuItem,
     start_with_windows: CheckMenuItem,
     quit: MenuItem,
 }
 
-pub fn install<E: RunEntry + 'static>(
+pub fn install(
     cx: &mut App,
-    mut autostart: Autostart<E>,
-    show_requests: Receiver<()>,
-    show: impl Fn(&mut App) + 'static,
+    backend: Rc<WindowBackend>,
+    requests: Receiver<Request>,
+    show: impl Fn(&mut App, Option<Page>) + 'static,
 ) -> Result<(), String> {
     let items = Items {
         open: MenuItem::new(text::TRAY_OPEN, true, None),
+        settings: MenuItem::new(text::APP_SETTINGS, true, None),
         start_with_windows: CheckMenuItem::new(
             text::START_WITH_WINDOWS,
             true,
-            autostart.is_enabled(),
+            backend.starts_with_windows(),
             None,
         ),
         quit: MenuItem::new(text::QUIT, true, None),
@@ -36,8 +47,9 @@ pub fn install<E: RunEntry + 'static>(
     let menu = Menu::new();
     menu.append_items(&[
         &items.open,
-        &items.start_with_windows,
+        &items.settings,
         &PredefinedMenuItem::separator(),
+        &items.start_with_windows,
         &items.quit,
     ])
     .map_err(|error| error.to_string())?;
@@ -50,24 +62,31 @@ pub fn install<E: RunEntry + 'static>(
         .map_err(|error| error.to_string())?;
 
     cx.spawn(async move |cx: &mut AsyncApp| {
-        run(cx, tray, &items, &mut autostart, &show_requests, &show).await;
+        run(cx, tray, &items, &backend, &requests, &show).await;
         cx.update(|cx| cx.quit());
     })
     .detach();
     Ok(())
 }
 
-async fn run<E: RunEntry>(
+async fn run(
     cx: &mut AsyncApp,
     _tray: TrayIcon,
     items: &Items,
-    autostart: &mut Autostart<E>,
-    show_requests: &Receiver<()>,
-    show: &impl Fn(&mut App),
+    backend: &WindowBackend,
+    requests: &Receiver<Request>,
+    show: &impl Fn(&mut App, Option<Page>),
 ) {
     loop {
         cx.background_executor().timer(POLL_INTERVAL).await;
-        let mut wants_window = show_requests.try_iter().count() > 0;
+        let mut wants_window = false;
+        let mut page = None;
+        for request in requests.try_iter() {
+            match request {
+                Request::Quit => return,
+                Request::Show => wants_window = true,
+            }
+        }
         for event in TrayIconEvent::receiver().try_iter() {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -83,16 +102,20 @@ async fn run<E: RunEntry>(
                 return;
             } else if event.id == items.open.id() {
                 wants_window = true;
+            } else if event.id == items.settings.id() {
+                wants_window = true;
+                page = Some(Page::AppSettings);
             } else if event.id == items.start_with_windows.id() {
-                let enable = !autostart.is_enabled();
-                if let Err(error) = autostart.set_enabled(enable) {
-                    log::line(&text::log::cannot_change_autostart(&error.to_string()));
-                }
-                items.start_with_windows.set_checked(autostart.is_enabled());
+                let enable = !backend.starts_with_windows();
+                backend.command(Command::SetStartWithWindows(enable));
             }
         }
+        let enabled = backend.starts_with_windows();
+        if items.start_with_windows.is_checked() != enabled {
+            items.start_with_windows.set_checked(enabled);
+        }
         if wants_window {
-            cx.update(show);
+            cx.update(|cx| show(cx, page));
         }
     }
 }

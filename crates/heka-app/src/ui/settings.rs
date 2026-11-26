@@ -14,7 +14,7 @@ use crate::ui::banners::{clamped, strip};
 use crate::ui::detail::row;
 use crate::ui::model::{ControllerEntry, SendCommand};
 use crate::ui::picker::{picker, rainbow_swatch, swatch};
-use crate::ui::segmented::{Segment, segmented};
+use crate::ui::segmented::{Segment, on_off, segmented};
 
 const NAME_WIDTH: f32 = 220.;
 
@@ -73,7 +73,7 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
         .child(strip("settings-note", 1, theme).child(clamped(text::SETTINGS_NOTE.into())))
 }
 
-fn explained(label: &'static str, tip: &'static str, theme: &Theme) -> Stateful<Div> {
+pub(super) fn explained(label: &'static str, tip: &'static str, theme: &Theme) -> Stateful<Div> {
     div()
         .id(label)
         .flex()
@@ -169,13 +169,11 @@ fn player_lights_switch(entry: &ControllerEntry, send: &SendCommand, theme: &The
 }
 
 fn hide_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
-    let segments = [(text::ON, true), (text::OFF, false)].map(|(words, hide)| {
-        Segment::words(
-            id(entry, "hide", words),
-            words,
-            entry.preferences.hide == hide,
-            Some(entry.prefer(PreferenceChange::Hide(hide))),
-        )
-    });
-    segmented(segments, send, theme)
+    on_off(
+        format!("hide-{}", entry.mac),
+        entry.preferences.hide,
+        |hide| entry.prefer(PreferenceChange::Hide(hide)),
+        send,
+        theme,
+    )
 }

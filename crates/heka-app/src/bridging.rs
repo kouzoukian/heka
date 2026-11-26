@@ -6,12 +6,14 @@ use std::time::{Duration, Instant};
 
 use heka_app::report::Reporter;
 use heka_app::{log, text};
+use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::hider::{Hider, HidingWarning};
 use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::PreferenceChange;
+use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
@@ -49,6 +51,7 @@ enum Command {
     SetNickname(MacAddress, String),
     ChangePreference(MacAddress, PreferenceChange),
     CheckDrivers,
+    SetAppSettings(AppSettings),
     Quit,
 }
 
@@ -59,7 +62,7 @@ pub struct Bridging {
 }
 
 impl Bridging {
-    pub fn start() -> Self {
+    pub fn start(settings: Settings) -> Self {
         let (commands, inbox) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: Status::Starting,
@@ -73,7 +76,7 @@ impl Bridging {
             .name("heka-supervisor".into())
             .spawn({
                 let snapshot = Arc::clone(&snapshot);
-                move || supervise(&inbox, &snapshot)
+                move || supervise(settings, &inbox, &snapshot)
             })
             .expect("failed to start the supervisor thread");
         Self {
@@ -114,6 +117,10 @@ impl Bridging {
         let _ = self.commands.send(Command::CheckDrivers);
     }
 
+    pub fn set_app_settings(&self, app: AppSettings) {
+        let _ = self.commands.send(Command::SetAppSettings(app));
+    }
+
     pub fn quit(&self) {
         let _ = self.commands.send(Command::Quit);
         let thread = self
@@ -134,8 +141,7 @@ impl Drop for Bridging {
     }
 }
 
-fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
-    let settings = settings_file::load();
+fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
     let mut supervisor = Supervisor::without_bus(settings);
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
@@ -153,7 +159,9 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
         let now = Instant::now();
         let burst = matches!(
             command,
-            Ok(Command::SetNickname(..) | Command::ChangePreference(..))
+            Ok(Command::SetNickname(..)
+                | Command::ChangePreference(..)
+                | Command::SetAppSettings(..))
         );
         let changes = match command {
             Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
@@ -178,6 +186,11 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
                 unsaved = true;
                 let preferences = supervisor.change_preference(mac, change);
                 hider.set_hide(mac, preferences.hide);
+                Vec::new()
+            }
+            Ok(Command::SetAppSettings(app)) => {
+                unsaved = true;
+                supervisor.set_app_settings(app);
                 Vec::new()
             }
             Ok(Command::CheckDrivers) => {

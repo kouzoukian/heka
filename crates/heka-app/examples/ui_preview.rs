@@ -1,13 +1,16 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use heka_app::log::{Entry, Recent};
 use heka_app::text;
 use heka_app::ui::assets::Assets;
-use heka_app::ui::model::{Backend, Command, ControllerEntry, EntryState, Notice, Screen};
+use heka_app::ui::model::{
+    AppEntry, Backend, Command, ControllerEntry, EntryState, Notice, Screen,
+};
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view::{self, Page};
+use heka_core::app_settings::AppSettings;
 use heka_core::clock::Timestamp;
 use heka_core::hiding::{DeviceInstancePath, HidingChange};
 use heka_core::lifecycle::Change;
@@ -18,6 +21,7 @@ use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
+use heka_core::window_placement::{Rect, WindowPlacement};
 
 const REPORT_EVERY: Duration = Duration::from_secs(2);
 
@@ -27,6 +31,8 @@ struct Fake {
     missing: RefCell<Vec<Missing>>,
     samples: RefCell<(u32, Instant)>,
     log: Recent,
+    app: RefCell<AppSettings>,
+    start_with_windows: Cell<bool>,
 }
 
 impl Fake {
@@ -110,6 +116,8 @@ impl Fake {
             missing: RefCell::new(missing),
             samples: RefCell::new((0, now)),
             log: made_up_log(),
+            app: RefCell::default(),
+            start_with_windows: Cell::default(),
         }
     }
 
@@ -154,6 +162,11 @@ impl Backend for Fake {
             notices,
             controllers,
             log: Recent::clone(&self.log),
+            app: AppEntry {
+                start_with_windows: self.start_with_windows.get(),
+                start_in_tray: self.app.borrow().start_in_tray,
+                on_close: self.app.borrow().on_close,
+            },
         }
     }
 
@@ -166,7 +179,19 @@ impl Backend for Fake {
             | Command::SetOutputType(mac, _)
             | Command::SetNickname(mac, _)
             | Command::ChangePreference(mac, _) => *mac,
-            Command::OpenLogFolder => return,
+            Command::SetStartWithWindows(on) => {
+                self.start_with_windows.set(*on);
+                return;
+            }
+            Command::ChangeAppSetting(change) => {
+                self.app.borrow_mut().change(*change);
+                return;
+            }
+            Command::RememberWindow(placement) => {
+                self.app.borrow_mut().window = Some(placement.clone());
+                return;
+            }
+            Command::OpenLogFolder | Command::OpenSettingsFolder => return,
             Command::CheckDrivers => {
                 self.missing.borrow_mut().clear();
                 for entry in controllers.iter_mut() {
@@ -191,9 +216,28 @@ impl Backend for Fake {
                 entry.nickname = (!name.is_empty()).then(|| name.to_owned());
             }
             Command::ChangePreference(_, change) => entry.preferences.change(change),
-            Command::CheckDrivers | Command::OpenLogFolder => {}
+            _ => {}
         }
     }
+
+    fn window_placement(&self) -> Option<WindowPlacement> {
+        self.app.borrow().window.clone()
+    }
+}
+
+fn placement(words: &str) -> Option<WindowPlacement> {
+    let mut numbers = words.split(',').map(str::parse::<i32>);
+    let mut next = || numbers.next()?.ok();
+    Some(WindowPlacement {
+        bounds: Rect {
+            x: next()?,
+            y: next()?,
+            width: next()?.try_into().ok()?,
+            height: next()?.try_into().ok()?,
+        },
+        maximized: false,
+        monitor: None,
+    })
 }
 
 fn made_up_log() -> Recent {
@@ -260,6 +304,7 @@ fn main() {
     let mut missing = false;
     let mut first = 1;
     let mut seconds = None;
+    let mut window = None;
     let mut page = Page::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -269,7 +314,13 @@ fn main() {
             "--first" => {
                 first = args.next().and_then(|n| n.parse().ok()).expect("--first N");
             }
-            "--settings" => page = Page::Settings,
+            "--settings" => page = Page::ControllerSettings,
+            "--app-settings" => page = Page::AppSettings,
+            "--window" => {
+                let words = args.next();
+                window = words.as_deref().and_then(placement);
+                assert!(window.is_some(), "--window X,Y,WIDTH,HEIGHT");
+            }
             "--log" => page = Page::Log,
             "--about" => page = Page::About,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
@@ -280,8 +331,9 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx| {
             view::init(cx);
-            view::open_window_on(cx, Rc::new(Fake::new(empty, missing, first)), page)
-                .expect("failed to open the preview window");
+            let fake = Fake::new(empty, missing, first);
+            fake.app.borrow_mut().window = window;
+            view::open_window(cx, Rc::new(fake), page).expect("failed to open the preview window");
             if let Some(seconds) = seconds {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
