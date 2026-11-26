@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Matches rust-toolchain.toml.
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kouzoukian/heka"
+publish = false
+
+[workspace.dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.14" }
+gpui-component = "=0.11.0"
+# Provides `application()`. It is not part of gpui-pre's own dependency tree.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.14" }
