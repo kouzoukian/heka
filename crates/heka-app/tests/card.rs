@@ -3,9 +3,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use heka_app::ui::model::{
-    ActiveLink, CardModel, CardState, Command, Notice, OutputChoice, Screen,
-};
+use heka_app::ui::model::{ActiveLink, CardModel, CardState, Command, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::lifecycle::Phase;
 use heka_core::mac::MacAddress;
@@ -94,11 +92,19 @@ fn a_held_controller_has_no_active_link() {
 }
 
 #[test]
-fn only_output_types_heka_can_create_are_offered() {
-    let card = CardModel::from_view(&view(Phase::Bridged), Instant::now());
+fn the_output_switch_shows_the_controllers_output_type_and_asks_for_the_chosen_one() {
+    let mut ps4 = view(Phase::Bridged);
+    ps4.output_type = OutputType::Ps4;
 
-    assert_eq!(card.output, OutputChoice::Xbox);
-    assert_eq!(card.outputs, [OutputChoice::Xbox]);
+    let card = CardModel::from_view(&ps4, Instant::now());
+
+    assert_eq!(card.output_type, OutputType::Ps4);
+    assert_eq!(
+        card.choose(OutputType::Xbox),
+        Some(Command::SetOutputType(MAC, OutputType::Xbox))
+    );
+    // Choosing what is already chosen asks for nothing.
+    assert_eq!(card.choose(OutputType::Ps4), None);
 }
 
 #[test]

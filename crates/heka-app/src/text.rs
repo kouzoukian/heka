@@ -21,7 +21,6 @@ pub const BATTERY_UNKNOWN: &str = "Battery unknown";
 pub const OUTPUT_TYPE: &str = "Output";
 pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
-pub const OUTPUT_UNAVAILABLE: &str = "This Output Type is not available yet";
 pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Controller.";
 
 pub fn held(seconds_left: u64) -> String {

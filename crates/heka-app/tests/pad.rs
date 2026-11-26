@@ -1,7 +1,7 @@
 //! What the live drawing shows, from a Controller state.
 
 use heka_app::ui::pad::{PadModel, TouchDot, stick_offset, trigger_fill};
-use heka_core::state::{Buttons, ControllerState, Stick};
+use heka_core::state::{Buttons, ControllerState, Finger, Motion, Stick};
 
 #[test]
 fn the_drawing_takes_buttons_sticks_and_triggers_from_the_controller_state() {
@@ -22,6 +22,40 @@ fn the_drawing_takes_buttons_sticks_and_triggers_from_the_controller_state() {
     assert_eq!(pad.left_stick, Stick { x: 0, y: 255 });
     assert_eq!(pad.right_stick, Stick::CENTER);
     assert_eq!((pad.left_trigger, pad.right_trigger), (12, 255));
+}
+
+#[test]
+fn the_drawing_places_each_finger_from_dualsense_touchpad_units() {
+    let state = ControllerState {
+        touch: [
+            None,
+            Some(Finger {
+                id: 7,
+                x: 1919,
+                y: 0,
+            }),
+        ],
+        ..ControllerState::NEUTRAL
+    };
+
+    let [first, second] = PadModel::from_state(&state).touch;
+
+    assert_eq!(first, None);
+    assert_eq!(second.map(TouchDot::share), Some((1.0, 0.0)));
+}
+
+#[test]
+fn motion_alone_does_not_change_the_drawing() {
+    let moving = ControllerState {
+        motion: Motion {
+            gyro: [1, 2, 3],
+            accel: [4, 5, 6],
+            timestamp: 7,
+        },
+        ..ControllerState::NEUTRAL
+    };
+
+    assert_eq!(PadModel::from_state(&moving), PadModel::NEUTRAL);
 }
 
 #[test]

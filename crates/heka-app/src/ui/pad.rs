@@ -2,6 +2,11 @@
 
 use heka_core::state::{Buttons, ControllerState, Stick};
 
+/// The last position on a DualSense touchpad, which
+/// [`heka_core::state::Finger`] runs to.
+const LAST_TOUCH_X: u16 = 1919;
+const LAST_TOUCH_Y: u16 = 1079;
+
 /// A finger on the touchpad, as a share of the pad in thousandths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TouchDot {
@@ -59,6 +64,9 @@ impl PadModel {
             right_stick,
             left_trigger,
             right_trigger,
+            touch,
+            // Not drawn, and left out so that it alone never redraws the window.
+            motion: _,
         } = *state;
         Self {
             buttons,
@@ -66,8 +74,11 @@ impl PadModel {
             right_stick,
             left_trigger,
             right_trigger,
-            // heka does not read finger positions yet (ticket #7 does).
-            touch: [None, None],
+            touch: touch.map(|finger| {
+                finger.map(|finger| {
+                    TouchDot::from_units(finger.x, finger.y, LAST_TOUCH_X, LAST_TOUCH_Y)
+                })
+            }),
         }
     }
 

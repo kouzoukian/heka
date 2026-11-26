@@ -29,8 +29,8 @@ pub trait Backend {
 pub enum Command {
     Stop(MacAddress),
     Start(MacAddress),
-    /// Only sent for a choice in the card's [`CardModel::outputs`].
-    SetOutput(MacAddress, OutputChoice),
+    /// Replaces the Controller's Virtual Controller with one of this Output Type.
+    SetOutputType(MacAddress, OutputType),
 }
 
 /// Everything the window shows.
@@ -45,13 +45,6 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Before the first sample.
-    pub const STARTING: Self = Self {
-        starting: true,
-        notices: Vec::new(),
-        cards: Vec::new(),
-    };
-
     /// The status bar's count of Controllers and Bridges.
     pub fn summary(&self) -> String {
         let bridged = self
@@ -120,32 +113,6 @@ pub struct Battery {
     pub charging: bool,
 }
 
-/// A position of the Output Type switch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputChoice {
-    Xbox,
-    Ps4,
-}
-
-impl OutputChoice {
-    /// In the order the switch shows them.
-    pub const ALL: [Self; 2] = [Self::Xbox, Self::Ps4];
-
-    /// The Output Type behind this choice, `None` while heka cannot create it.
-    pub fn output_type(self) -> Option<OutputType> {
-        match self {
-            Self::Xbox => Some(OutputType::Xbox),
-            Self::Ps4 => None,
-        }
-    }
-
-    pub fn from_output_type(output_type: OutputType) -> Self {
-        match output_type {
-            OutputType::Xbox => Self::Xbox,
-        }
-    }
-}
-
 /// One Controller's card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardModel {
@@ -155,9 +122,7 @@ pub struct CardModel {
     pub active_link: Option<ActiveLink>,
     /// `None` while unknown.
     pub battery: Option<Battery>,
-    pub output: OutputChoice,
-    /// The choices the player can switch between.
-    pub outputs: Vec<OutputChoice>,
+    pub output_type: OutputType,
     pub state: CardState,
     /// Why the last Bridge attempt failed.
     pub error: Option<String>,
@@ -195,11 +160,7 @@ impl CardModel {
             name: text::DUALSENSE,
             active_link,
             battery: None,
-            output: OutputChoice::from_output_type(*output_type),
-            outputs: OutputChoice::ALL
-                .into_iter()
-                .filter(|choice| choice.output_type().is_some())
-                .collect(),
+            output_type: *output_type,
             state,
             error: error.clone(),
             pad: live.latest().map(|state| PadModel::from_state(&state)),
@@ -212,6 +173,11 @@ impl CardModel {
             CardState::Stopped => Command::Start(self.mac),
             _ => Command::Stop(self.mac),
         }
+    }
+
+    /// What choosing `output_type` on the card's switch asks for, if anything.
+    pub fn choose(&self, output_type: OutputType) -> Option<Command> {
+        (output_type != self.output_type).then_some(Command::SetOutputType(self.mac, output_type))
     }
 
     /// The line under the drawing that explains the state, if it needs one.

@@ -5,4 +5,5 @@
 //! binary is the real backend; the `ui_preview` example is one made of fake data.
 
 pub mod text;
+pub mod theme;
 pub mod ui;

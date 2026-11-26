@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use heka_app::text;
 use heka_core::hiding::{DeviceInstancePath, Hiding};
 use heka_core::lifecycle::{Change, Removal};
 use heka_core::mac::MacAddress;
@@ -209,13 +210,11 @@ impl Hider {
         match hidhide::hiding() {
             Ok(hiding) => {
                 if let Err(error) = hiding.recover() {
-                    hider.note = Some(format!(
-                        "Could not restore Controllers Hidden by an earlier run: {error}"
-                    ));
+                    hider.note = Some(text::cannot_restore_earlier_run(&error.to_string()));
                 }
                 hider.hiding = Some(hiding);
             }
-            Err(error) => hider.note = Some(format!("Controllers cannot be Hidden: {error}")),
+            Err(error) => hider.note = Some(text::cannot_hide_at_all(&error.to_string())),
         }
         hider
     }
@@ -223,7 +222,7 @@ impl Hider {
     /// Records the device behind a Link before the Supervisor hears of it.
     fn link_seen(&mut self, mac: MacAddress, link: &DualSenseUsbLink) {
         let device = hidhide::device_instance_path(link.hid_path())
-            .map_err(|error| format!("cannot identify the Controller for HidHide: {error}"));
+            .map_err(|error| text::cannot_identify_for_hiding(&error.to_string()));
         self.devices.insert(mac, device);
     }
 
@@ -274,7 +273,7 @@ impl Hider {
                 .hide(&mac.to_string(), device)
                 .map_err(|e| e.to_string()),
             Some(Err(error)) => Err(error.clone()),
-            None => Err("no Link to Hide".into()),
+            None => Err(text::NO_LINK_TO_HIDE.into()),
         };
         match result {
             Ok(()) => {
@@ -284,14 +283,14 @@ impl Hider {
                 }
             }
             Err(error) => {
-                self.note = Some(format!("{error}. Games may see the Controller twice."));
+                self.note = Some(text::not_hidden(&error));
             }
         }
     }
 
     fn release(&mut self, mac: MacAddress) {
         if let Some(Err(error)) = self.hiding.as_ref().map(|h| h.release(&mac.to_string())) {
-            self.note = Some(format!("Could not restore the Controller: {error}"));
+            self.note = Some(text::cannot_restore(&error.to_string()));
         }
     }
 
