@@ -52,6 +52,7 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
         files,
         [
             "LICENSE-APACHE",
+            "LICENSE-GOOGLE-SANS-CODE",
             "LICENSE-MIN-THEME",
             "LICENSE-MIT",
             "README.md",
@@ -77,6 +78,9 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
     assert!(notices.contains("Copyright (c) 2018-2021 Miguel Solorio"));
     assert!(notices.contains("The Chromium Authors"));
     assert!(read("LICENSE-MIN-THEME").contains("Copyright (c) 2024 Phillip"));
+    // The built-in font's license travels with it.
+    assert!(notices.contains("The Google Sans Code Project Authors"));
+    assert!(read("LICENSE-GOOGLE-SANS-CODE").contains("SIL OPEN FONT LICENSE"));
 }
 
 #[test]

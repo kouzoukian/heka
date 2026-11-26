@@ -2,7 +2,7 @@
 
 use gpui::{AssetSource, Rgba};
 use gpui_component::ThemeSet;
-use heka_app::theme::{MIN_DARK, MIN_DARK_JSON};
+use heka_app::theme::{FONT, FONT_FAMILY, MIN_DARK, MIN_DARK_JSON};
 use heka_app::ui::assets::{Assets, battery_icon, link_icon};
 use heka_core::link::LinkKind;
 use heka_core::state::{Battery, Charge};
@@ -17,8 +17,20 @@ fn the_theme_file_holds_the_dark_theme_heka_asks_for() {
     };
     assert_eq!(theme.name, MIN_DARK);
     assert!(theme.mode.is_dark());
-    // Min Dark's editor background, behind the cards.
+    // Min Dark's editor background, behind the selected Controller's pane.
     assert_eq!(theme.colors.background.as_deref(), Some("#1a1a1a"));
+}
+
+#[test]
+fn the_theme_asks_for_the_built_in_font_at_zeds_size() {
+    let set: ThemeSet = serde_json::from_str(MIN_DARK_JSON).expect("a gpui-component theme");
+    let theme = &set.themes[0];
+
+    assert_eq!(theme.font_family.as_deref(), Some(FONT_FAMILY));
+    assert_eq!(theme.mono_font_family.as_deref(), Some(FONT_FAMILY));
+    assert_eq!(theme.font_size, Some(15.));
+    // A TrueType file.
+    assert_eq!(FONT.get(..4), Some(&[0, 1, 0, 0][..]));
 }
 
 /// gpui-component ignores a key it does not know, so a typo would silently

@@ -25,6 +25,7 @@ pub struct Release<'a> {
 }
 
 const MIN_THEME_LICENSE: &str = "crates/heka-app/themes/LICENSE-MIN-THEME";
+const FONT_LICENSE: &str = "crates/heka-app/fonts/LICENSE-GOOGLE-SANS-CODE";
 const CHROMIUM: &str = include_str!("../notices/chromium.txt");
 
 impl Release<'_> {
@@ -40,12 +41,14 @@ impl Release<'_> {
             .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
 
         let min_theme = self.workspace.join(MIN_THEME_LICENSE);
+        let font = self.workspace.join(FONT_LICENSE);
         for (file, source) in [
             ("heka.exe", self.exe.to_path_buf()),
             ("README.md", self.workspace.join("README.md")),
             ("LICENSE-MIT", self.workspace.join("LICENSE-MIT")),
             ("LICENSE-APACHE", self.workspace.join("LICENSE-APACHE")),
             ("LICENSE-MIN-THEME", min_theme.clone()),
+            ("LICENSE-GOOGLE-SANS-CODE", font.clone()),
             (
                 "THIRD-PARTY-NOTICES-RUST.html",
                 self.rust_notices.to_path_buf(),
@@ -55,12 +58,18 @@ impl Release<'_> {
                 .map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
         }
 
-        let min_theme = fs::read_to_string(&min_theme)
-            .map_err(|error| format!("cannot read {}: {error}", min_theme.display()))?;
+        let read = |path: &Path| {
+            fs::read_to_string(path)
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))
+        };
         let sections = [
             Section {
                 title: "Min Dark theme, converted from the Zed port of Min Theme".into(),
-                text: min_theme,
+                text: read(&min_theme)?,
+            },
+            Section {
+                title: "Google Sans Code, the font built into heka.exe".into(),
+                text: read(&font)?,
             },
             Section {
                 title: "Code derived from Chromium, in the AccessKit crates".into(),

@@ -8,6 +8,10 @@
     {
       "name": "Min Dark (Solid)",
       "mode": "dark",
+      "font.family": "Google Sans Code",
+      "font.size": 15,
+      "mono_font.family": "Google Sans Code",
+      "mono_font.size": 14,
       "radius": 4,
       "radius.lg": 6,
       "shadow": false,
