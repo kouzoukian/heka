@@ -28,6 +28,7 @@ it twice. The live pairing of the two is a **Bridge**.
   Controller reconnects.
 - **No double input:** the real Controller is hidden from games through HidHide.
 - **Up to 4 Controllers**, each with its own name, rumble strength and lights.
+- **A log** you can read in the window and attach to a report. It stays on your PC.
 - **Portable:** a zip with no installer. No telemetry.
 
 ## Setup
@@ -125,6 +126,15 @@ stays, with everything released, and carries on when the Controller returns.
 
 Rumble and lights apply while the Controller is Bridged.
 
+### Log and About
+
+The two buttons at the right of the status bar open them; press the same button again, or
+select a Controller, to go back.
+
+- **Log** lists what heka did in this run, newest first. **Copy log** puts it on the
+  clipboard and **Open log folder** shows the log files. See [The log](#the-log).
+- **About heka** shows the version, the licenses and a link to this repository.
+
 ### Tray
 
 Closing the window leaves heka running in the notification area, with every Bridge. Click
@@ -187,11 +197,13 @@ own rumble and light bar colours, and may create their own virtual controllers.
 - **The game sees two controllers.** See [Hiding Controllers](#hiding-controllers).
 - **The game sees none.** Check that the Controller's state says **Bridged**, and try the
   other Output Type.
+- **Reporting a problem.** [Open an issue](https://github.com/kouzoukian/heka/issues) and
+  attach [the log](#the-log), after reading what it holds.
 
 ## Files, updating and removing
 
 heka sends no telemetry and does not update itself. It keeps its settings in
-`%APPDATA%\heka` and its record of HidHide changes in `%LOCALAPPDATA%\heka`.
+`%APPDATA%\heka`, and its log and its record of HidHide changes in `%LOCALAPPDATA%\heka`.
 
 To update, quit heka and replace its files with those of the new release. If you move
 the folder, run heka once so that Start with Windows points to its new place.
@@ -199,6 +211,17 @@ the folder, run heka once so that Start with Windows points to its new place.
 To remove it, turn off **Start with Windows**, choose **Quit**, then delete heka's folder
 and the two folders above. If heka was killed, run it once and quit before deleting
 anything, so that it restores your Controllers.
+
+### The log
+
+`%LOCALAPPDATA%\heka\heka.log` is the current run and `heka.previous.log` the one before
+it, each at most 1 MiB. They hold, with the time of each: heka's start and version, the
+drivers found, Controllers connecting and disconnecting, Bridges, what heka changed in
+HidHide, errors and crashes.
+
+The log names your Controllers by their **Bluetooth addresses**, and it holds device paths
+and the folder heka runs from, which may include your Windows user name. heka sends it
+nowhere. Remove what you would rather not share before attaching it to a report.
 
 ## Building from source
 

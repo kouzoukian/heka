@@ -2,16 +2,21 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use heka_app::log::{Entry, Recent};
 use heka_app::text;
 use heka_app::ui::assets::Assets;
 use heka_app::ui::model::{Backend, Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_app::ui::pad::{PadModel, TouchDot};
-use heka_app::ui::view;
-use heka_core::link::LinkKind;
+use heka_app::ui::view::{self, Page};
+use heka_core::clock::Timestamp;
+use heka_core::hiding::{DeviceInstancePath, HidingChange};
+use heka_core::lifecycle::Change;
+use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
+use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
 
 const REPORT_EVERY: Duration = Duration::from_secs(2);
@@ -21,6 +26,7 @@ struct Fake {
     controllers: RefCell<Vec<ControllerEntry>>,
     missing: RefCell<Vec<Missing>>,
     samples: RefCell<(u32, Instant)>,
+    log: Recent,
 }
 
 impl Fake {
@@ -76,7 +82,8 @@ impl Fake {
         controllers[2].experimental = true;
         controllers[2].has_player_lights = false;
         controllers[1].nickname = Some("Sofa".into());
-        controllers[3].error = Some("made-up error for the preview".into());
+        let error = BridgeError::VirtualController("made-up error for the preview".into());
+        controllers[3].error = Some(text::bridge_error(&error));
         if missing {
             for entry in &mut controllers {
                 entry.state = EntryState::NotBridged;
@@ -102,6 +109,7 @@ impl Fake {
             controllers: RefCell::new(controllers),
             missing: RefCell::new(missing),
             samples: RefCell::new((0, now)),
+            log: made_up_log(),
         }
     }
 
@@ -145,6 +153,7 @@ impl Backend for Fake {
             missing,
             notices,
             controllers,
+            log: Recent::clone(&self.log),
         }
     }
 
@@ -157,6 +166,7 @@ impl Backend for Fake {
             | Command::SetOutputType(mac, _)
             | Command::SetNickname(mac, _)
             | Command::ChangePreference(mac, _) => *mac,
+            Command::OpenLogFolder => return,
             Command::CheckDrivers => {
                 self.missing.borrow_mut().clear();
                 for entry in controllers.iter_mut() {
@@ -181,9 +191,45 @@ impl Backend for Fake {
                 entry.nickname = (!name.is_empty()).then(|| name.to_owned());
             }
             Command::ChangePreference(_, change) => entry.preferences.change(change),
-            Command::CheckDrivers => {}
+            Command::CheckDrivers | Command::OpenLogFolder => {}
         }
     }
+}
+
+fn made_up_log() -> Recent {
+    let mac = MacAddress([0x02, 0, 0, 0, 0, 1]);
+    let messages = [
+        text::log::started("0.1.1", false),
+        "ViGEmBus found".into(),
+        "HidHide found".into(),
+        text::log::link_found(mac, ControllerModel::DualSense, LinkKind::Usb),
+        text::log::change(&Change::Bridged {
+            mac,
+            output_type: OutputType::Xbox,
+        }),
+        text::log::hiding_change(&HidingChange::Hidden(DeviceInstancePath::new(
+            r"HID\VID_054C&PID_0CE6&MI_03\8&15C30336&0&0000",
+        ))),
+        text::log::change(&Change::Held { mac }),
+    ];
+    Recent::new(
+        messages
+            .into_iter()
+            .zip(0..)
+            .map(|(message, second)| {
+                let at = Timestamp {
+                    year: 2026,
+                    month: 1,
+                    day: 1,
+                    hour: 21,
+                    minute: 3,
+                    second,
+                    millisecond: 0,
+                };
+                Entry { at, message }.into()
+            })
+            .collect(),
+    )
 }
 
 fn moving_pad(t: f32) -> PadModel {
@@ -214,7 +260,7 @@ fn main() {
     let mut missing = false;
     let mut first = 1;
     let mut seconds = None;
-    let mut settings = false;
+    let mut page = Page::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -223,7 +269,9 @@ fn main() {
             "--first" => {
                 first = args.next().and_then(|n| n.parse().ok()).expect("--first N");
             }
-            "--settings" => settings = true,
+            "--settings" => page = Page::Settings,
+            "--log" => page = Page::Log,
+            "--about" => page = Page::About,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
             other => panic!("unknown argument {other}"),
         }
@@ -232,12 +280,7 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx| {
             view::init(cx);
-            let open = if settings {
-                view::open_window_in_settings
-            } else {
-                view::open_window
-            };
-            open(cx, Rc::new(Fake::new(empty, missing, first)))
+            view::open_window_on(cx, Rc::new(Fake::new(empty, missing, first)), page)
                 .expect("failed to open the preview window");
             if let Some(seconds) = seconds {
                 cx.spawn(async move |cx| {

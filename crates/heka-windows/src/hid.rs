@@ -1,12 +1,12 @@
 use std::ffi::{CStr, CString};
-use std::fmt;
 
 use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 
 use heka_core::calibration::Calibration;
+use heka_core::discovery;
 use heka_core::link::{
-    ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
-    ReportError, ReportFormat, controller_model,
+    ControllerModel, FeedbackFormat, LinkKind, LinkProblem, LinkRead, LinkReader, LinkWriteError,
+    LinkWriter, ReportError, ReportFormat, controller_model,
 };
 use heka_core::mac::MacAddress;
 use heka_core::{dualsense, dualshock4};
@@ -50,29 +50,36 @@ pub struct ControllerLink {
 }
 
 impl ControllerLink {
-    pub fn open_path(api: &HidApi, path: &CStr) -> Result<(Self, MacAddress), OpenError> {
+    pub fn open_path(
+        api: &HidApi,
+        path: &CStr,
+    ) -> Result<(Self, MacAddress, Vec<LinkProblem>), OpenError> {
+        let not_a_controller = || OpenError::Refused(discovery::OpenError::NotAController);
         let info = api
             .device_list()
             .find(|info| info.path() == path)
-            .ok_or(OpenError::NotAController)?;
-        let model = controller_model(info.vendor_id(), info.product_id())
-            .ok_or(OpenError::NotAController)?;
-        let kind = link_kind(info.bus_type()).ok_or(OpenError::NotAController)?;
-        let device = api.open_path(path).map_err(OpenError::Hid)?;
+            .ok_or_else(not_a_controller)?;
+        let model =
+            controller_model(info.vendor_id(), info.product_id()).ok_or_else(not_a_controller)?;
+        let kind = link_kind(info.bus_type()).ok_or_else(not_a_controller)?;
+        let device = api.open_path(path).map_err(hid_error)?;
         let mac = match (model, kind) {
             (ControllerModel::DualSense, _) => read_dualsense_mac(&device)?,
             (ControllerModel::DualShock4, LinkKind::Usb) => read_dualshock4_mac(&device)?,
             (ControllerModel::DualShock4, LinkKind::Bluetooth) => info
                 .serial_number()
                 .and_then(|serial| dualshock4::parse_bluetooth_serial(serial).ok())
-                .ok_or(OpenError::SerialNumber)?,
+                .ok_or(OpenError::Refused(discovery::OpenError::SerialNumber))?,
         };
         if mac.is_virtual_controller() {
             return Err(OpenError::VirtualController);
         }
+        let mut problems = Vec::new();
         let (format, feedback) = match model {
-            ControllerModel::DualSense => dualsense_formats(&device, info.product_id(), kind),
-            ControllerModel::DualShock4 => dualshock4_formats(&device, kind)?,
+            ControllerModel::DualSense => {
+                dualsense_formats(&device, info.product_id(), kind, &mut problems)
+            }
+            ControllerModel::DualShock4 => dualshock4_formats(&device, kind, &mut problems)?,
         };
         let writer = match api.open_path(path) {
             Ok(device) => Some(ControllerWriter {
@@ -80,7 +87,7 @@ impl ControllerLink {
                 format: feedback,
             }),
             Err(error) => {
-                eprintln!("heka: no Feedback for this Controller: {error}");
+                problems.push(LinkProblem::NoFeedback(error.to_string()));
                 None
             }
         };
@@ -90,7 +97,7 @@ impl ControllerLink {
             format,
             writer,
         };
-        Ok((link, mac))
+        Ok((link, mac, problems))
     }
 
     pub fn hid_path(&self) -> &CStr {
@@ -102,9 +109,10 @@ fn dualsense_formats(
     device: &HidDevice,
     product_id: u16,
     kind: LinkKind,
+    problems: &mut Vec<LinkProblem>,
 ) -> (ReportFormat, FeedbackFormat) {
     let firmware_info = read_firmware_info(device);
-    let calibration = read_dualsense_calibration(device);
+    let calibration = read_dualsense_calibration(device, problems);
     let mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
     match kind {
         LinkKind::Usb => (
@@ -121,14 +129,17 @@ fn dualsense_formats(
 fn dualshock4_formats(
     device: &HidDevice,
     kind: LinkKind,
+    problems: &mut Vec<LinkProblem>,
 ) -> Result<(ReportFormat, FeedbackFormat), OpenError> {
     let read = |id| feature_report(device, id, DUALSHOCK4_FEATURE_BUFFER_LEN);
     Ok(match kind {
         LinkKind::Usb => {
             let calibration = match read(dualshock4::USB_CALIBRATION_REPORT_ID) {
-                Ok(report) => usable_calibration(dualshock4::parse_usb_calibration(&report)),
+                Ok(report) => {
+                    usable_calibration(dualshock4::parse_usb_calibration(&report), problems)
+                }
                 Err(error) => {
-                    eprintln!("heka: no motion calibration for this Controller: {error}");
+                    problems.push(LinkProblem::CalibrationUnread(Some(error.to_string())));
                     Calibration::UNCALIBRATED
                 }
             };
@@ -138,8 +149,9 @@ fn dualshock4_formats(
             )
         }
         LinkKind::Bluetooth => {
-            let report = read(dualshock4::BT_CALIBRATION_REPORT_ID).map_err(OpenError::Hid)?;
-            let calibration = usable_calibration(dualshock4::parse_bluetooth_calibration(&report));
+            let report = read(dualshock4::BT_CALIBRATION_REPORT_ID).map_err(hid_error)?;
+            let calibration =
+                usable_calibration(dualshock4::parse_bluetooth_calibration(&report), problems);
             (
                 ReportFormat::DualShock4Bluetooth(calibration),
                 FeedbackFormat::DualShock4Bluetooth,
@@ -174,19 +186,22 @@ pub fn read_calibration_report(device: &HidDevice) -> Option<Vec<u8>> {
     .ok()
 }
 
-fn read_dualsense_calibration(device: &HidDevice) -> Calibration {
+fn read_dualsense_calibration(device: &HidDevice, problems: &mut Vec<LinkProblem>) -> Calibration {
     match read_calibration_report(device) {
-        Some(report) => usable_calibration(dualsense::parse_calibration(&report)),
+        Some(report) => usable_calibration(dualsense::parse_calibration(&report), problems),
         None => {
-            eprintln!("heka: no motion calibration for this Controller");
+            problems.push(LinkProblem::CalibrationUnread(None));
             Calibration::UNCALIBRATED
         }
     }
 }
 
-fn usable_calibration(parsed: Result<Calibration, ReportError>) -> Calibration {
+fn usable_calibration(
+    parsed: Result<Calibration, ReportError>,
+    problems: &mut Vec<LinkProblem>,
+) -> Calibration {
     parsed.unwrap_or_else(|error| {
-        eprintln!("heka: no motion calibration for this Controller: {error}");
+        problems.push(LinkProblem::CalibrationInvalid(error));
         Calibration::UNCALIBRATED
     })
 }
@@ -197,8 +212,8 @@ fn read_dualsense_mac(device: &HidDevice) -> Result<MacAddress, OpenError> {
         dualsense::PAIRING_INFO_REPORT_ID,
         dualsense::PAIRING_INFO_LEN,
     )
-    .map_err(OpenError::Hid)?;
-    dualsense::parse_pairing_info(&report).map_err(OpenError::Mac)
+    .map_err(hid_error)?;
+    dualsense::parse_pairing_info(&report).map_err(address_error)
 }
 
 fn read_dualshock4_mac(device: &HidDevice) -> Result<MacAddress, OpenError> {
@@ -207,8 +222,8 @@ fn read_dualshock4_mac(device: &HidDevice) -> Result<MacAddress, OpenError> {
         dualshock4::PAIRING_INFO_REPORT_ID,
         DUALSHOCK4_FEATURE_BUFFER_LEN,
     )
-    .map_err(OpenError::Hid)?;
-    dualshock4::parse_pairing_info(&report).map_err(OpenError::Mac)
+    .map_err(hid_error)?;
+    dualshock4::parse_pairing_info(&report).map_err(address_error)
 }
 
 pub fn dualsense_usb_paths(api: &HidApi) -> Vec<CString> {
@@ -223,28 +238,19 @@ pub fn controller_paths(api: &HidApi) -> Vec<CString> {
         .collect()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenError {
-    Hid(HidError),
-    Mac(ReportError),
-    SerialNumber,
     VirtualController,
-    NotAController,
+    Refused(discovery::OpenError),
 }
 
-impl fmt::Display for OpenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Hid(error) => write!(f, "{error}"),
-            Self::Mac(error) => write!(f, "cannot read the MAC address: {error}"),
-            Self::SerialNumber => f.write_str("the serial number is not a MAC address"),
-            Self::VirtualController => f.write_str("it is a Virtual Controller"),
-            Self::NotAController => f.write_str("no Controller is there"),
-        }
-    }
+fn hid_error(error: HidError) -> OpenError {
+    OpenError::Refused(discovery::OpenError::Hid(error.to_string()))
 }
 
-impl std::error::Error for OpenError {}
+fn address_error(error: ReportError) -> OpenError {
+    OpenError::Refused(discovery::OpenError::Address(error))
+}
 
 impl LinkReader for ControllerLink {
     fn format(&self) -> ReportFormat {

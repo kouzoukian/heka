@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
-use crate::hiding::{DeviceInstancePath, Hiding, HidingError};
+use crate::hiding::{
+    DeviceInstancePath, Hiding, HidingChange, HidingError, HidingUnavailable, IdentifyError,
+};
 use crate::lifecycle::{Change, Removal};
 use crate::mac::MacAddress;
 
@@ -10,21 +12,21 @@ pub const INVERSE_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HideError {
     NoLink,
-    Unidentified(String),
-    Failed(String),
+    Unidentified(IdentifyError),
+    Failed(HidingError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HidingWarning {
-    Unavailable(String),
-    EarlierRunNotRestored(String),
-    NotRestored(String),
-    NotAllowed(String),
+    Unavailable(HidingUnavailable),
+    EarlierRunNotRestored(HidingError),
+    NotRestored(HidingError),
+    NotAllowed(HidingError),
     NotHidden(HideError),
     Inverted,
 }
 
-type Devices<K> = BTreeMap<K, Result<DeviceInstancePath, String>>;
+type Devices<K> = BTreeMap<K, Result<DeviceInstancePath, IdentifyError>>;
 
 pub struct Hider<K> {
     hiding: Option<Hiding>,
@@ -33,10 +35,10 @@ pub struct Hider<K> {
     left_visible: BTreeSet<MacAddress>,
     pending: BTreeSet<MacAddress>,
     allow_pending: bool,
-    unavailable: Option<String>,
-    earlier_run_not_restored: Option<String>,
-    not_restored: Option<String>,
-    not_allowed: Option<String>,
+    unavailable: Option<HidingUnavailable>,
+    earlier_run_not_restored: Option<HidingError>,
+    not_restored: Option<HidingError>,
+    not_allowed: Option<HidingError>,
     not_hidden: Option<HideError>,
     inverted: bool,
     look_for_inverse_at: Option<Instant>,
@@ -44,7 +46,7 @@ pub struct Hider<K> {
 
 impl<K: Ord> Hider<K> {
     pub fn new(
-        hiding: Result<Hiding, String>,
+        hiding: Result<Hiding, HidingUnavailable>,
         left_visible: impl IntoIterator<Item = MacAddress>,
     ) -> Self {
         let (hiding, unavailable) = match hiding {
@@ -67,7 +69,7 @@ impl<K: Ord> Hider<K> {
             look_for_inverse_at: None,
         };
         if let Some(Err(error)) = hider.hiding.as_ref().map(Hiding::recover) {
-            hider.earlier_run_not_restored = Some(error.to_string());
+            hider.earlier_run_not_restored = Some(error);
         }
         hider.allow();
         hider
@@ -94,7 +96,7 @@ impl<K: Ord> Hider<K> {
         &mut self,
         mac: MacAddress,
         link: K,
-        device: Result<DeviceInstancePath, String>,
+        device: Result<DeviceInstancePath, IdentifyError>,
     ) {
         self.devices.entry(mac).or_default().insert(link, device);
         if self.wanted.contains(&mac) {
@@ -160,6 +162,13 @@ impl<K: Ord> Hider<K> {
         self.look_for_inverse(now);
     }
 
+    pub fn take_changes(&mut self) -> Vec<HidingChange> {
+        self.hiding
+            .as_ref()
+            .map(Hiding::take_changes)
+            .unwrap_or_default()
+    }
+
     pub fn restore_all(&mut self) -> Result<(), HidingError> {
         self.hiding.as_ref().map_or(Ok(()), Hiding::restore_all)
     }
@@ -173,7 +182,7 @@ impl<K: Ord> Hider<K> {
                 self.allow_pending = false;
                 self.not_allowed = None;
             }
-            Err(error) => self.not_allowed = Some(error.to_string()),
+            Err(error) => self.not_allowed = Some(error),
         }
     }
 
@@ -193,8 +202,8 @@ impl<K: Ord> Hider<K> {
                 .map(|device| match device {
                     Ok(device) => hiding
                         .hide(&mac.to_string(), device)
-                        .map_err(|error| HideError::Failed(error.to_string())),
-                    Err(error) => Err(HideError::Unidentified(error.clone())),
+                        .map_err(HideError::Failed),
+                    Err(error) => Err(HideError::Unidentified(*error)),
                 })
                 .fold(Ok(()), Result::and),
             None => Err(HideError::NoLink),
@@ -219,7 +228,7 @@ impl<K: Ord> Hider<K> {
             .map(|hiding| hiding.release(&mac.to_string()));
         match released {
             Some(Ok(())) => self.restored(),
-            Some(Err(error)) => self.not_restored = Some(error.to_string()),
+            Some(Err(error)) => self.not_restored = Some(error),
             None => {}
         }
     }
@@ -237,13 +246,10 @@ impl<K: Ord> Hider<K> {
         };
         match result {
             Ok(()) => self.restored(),
-            Err(error) => {
-                let error = error.to_string();
-                match &mut self.earlier_run_not_restored {
-                    Some(earlier) => *earlier = error,
-                    None => self.not_restored = Some(error),
-                }
-            }
+            Err(error) => match &mut self.earlier_run_not_restored {
+                Some(earlier) => *earlier = error,
+                None => self.not_restored = Some(error),
+            },
         }
     }
 

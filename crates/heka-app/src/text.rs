@@ -1,8 +1,13 @@
-use heka_core::discovery::Unopened;
+use heka_core::discovery::{OpenError, Unopened};
 use heka_core::hider::{HideError, HidingWarning};
+use heka_core::hiding::{
+    HidHideError, HidingError, HidingUnavailable, IdentifyError, JournalError,
+};
 use heka_core::lifecycle::MAX_BRIDGES;
-use heka_core::link::{ControllerModel, LinkKind};
+use heka_core::link::{ControllerModel, LinkKind, ReportError};
 use heka_core::state::{Battery, Charge};
+use heka_core::supervisor::BridgeError;
+use heka_core::virtual_controller::OutputType;
 
 pub const APP_NAME: &str = "heka";
 
@@ -145,7 +150,7 @@ pub const START_WITH_WINDOWS: &str = "Start with Windows";
 pub const QUIT: &str = "Quit";
 
 pub mod setup {
-    use heka_core::setup::{Driver, Missing};
+    use heka_core::setup::{Driver, DriverError, Missing};
 
     pub const CHECK_AGAIN: &str = "Check again";
     pub const SEPARATOR: &str = "·";
@@ -162,7 +167,15 @@ pub mod setup {
         let name = name(missing.driver);
         match &missing.error {
             None => format!("{name} is not installed or not running"),
-            Some(error) => format!("{name} cannot be used: {error}"),
+            Some(error) => format!("{name} cannot be used: {}", reason(error)),
+        }
+    }
+
+    fn reason(error: &DriverError) -> String {
+        match error {
+            DriverError::Bus(error)
+            | DriverError::HidHide(heka_core::hiding::HidHideError::Failed(error)) => error.clone(),
+            DriverError::HidHide(error) => super::hidhide_error(error),
         }
     }
 
@@ -236,16 +249,105 @@ pub const HIDHIDE_INVERTED: &str = "Games may see each Controller twice. Turn of
 
 pub fn hiding_warning(warning: &HidingWarning) -> String {
     match warning {
-        HidingWarning::Unavailable(error) => cannot_hide_at_all(error),
-        HidingWarning::EarlierRunNotRestored(error) => cannot_restore_earlier_run(error),
-        HidingWarning::NotRestored(error) => cannot_restore(error),
-        HidingWarning::NotAllowed(error) => not_allowed(error),
+        HidingWarning::Unavailable(error) => cannot_hide_at_all(&hiding_unavailable(error)),
+        HidingWarning::EarlierRunNotRestored(error) => {
+            cannot_restore_earlier_run(&hiding_error(error))
+        }
+        HidingWarning::NotRestored(error) => cannot_restore(&hiding_error(error)),
+        HidingWarning::NotAllowed(error) => not_allowed(&hiding_error(error)),
         HidingWarning::NotHidden(HideError::NoLink) => not_hidden(NO_LINK_TO_HIDE),
         HidingWarning::NotHidden(HideError::Unidentified(error)) => {
-            not_hidden(&cannot_identify_for_hiding(error))
+            not_hidden(&cannot_identify_for_hiding(&identify_error(*error)))
         }
-        HidingWarning::NotHidden(HideError::Failed(error)) => not_hidden(error),
+        HidingWarning::NotHidden(HideError::Failed(error)) => not_hidden(&hiding_error(error)),
         HidingWarning::Inverted => HIDHIDE_INVERTED.into(),
+    }
+}
+
+pub fn hidhide_error(error: &HidHideError) -> String {
+    match error {
+        HidHideError::NotInstalled => {
+            "HidHide is not installed or its driver is not running".into()
+        }
+        HidHideError::InUse => {
+            "HidHide is busy: close the HidHide Configuration Client or HidHideCLI".into()
+        }
+        HidHideError::UnexpectedSize(bytes) => {
+            format!("HidHide failed: HidHide returned {bytes} bytes for a BOOLEAN")
+        }
+        HidHideError::TooLarge => "HidHide failed: buffer too large".into(),
+        HidHideError::Failed(error) => format!("HidHide failed: {error}"),
+    }
+}
+
+pub fn hiding_error(error: &HidingError) -> String {
+    match error {
+        HidingError::HidHide(error) => hidhide_error(error),
+        HidingError::Journal(error) => {
+            format!(
+                "cannot use heka's HidHide journal: {}",
+                journal_error(error)
+            )
+        }
+    }
+}
+
+fn journal_error(error: &JournalError) -> String {
+    match error {
+        JournalError::Io(error) => error.clone(),
+        JournalError::UnexpectedLine { path, line } => {
+            format!("{}: unexpected line {line:?}", path.display())
+        }
+    }
+}
+
+fn hiding_unavailable(error: &HidingUnavailable) -> String {
+    match error {
+        HidingUnavailable::NoLocalAppData => "LOCALAPPDATA is not set".into(),
+        HidingUnavailable::NoImageName(error) => error.clone(),
+    }
+}
+
+fn identify_error(error: IdentifyError) -> String {
+    match error {
+        IdentifyError::Status(status) => {
+            format!("cannot read the device instance ID (CONFIGRET {status})")
+        }
+        IdentifyError::NotText => "the device instance ID is not text".into(),
+    }
+}
+
+pub fn bridge_error(error: &BridgeError) -> String {
+    match error {
+        BridgeError::NoBus => "ViGEmBus is not connected".into(),
+        BridgeError::NoThread(error) => format!("cannot start a thread: {error}"),
+        BridgeError::VirtualController(error) => error.clone(),
+    }
+}
+
+pub fn report_error(error: ReportError) -> String {
+    match error {
+        ReportError::TooShort { len } => format!("report too short ({len} bytes)"),
+        ReportError::UnexpectedId { id } => format!("unexpected report ID {id:#04x}"),
+        ReportError::BadCrc => "report CRC does not match".into(),
+    }
+}
+
+pub fn open_error(error: &OpenError) -> String {
+    match error {
+        OpenError::Hid(error) => error.clone(),
+        OpenError::Address(error) => {
+            format!("cannot read the MAC address: {}", report_error(*error))
+        }
+        OpenError::SerialNumber => "the serial number is not a MAC address".into(),
+        OpenError::NotAController => "no Controller is there".into(),
+    }
+}
+
+pub fn output_type(output_type: OutputType) -> &'static str {
+    match output_type {
+        OutputType::Xbox => XBOX,
+        OutputType::Ps4 => PS4,
     }
 }
 
@@ -257,7 +359,7 @@ pub fn cannot_open(unopened: &Unopened) -> String {
     format!(
         "A {} was found but cannot be opened: {}",
         controller(unopened.model),
-        unopened.error
+        open_error(&unopened.error)
     )
 }
 
@@ -274,4 +376,184 @@ pub fn not_unplugged(error: &str) -> String {
 
 pub fn cannot_draw(error: &str) -> String {
     format!("cannot draw a Controller: {error}")
+}
+
+pub const LOG: &str = "Log";
+pub const COPY_LOG: &str = "Copy log";
+pub const OPEN_LOG_FOLDER: &str = "Open log folder";
+pub const NOTHING_LOGGED: &str = "Nothing logged yet";
+
+pub const ABOUT: &str = "About heka";
+pub const TAGLINE: &str = "Lets games treat a PlayStation controller as an Xbox or PS4 controller.";
+pub const ROW_VERSION: &str = "Version";
+pub const ROW_LICENSE: &str = "License";
+pub const LICENSE_MIT: &str = "MIT";
+pub const LICENSE_OR: &str = "or";
+pub const LICENSE_APACHE: &str = "Apache-2.0";
+pub const ROW_THEME: &str = "Theme";
+pub const THEME_CREDIT: &str = "Min Dark, MIT";
+pub const ROW_FONT: &str = "Font";
+pub const FONT_CREDIT: &str = "Google Sans Code, OFL 1.1";
+pub const ROW_NOTICES: &str = "Notices";
+pub const NOTICES_FILE: &str = "THIRD-PARTY-NOTICES.txt";
+pub const NOTICES_TIP: &str =
+    "The licenses of everything built into heka.exe, in the file beside it.";
+pub const ROW_SOURCE: &str = "Source";
+
+pub mod log {
+    use std::path::Path;
+
+    use heka_core::hiding::{HidingChange, HidingError};
+    use heka_core::lifecycle::{Change, Removal};
+    use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
+    use heka_core::mac::MacAddress;
+    use heka_core::setup::{Driver, Setup};
+    use heka_core::supervisor::BridgeError;
+
+    pub const QUITTING: &str = "heka is quitting";
+    pub const LOOKING_AGAIN: &str = "Looking for Controllers again";
+    pub const TRIMMED: &str = "Older entries were left out to keep the log small.";
+    pub const NO_APPDATA: &str = "APPDATA is not set; settings are not saved";
+
+    pub fn started(version: &str, in_tray: bool) -> String {
+        if in_tray {
+            format!("heka {version} started in the tray")
+        } else {
+            format!("heka {version} started")
+        }
+    }
+
+    pub fn panicked(thread: Option<&str>, panic: &str) -> String {
+        let thread = thread.unwrap_or("without a name");
+        format!("Panic on thread {thread}: {panic}")
+    }
+
+    pub fn repeated(message: &str, left_out: u32) -> String {
+        format!("{message} (left out {left_out} repeats)")
+    }
+
+    pub fn cannot_write(error: &str) -> String {
+        format!("cannot write the log: {error}")
+    }
+
+    pub fn drivers(setup: &Setup) -> Vec<String> {
+        let missing = setup.missing();
+        [Driver::ViGEmBus, Driver::HidHide]
+            .into_iter()
+            .map(|driver| match missing.iter().find(|m| m.driver == driver) {
+                Some(missing) => super::setup::heading(missing),
+                None => format!("{} found", super::setup::name(driver)),
+            })
+            .collect()
+    }
+
+    pub fn change(change: &Change) -> String {
+        match *change {
+            Change::Bridged { mac, output_type } => {
+                let output_type = super::output_type(output_type);
+                format!("{mac}: Bridged to a Virtual Controller ({output_type})")
+            }
+            Change::Held { mac } => format!("{mac}: Held, every Link is lost"),
+            Change::Returned { mac } => format!("{mac}: returned while Held"),
+            Change::Removed { mac, why } => {
+                let why = match why {
+                    Removal::Stopped => "Stopped",
+                    Removal::Expired => "the Held time is over",
+                    Removal::Failed => "the Bridge failed",
+                    Removal::OutputTypeChanged => "the Output Type changed",
+                    Removal::Quit => "heka is quitting",
+                };
+                format!("{mac}: Virtual Controller removed, {why}")
+            }
+        }
+    }
+
+    pub fn link_found(mac: MacAddress, model: ControllerModel, link: LinkKind) -> String {
+        let model = super::controller(model);
+        let link = super::link(Some(link));
+        format!("{mac}: {model} found over {link}")
+    }
+
+    pub fn link_gone(mac: MacAddress) -> String {
+        format!("{mac}: a Link is gone")
+    }
+
+    pub fn link_problem(mac: MacAddress, problem: &LinkProblem) -> String {
+        let problem = match problem {
+            LinkProblem::NoFeedback(error) => {
+                format!("no Feedback for this Controller: {error}")
+            }
+            LinkProblem::CalibrationUnread(None) => {
+                "no motion calibration for this Controller".into()
+            }
+            LinkProblem::CalibrationUnread(Some(error)) => {
+                format!("no motion calibration for this Controller: {error}")
+            }
+            LinkProblem::CalibrationInvalid(error) => format!(
+                "no motion calibration for this Controller: {}",
+                super::report_error(*error)
+            ),
+        };
+        format!("{mac}: {problem}")
+    }
+
+    pub fn bridge_error(mac: MacAddress, error: &BridgeError) -> String {
+        format!(
+            "{mac}: {}",
+            super::bridge_failed(&super::bridge_error(error))
+        )
+    }
+
+    pub fn hiding_change(change: &HidingChange) -> String {
+        match change {
+            HidingChange::Allowed(app) => format!("HidHide: allowed {app}"),
+            HidingChange::Hidden(device) => format!("HidHide: Hid {device}"),
+            HidingChange::CloakOn => "HidHide: turned hiding on".into(),
+            HidingChange::CloakOff => "HidHide: turned hiding off".into(),
+            HidingChange::Restored(device) => format!("HidHide: restored {device}"),
+            HidingChange::Disallowed(app) => {
+                format!("HidHide: removed {app} from the allowed applications")
+            }
+        }
+    }
+
+    pub fn no_longer(warning: &str) -> String {
+        format!("No longer: {warning}")
+    }
+
+    pub fn cannot_restore_on_quit(error: &HidingError) -> String {
+        format!("could not restore HidHide: {}", super::hiding_error(error))
+    }
+
+    pub fn no_virtual_feedback(error: &str) -> String {
+        format!("no Feedback from the Virtual Controller: {error}")
+    }
+
+    pub fn cannot_read_settings(path: &Path, error: &str) -> String {
+        format!("cannot read {}: {error}", path.display())
+    }
+
+    pub fn cannot_save_settings(path: &Path, error: &str) -> String {
+        format!("cannot save {}: {error}", path.display())
+    }
+
+    pub fn cannot_check_for_running_copy(error: &str) -> String {
+        format!("cannot check for a running copy: {error}")
+    }
+
+    pub fn cannot_add_tray_icon(error: &str) -> String {
+        format!("cannot add the tray icon: {error}")
+    }
+
+    pub fn cannot_update_autostart(error: &str) -> String {
+        format!("cannot update Start with Windows: {error}")
+    }
+
+    pub fn cannot_change_autostart(error: &str) -> String {
+        format!("cannot change Start with Windows: {error}")
+    }
+
+    pub fn cannot_open_log_folder(error: &str) -> String {
+        format!("cannot open the log folder: {error}")
+    }
 }

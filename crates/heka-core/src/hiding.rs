@@ -36,6 +36,28 @@ impl fmt::Display for DeviceInstancePath {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentifyError {
+    Status(u32),
+    NotText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HidingUnavailable {
+    NoLocalAppData,
+    NoImageName(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HidingChange {
+    Allowed(String),
+    Hidden(DeviceInstancePath),
+    CloakOn,
+    CloakOff,
+    Restored(DeviceInstancePath),
+    Disallowed(String),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HidHideConfig {
     pub active: bool,
@@ -48,24 +70,10 @@ pub struct HidHideConfig {
 pub enum HidHideError {
     NotInstalled,
     InUse,
+    UnexpectedSize(usize),
+    TooLarge,
     Failed(String),
 }
-
-impl fmt::Display for HidHideError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotInstalled => {
-                f.write_str("HidHide is not installed or its driver is not running")
-            }
-            Self::InUse => {
-                f.write_str("HidHide is busy: close the HidHide Configuration Client or HidHideCLI")
-            }
-            Self::Failed(message) => write!(f, "HidHide failed: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for HidHideError {}
 
 pub trait HidHide: Send {
     fn read(&self) -> Result<HidHideConfig, HidHideError>;
@@ -79,7 +87,7 @@ pub enum HidHideStatus {
     Ready,
     NotInstalled,
     InUse,
-    Failed(String),
+    Failed(HidHideError),
 }
 
 impl HidHideStatus {
@@ -88,7 +96,7 @@ impl HidHideStatus {
             Ok(_) => Self::Ready,
             Err(HidHideError::NotInstalled) => Self::NotInstalled,
             Err(HidHideError::InUse) => Self::InUse,
-            Err(HidHideError::Failed(message)) => Self::Failed(message),
+            Err(error) => Self::Failed(error),
         }
     }
 }
@@ -106,9 +114,21 @@ impl Journal {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JournalError {
+    Io(String),
+    UnexpectedLine { path: PathBuf, line: String },
+}
+
+impl From<std::io::Error> for JournalError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error.to_string())
+    }
+}
+
 pub trait JournalStore: Send {
-    fn load(&self) -> std::io::Result<Journal>;
-    fn save(&self, journal: &Journal) -> std::io::Result<()>;
+    fn load(&self) -> Result<Journal, JournalError>;
+    fn save(&self, journal: &Journal) -> Result<(), JournalError>;
 }
 
 pub struct FileJournal {
@@ -127,17 +147,15 @@ impl FileJournal {
 }
 
 impl JournalStore for FileJournal {
-    fn load(&self) -> std::io::Result<Journal> {
+    fn load(&self) -> Result<Journal, JournalError> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Journal::default()),
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         };
-        let invalid = |line: &str| {
-            std::io::Error::new(
-                ErrorKind::InvalidData,
-                format!("{}: unexpected line {line:?}", self.path.display()),
-            )
+        let invalid = |line: &str| JournalError::UnexpectedLine {
+            path: self.path.clone(),
+            line: line.to_owned(),
         };
         let mut lines = text.lines();
         match lines.next() {
@@ -159,10 +177,10 @@ impl JournalStore for FileJournal {
         Ok(journal)
     }
 
-    fn save(&self, journal: &Journal) -> std::io::Result<()> {
+    fn save(&self, journal: &Journal) -> Result<(), JournalError> {
         if journal.is_empty() {
             return match fs::remove_file(&self.path) {
-                Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
+                Err(error) if error.kind() != ErrorKind::NotFound => Err(error.into()),
                 _ => Ok(()),
             };
         }
@@ -184,26 +202,15 @@ impl JournalStore for FileJournal {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&partial, &self.path)
+        Ok(fs::rename(&partial, &self.path)?)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HidingError {
     HidHide(HidHideError),
-    Journal(std::io::Error),
+    Journal(JournalError),
 }
-
-impl fmt::Display for HidingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::HidHide(error) => error.fmt(f),
-            Self::Journal(error) => write!(f, "cannot save heka's HidHide journal: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for HidingError {}
 
 impl From<HidHideError> for HidingError {
     fn from(error: HidHideError) -> Self {
@@ -211,8 +218,8 @@ impl From<HidHideError> for HidingError {
     }
 }
 
-impl From<std::io::Error> for HidingError {
-    fn from(error: std::io::Error) -> Self {
+impl From<JournalError> for HidingError {
+    fn from(error: JournalError) -> Self {
         Self::Journal(error)
     }
 }
@@ -229,6 +236,7 @@ struct Inner {
     wanted: BTreeMap<String, BTreeSet<String>>,
     stay_allowed: bool,
     journal_unread: bool,
+    changes: Vec<HidingChange>,
 }
 
 impl Hiding {
@@ -242,6 +250,7 @@ impl Hiding {
                 wanted: BTreeMap::new(),
                 stay_allowed: false,
                 journal_unread: false,
+                changes: Vec::new(),
             }),
         }
     }
@@ -291,6 +300,10 @@ impl Hiding {
         Ok(self.lock().hidhide.read()?.inverse)
     }
 
+    pub fn take_changes(&self) -> Vec<HidingChange> {
+        std::mem::take(&mut self.lock().changes)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -320,12 +333,14 @@ impl Inner {
             let mut devices = config.hidden_devices.clone();
             devices.push(device.as_str().to_owned());
             self.hidhide.set_hidden_devices(&devices)?;
+            self.changes.push(HidingChange::Hidden(device.clone()));
         }
 
         if !config.active {
             self.journal.cloak_was_off = true;
             self.save()?;
             self.hidhide.set_active(true)?;
+            self.changes.push(HidingChange::CloakOn);
         }
         Ok(())
     }
@@ -339,6 +354,7 @@ impl Inner {
         let mut apps = config.allowed_apps.clone();
         apps.push(self.app.clone());
         self.hidhide.set_allowed_apps(&apps)?;
+        self.changes.push(HidingChange::Allowed(self.app.clone()));
         Ok(())
     }
 
@@ -368,6 +384,7 @@ impl Inner {
         if undo_cloak {
             if config.active {
                 self.hidhide.set_active(false)?;
+                self.changes.push(HidingChange::CloakOff);
             }
             self.journal.cloak_was_off = false;
             self.save()?;
@@ -382,6 +399,13 @@ impl Inner {
                 .collect();
             if devices.len() != config.hidden_devices.len() {
                 self.hidhide.set_hidden_devices(&devices)?;
+                let restored = config
+                    .hidden_devices
+                    .iter()
+                    .filter(|device| contains(&release, device))
+                    .map(|device| DeviceInstancePath::new(device.as_str()))
+                    .map(HidingChange::Restored);
+                self.changes.extend(restored);
             }
             self.journal
                 .hidden_devices
@@ -398,6 +422,7 @@ impl Inner {
                 .collect();
             if apps.len() != config.allowed_apps.len() {
                 self.hidhide.set_allowed_apps(&apps)?;
+                self.changes.push(HidingChange::Disallowed(app));
             }
             self.journal.allowed_app = None;
             self.save()?;

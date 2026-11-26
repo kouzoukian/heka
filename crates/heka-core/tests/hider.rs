@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use heka_core::hider::{HideError, Hider, HidingWarning, INVERSE_CHECK_INTERVAL};
 use heka_core::hiding::{
-    DeviceInstancePath, HidHide, HidHideConfig, HidHideError, Hiding, Journal, JournalStore,
+    DeviceInstancePath, HidHide, HidHideConfig, HidHideError, Hiding, HidingChange, HidingError,
+    HidingUnavailable, Journal, JournalError, JournalStore,
 };
 use heka_core::lifecycle::{Change, Removal};
 use heka_core::mac::MacAddress;
@@ -70,15 +71,15 @@ impl HidHide for FakeHidHide {
 struct MemoryJournal(Shared);
 
 impl JournalStore for MemoryJournal {
-    fn load(&self) -> std::io::Result<Journal> {
+    fn load(&self) -> Result<Journal, JournalError> {
         let world = self.0.lock().unwrap();
         if world.unreadable_journal {
-            return Err(std::io::Error::other("the disk is busy"));
+            return Err(JournalError::Io("the disk is busy".into()));
         }
         Ok(world.journal.clone())
     }
 
-    fn save(&self, journal: &Journal) -> std::io::Result<()> {
+    fn save(&self, journal: &Journal) -> Result<(), JournalError> {
         self.0.lock().unwrap().journal = journal.clone();
         Ok(())
     }
@@ -119,8 +120,8 @@ fn hidden(world: &Shared) -> Vec<String> {
     world.lock().unwrap().config.hidden_devices.clone()
 }
 
-fn busy() -> String {
-    HidHideError::InUse.to_string()
+fn busy() -> HidingError {
+    HidingError::HidHide(HidHideError::InUse)
 }
 
 fn hidden_first(world: &Shared) -> Hider<&'static str> {
@@ -155,11 +156,6 @@ fn a_failed_restore_is_retried_every_poll_until_it_succeeds() {
     assert_eq!(hider.warnings(), []);
     assert_eq!(hidden(&world), Vec::<String>::new());
     assert!(!world.lock().unwrap().config.active);
-}
-
-#[test]
-fn the_message_about_a_busy_hidhide_does_not_say_what_heka_is_doing() {
-    assert!(!busy().to_lowercase().contains("hide the controller"));
 }
 
 #[test]
@@ -319,7 +315,7 @@ fn the_inverse_application_cloak_is_warned_about_until_it_is_off() {
 #[test]
 fn without_hidhide_the_reason_is_the_only_warning() {
     let t0 = Instant::now();
-    let mut hider: Hider<&str> = Hider::new(Err("no journal folder".into()), []);
+    let mut hider: Hider<&str> = Hider::new(Err(HidingUnavailable::NoLocalAppData), []);
 
     seen(&mut hider, 1, FIRST);
     hider.follow(&[bridged(1), removed(1)]);
@@ -327,7 +323,54 @@ fn without_hidhide_the_reason_is_the_only_warning() {
 
     assert_eq!(
         hider.warnings(),
-        [HidingWarning::Unavailable("no journal folder".into())]
+        [HidingWarning::Unavailable(
+            HidingUnavailable::NoLocalAppData
+        )]
     );
     assert!(hider.restore_all().is_ok());
+}
+
+#[test]
+fn each_change_made_to_hidhide_is_handed_over_once() {
+    let t0 = Instant::now();
+    let world = Shared::default();
+    let mut hider = hidden_first(&world);
+
+    assert_eq!(
+        hider.take_changes(),
+        [
+            HidingChange::Allowed(HEKA.into()),
+            HidingChange::Hidden(DeviceInstancePath::new(FIRST)),
+            HidingChange::CloakOn,
+        ]
+    );
+    hider.follow(&[bridged(1)]);
+    hider.poll(t0);
+    assert_eq!(hider.take_changes(), []);
+
+    hider.follow(&[removed(1)]);
+    assert_eq!(
+        hider.take_changes(),
+        [
+            HidingChange::CloakOff,
+            HidingChange::Restored(DeviceInstancePath::new(FIRST)),
+        ]
+    );
+    hider.restore_all().unwrap();
+    assert_eq!(
+        hider.take_changes(),
+        [HidingChange::Disallowed(HEKA.into())]
+    );
+}
+
+#[test]
+fn a_change_that_hidhide_refuses_is_not_reported_as_made() {
+    let world = Shared::default();
+    let mut hider = hidden_first(&world);
+    hider.take_changes();
+    world.lock().unwrap().busy = true;
+
+    hider.follow(&[removed(1)]);
+
+    assert_eq!(hider.take_changes(), []);
 }

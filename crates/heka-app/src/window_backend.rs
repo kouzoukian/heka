@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+use std::process;
 use std::sync::Arc;
 use std::time::Instant;
 
-use heka_app::text;
 use heka_app::ui::model::{Backend, Command, ControllerEntry, Notice, Screen};
+use heka_app::{log, text};
 use heka_core::setup::Driver;
 
 use crate::bridging::{Bridging, Status};
@@ -49,6 +51,7 @@ impl Backend for WindowBackend {
                 .iter()
                 .map(|view| ControllerEntry::from_view(view, now, bus_missing))
                 .collect(),
+            log: log::recent(),
         }
     }
 
@@ -61,6 +64,18 @@ impl Backend for WindowBackend {
             Command::SetNickname(mac, name) => bridging.set_nickname(mac, name),
             Command::ChangePreference(mac, change) => bridging.change_preference(mac, change),
             Command::CheckDrivers => bridging.check_drivers(),
+            Command::OpenLogFolder => open_log_folder(),
         }
+    }
+}
+
+fn open_log_folder() {
+    let Some(folder) = log::folder() else {
+        return;
+    };
+    let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let explorer = PathBuf::from(windows).join("explorer.exe");
+    if let Err(error) = process::Command::new(explorer).arg(folder).spawn() {
+        log::line(&text::log::cannot_open_log_folder(&error.to_string()));
     }
 }

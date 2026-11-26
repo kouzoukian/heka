@@ -140,6 +140,7 @@ struct FakeController {
     fail_updates: bool,
     fail_unplug: bool,
     feedback: Option<Receiver<Feedback>>,
+    refuse_feedback: bool,
 }
 
 impl FakeController {
@@ -149,6 +150,7 @@ impl FakeController {
             record: Arc::clone(&record),
             fail_updates: false,
             fail_unplug: false,
+            refuse_feedback: false,
             feedback: None,
         });
         (controller, record)
@@ -183,10 +185,14 @@ impl VirtualController for FakeController {
         Ok(())
     }
 
-    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
-        self.feedback
+    fn feedback(&mut self) -> Result<Option<Box<dyn FeedbackSource>>, VirtualError> {
+        if self.refuse_feedback {
+            return Err(VirtualError::new("no notifications"));
+        }
+        Ok(self
+            .feedback
             .take()
-            .map(|feedback| Box::new(FakeFeedback(feedback)) as Box<dyn FeedbackSource>)
+            .map(|feedback| Box::new(FakeFeedback(feedback)) as Box<dyn FeedbackSource>))
     }
 }
 
@@ -1083,4 +1089,16 @@ fn a_rainbow_does_not_hurry_the_retry_of_a_failing_write() {
 
     assert!(failing_since.elapsed() >= Duration::from_millis(300));
     bridge.stop();
+}
+
+#[test]
+fn a_virtual_controller_that_gives_no_feedback_is_reported_once() {
+    let (mut controller, _) = FakeController::new();
+    controller.refuse_feedback = true;
+    let (controller, failures) = reporting(controller);
+
+    drop(controller);
+
+    let no_feedback = VirtualFailure::NoFeedback("no notifications".into());
+    assert_eq!(failures.take(), [no_feedback]);
 }

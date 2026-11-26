@@ -84,17 +84,12 @@ pub enum ReportError {
     BadCrc,
 }
 
-impl fmt::Display for ReportError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TooShort { len } => write!(f, "input report too short ({len} bytes)"),
-            Self::UnexpectedId { id } => write!(f, "unexpected report ID {id:#04x}"),
-            Self::BadCrc => f.write_str("report CRC does not match"),
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkProblem {
+    NoFeedback(String),
+    CalibrationUnread(Option<String>),
+    CalibrationInvalid(ReportError),
 }
-
-impl std::error::Error for ReportError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRead {

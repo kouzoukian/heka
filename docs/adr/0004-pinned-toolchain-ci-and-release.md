@@ -7,6 +7,7 @@
 - `gpui-kit-assets` supplies the icons `gpui-component` draws with. Without them icons render blank.
 - `gpui_platform` (`gpui-pre-platform`) provides `application()`, which is not part of `gpui-pre`'s own dependency tree.
 - `windows-sys` is pinned to the version `hidapi` already uses.
+- `embed-resource`, which compiles `heka.exe`'s icon and version information, is pinned to the version `gpui-pre` already uses.
 - `heka-app`'s `windows-sys` dev-dependency is only for `examples/tray_spike.rs`.
 
 ## Static C runtime

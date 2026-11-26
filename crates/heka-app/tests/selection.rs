@@ -1,4 +1,5 @@
 use heka_app::ui::model::{ControllerEntry, EntryState, Selection};
+use heka_app::ui::view::Page;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
 use heka_core::virtual_controller::OutputType;
@@ -82,4 +83,18 @@ fn after_every_controller_left_the_first_to_return_is_selected() {
     selection.choose(mac(3), &controllers(&[1, 2, 3]));
 
     assert_eq!(after(&mut selection, &[&[], &[5, 6]]), Some(mac(5)));
+}
+
+#[test]
+fn a_status_bar_button_opens_its_page_and_closes_it_again() {
+    assert_eq!(Page::Controller.toggled(Page::Log), Page::Log);
+    assert_eq!(Page::Log.toggled(Page::Log), Page::Controller);
+    assert_eq!(Page::Log.toggled(Page::About), Page::About);
+}
+
+#[test]
+fn choosing_a_controller_leaves_the_log_and_about_pages_and_keeps_its_settings() {
+    assert_eq!(Page::Log.of_a_controller(), Page::Controller);
+    assert_eq!(Page::About.of_a_controller(), Page::Controller);
+    assert_eq!(Page::Settings.of_a_controller(), Page::Settings);
 }

@@ -9,11 +9,30 @@ use crate::mac::MacAddress;
 use crate::preferences::{LivePreferences, PreferenceChange, Preferences};
 use crate::settings::Settings;
 use crate::threads::{SystemThreads, Threads};
-use crate::virtual_controller::{OutputType, VirtualBus, VirtualFailure, VirtualFailures};
+use crate::virtual_controller::{
+    OutputType, VirtualBus, VirtualError, VirtualFailure, VirtualFailures,
+};
 use crate::watch::Watch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LinkId(u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeError {
+    NoBus,
+    NoThread(String),
+    VirtualController(String),
+}
+
+impl BridgeError {
+    fn no_thread(error: &std::io::Error) -> Self {
+        Self::NoThread(error.to_string())
+    }
+
+    fn refused(error: &VirtualError) -> Self {
+        Self::VirtualController(error.to_string())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ControllerView {
@@ -25,7 +44,7 @@ pub struct ControllerView {
     pub preferences: Preferences,
     pub active_link: Option<LinkKind>,
     pub live: Arc<LiveInput>,
-    pub error: Option<String>,
+    pub error: Option<BridgeError>,
 }
 
 struct LinkSlot {
@@ -44,8 +63,8 @@ struct Slot {
     bridge: Option<Bridge>,
     watch: Option<Watch>,
     held: Option<Plugged>,
-    error: Option<String>,
-    watch_error: Option<String>,
+    error: Option<BridgeError>,
+    watch_error: Option<BridgeError>,
 }
 
 impl Slot {
@@ -224,7 +243,7 @@ impl Supervisor {
                         moving = Some(controller)
                     }
                     BridgeEnd::VirtualControllerFailed { error, .. } => {
-                        slot.error = Some(error.to_string());
+                        slot.error = Some(BridgeError::refused(&error));
                         failed = true;
                     }
                 }
@@ -268,7 +287,7 @@ impl Supervisor {
                 }
                 BridgeEnd::VirtualControllerFailed { link, error } => {
                     slot.put_back(link);
-                    slot.error = Some(error.to_string());
+                    slot.error = Some(BridgeError::refused(&error));
                     self.lifecycle.bridge_failed(mac, now)
                 }
                 BridgeEnd::Stopped { link, controller } => {
@@ -389,7 +408,7 @@ impl Supervisor {
                 }
                 BridgeEnd::VirtualControllerFailed { link, error } => {
                     slot.put_back(link);
-                    slot.error = Some(error.to_string());
+                    slot.error = Some(BridgeError::refused(&error));
                     changes.extend(self.lifecycle.bridge_failed(mac, now));
                 }
             }
@@ -455,7 +474,7 @@ impl Supervisor {
                 }
                 Err((error, link)) => {
                     slot.put_back(link);
-                    slot.watch_error = Some(cannot_start(&error));
+                    slot.watch_error = Some(BridgeError::no_thread(&error));
                 }
             }
         }
@@ -484,7 +503,7 @@ impl Supervisor {
         mac: MacAddress,
         output_type: OutputType,
         resume: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), BridgeError> {
         let held = if resume {
             self.slot(mac).held.take()
         } else {
@@ -493,9 +512,11 @@ impl Supervisor {
         let controller = match held {
             Some(controller) => controller,
             None => {
-                let bus = self.bus.as_ref().ok_or("there is no bus")?;
-                let mut controller =
-                    Plugged::new(bus.plug(output_type).map_err(|e| e.to_string())?);
+                let bus = self.bus.as_ref().ok_or(BridgeError::NoBus)?;
+                let plugged = bus
+                    .plug(output_type)
+                    .map_err(|error| BridgeError::refused(&error))?;
+                let mut controller = Plugged::new(plugged);
                 controller.report_to(Arc::clone(&self.failures));
                 controller
             }
@@ -503,7 +524,7 @@ impl Supervisor {
         self.bridge_to(mac, controller)
     }
 
-    fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), String> {
+    fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), BridgeError> {
         let preferences = self.settings().controller(mac).preferences;
         let threads = Arc::clone(&self.threads);
         let slot = self.slot(mac);
@@ -522,7 +543,7 @@ impl Supervisor {
             Err(failed) => {
                 slot.put_back(failed.link);
                 slot.held = Some(failed.controller);
-                Err(cannot_start(&failed.error))
+                Err(BridgeError::no_thread(&failed.error))
             }
         }
     }
@@ -562,8 +583,4 @@ impl Supervisor {
     fn slot(&mut self, mac: MacAddress) -> &mut Slot {
         self.slots.entry(mac).or_default()
     }
-}
-
-fn cannot_start(error: &std::io::Error) -> String {
-    format!("cannot start a thread: {error}")
 }

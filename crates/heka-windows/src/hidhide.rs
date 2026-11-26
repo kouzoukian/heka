@@ -5,6 +5,7 @@ use std::ptr;
 
 use heka_core::hiding::{
     DeviceInstancePath, FileJournal, HidHide, HidHideConfig, HidHideError, Hiding,
+    HidingUnavailable, IdentifyError,
 };
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     CM_Get_Device_Interface_PropertyW, CR_SUCCESS,
@@ -129,9 +130,7 @@ impl ControlDevice {
         let mut value = [0u8];
         match self.ioctl(code, &[], &mut value)? {
             1 => Ok(value[0] != 0),
-            n => Err(HidHideError::Failed(format!(
-                "HidHide returned {n} bytes for a BOOLEAN"
-            ))),
+            n => Err(HidHideError::UnexpectedSize(n)),
         }
     }
 
@@ -166,7 +165,7 @@ impl Drop for ControlDevice {
 }
 
 fn len_u32(len: usize) -> Result<u32, HidHideError> {
-    u32::try_from(len).map_err(|_| HidHideError::Failed("buffer too large".into()))
+    u32::try_from(len).map_err(|_| HidHideError::TooLarge)
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -210,7 +209,7 @@ pub fn own_image_name() -> io::Result<String> {
     Ok(String::from_utf16_lossy(&buffer[..len as usize]))
 }
 
-pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
+pub fn device_instance_path(hid_path: &CStr) -> Result<DeviceInstancePath, IdentifyError> {
     let interface = wide(&hid_path.to_string_lossy());
     let mut buffer = [0u16; 256];
     let mut size = std::mem::size_of_val(&buffer) as u32;
@@ -225,10 +224,11 @@ pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
             0,
         )
     };
-    if result != CR_SUCCESS || kind != DEVPROP_TYPE_STRING {
-        return Err(io::Error::other(format!(
-            "cannot read the device instance ID (CONFIGRET {result})"
-        )));
+    if result != CR_SUCCESS {
+        return Err(IdentifyError::Status(result));
+    }
+    if kind != DEVPROP_TYPE_STRING {
+        return Err(IdentifyError::NotText);
     }
     let units = &buffer[..(size as usize / 2).min(buffer.len())];
     let text = from_multi_string(units)
@@ -238,12 +238,14 @@ pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
     Ok(DeviceInstancePath::new(text))
 }
 
-pub fn hiding() -> io::Result<Hiding> {
-    let journal = journal_path().ok_or_else(|| io::Error::other("LOCALAPPDATA is not set"))?;
+pub fn hiding() -> Result<Hiding, HidingUnavailable> {
+    let journal = journal_path().ok_or(HidingUnavailable::NoLocalAppData)?;
+    let app =
+        own_image_name().map_err(|error| HidingUnavailable::NoImageName(error.to_string()))?;
     Ok(Hiding::new(
         Box::new(HidHideDriver),
         Box::new(FileJournal::new(journal)),
-        own_image_name()?,
+        app,
     ))
 }
 

@@ -18,7 +18,7 @@ fn main() {
                 println!("  {app}");
             }
         }
-        Err(error) => println!("cannot read HidHide: {error}"),
+        Err(error) => println!("cannot read HidHide: {error:?}"),
     }
 
     match own_image_name() {
@@ -31,7 +31,7 @@ fn main() {
     for info in dualsense_usb_devices(&api) {
         match device_instance_path(info.path()) {
             Ok(path) => println!("DualSense on USB would be hidden as: {path}"),
-            Err(error) => println!("cannot resolve {:?}: {error}", info.path()),
+            Err(error) => println!("cannot resolve {:?}: {error:?}", info.path()),
         }
     }
 }

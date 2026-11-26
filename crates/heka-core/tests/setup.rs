@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use heka_core::calibration::Calibration;
-use heka_core::hiding::HidHideStatus;
+use heka_core::hiding::{HidHideError, HidHideStatus};
 use heka_core::lifecycle::{Change, Phase};
 use heka_core::link::{LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
-use heka_core::setup::{self, BusUnavailable, Driver, Drivers, Missing};
+use heka_core::setup::{self, BusUnavailable, Driver, DriverError, Drivers, Missing};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
 use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
@@ -291,7 +291,7 @@ fn every_combination_of_detection_results_lists_exactly_the_missing_drivers() {
             Some(BusUnavailable::Failed("access denied".into())),
             Some(Missing {
                 driver: Driver::ViGEmBus,
-                error: Some("access denied".into()),
+                error: Some(DriverError::Bus("access denied".into())),
             }),
         ),
     ];
@@ -306,10 +306,12 @@ fn every_combination_of_detection_results_lists_exactly_the_missing_drivers() {
             }),
         ),
         (
-            HidHideStatus::Failed("bad reply".into()),
+            HidHideStatus::Failed(HidHideError::Failed("bad reply".into())),
             Some(Missing {
                 driver: Driver::HidHide,
-                error: Some("bad reply".into()),
+                error: Some(DriverError::HidHide(HidHideError::Failed(
+                    "bad reply".into(),
+                ))),
             }),
         ),
     ];
