@@ -1,32 +1,49 @@
 # heka
 
-Lets games treat a PlayStation controller as an Xbox or PS4 controller.
+[![CI](https://github.com/kouzoukian/heka/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kouzoukian/heka/actions/workflows/ci.yml)
 
-heka is a Windows tray app. It reads your DualSense or DualShock 4 (the **Controller**),
-creates a **Virtual Controller** that games see in its place, and Hides the real one so
-that games do not see it twice. The live pairing of the two is a **Bridge**.
+**Use your DualSense or DualShock 4 as an Xbox or PS4 controller in Windows games.**
+A tray app written in Rust.
 
-## Requirements
+[Download](https://github.com/kouzoukian/heka/releases/latest) ·
+[Setup](#setup) ·
+[Troubleshooting](#troubleshooting) ·
+[Building from source](#building-from-source)
 
-- Windows 10 or 11, x64.
-- [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases/latest), **required**. It
-  creates the Virtual Controllers. Without it heka lists Controllers and shows their
-  input, but Bridges none. ViGEmBus was retired by its author in 2023, so its last
-  release gets no further updates.
-- [HidHide](https://github.com/nefarius/HidHide/releases/latest), **recommended**. It
-  Hides Controllers from games. Without it Bridges work, but games may see each
-  Controller twice (double input).
+<p align="center">
+  <img src="docs/screenshots/controller.png" width="720"
+       alt="heka's window: a DualSense on Bluetooth, Bridged as an Xbox controller, with its battery level and a drawing of its input">
+</p>
 
-heka itself is portable: it needs no installer, Visual C++ Redistributable or Rust
-toolchain.
+heka reads your PlayStation controller (the **Controller**), creates a **Virtual
+Controller** that games see in its place, and Hides the real one so that games do not see
+it twice. The live pairing of the two is a **Bridge**.
+
+## Features
+
+- **Xbox 360 or DualShock 4 output**, chosen and remembered for each Controller.
+- **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
+- **USB and Bluetooth.** A Controller on both is listed once and read over USB.
+- **Brief disconnections:** the Virtual Controller stays for 30 seconds while the
+  Controller reconnects.
+- **No double input:** the real Controller is hidden from games through HidHide.
+- **Up to 4 Controllers**, each with its own name, rumble strength and lights.
+- **Portable:** a zip with no installer. No telemetry.
 
 ## Setup
 
-1. Install ViGEmBus and HidHide with their official installers. Restart Windows if an
-   installer asks. heka never downloads or runs an installer itself.
+You need Windows 10 or 11 (x64) and these drivers:
+
+| Driver | Needed? | What it does |
+| ------ | ------- | ------------ |
+| [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases/latest) | **Required** | Creates the Virtual Controllers. Without it heka only lists Controllers and shows their input. Its author retired it in 2023, so it gets no further updates. |
+| [HidHide](https://github.com/nefarius/HidHide/releases/latest) | Recommended | Hides Controllers from games. Without it, games may see each Controller twice. |
+
+1. Install both drivers with their official installers, and restart Windows if asked.
+   heka never downloads or runs an installer itself.
 2. Download `heka-v<version>-windows-x64.zip` from
-   [Releases](https://github.com/kouzoukian/heka/releases) and extract it to a folder you
-   will keep.
+   [Releases](https://github.com/kouzoukian/heka/releases/latest) and extract it to a
+   folder you will keep.
 3. Close other controller tools (see [Conflicts](#conflicts-with-other-tools)).
 4. Run `heka.exe`. It is not code signed, so Windows SmartScreen may warn the first time:
    choose **More info**, then **Run anyway**.
@@ -34,7 +51,8 @@ toolchain.
    choose otherwise.
 
 If a driver is missing, heka says which one and links to its installer. Press
-**Check again** after installing it.
+**Check again** after installing it. heka itself needs no Visual C++ Redistributable or
+Rust toolchain.
 
 To connect over Bluetooth, pair the Controller in Windows' Bluetooth settings. To start
 pairing, hold **PS** and **Create** (DualSense) or **PS** and **Share** (DualShock 4)
@@ -57,8 +75,7 @@ Sony's wireless USB adaptor and controllers from other makers are not supported.
 
 ## Using heka
 
-Up to 4 Controllers can be Bridged at once. A fifth is listed but not Bridged. The
-window lists the Controllers on the left. Select one to see its state, Active Link,
+The window lists the Controllers on the left. Select one to see its state, Active Link,
 battery level and a live drawing of its input, and to choose:
 
 - Its **Output Type**, what its Virtual Controller is: **Xbox** (Xbox 360) or **PS4**
@@ -68,7 +85,8 @@ battery level and a live drawing of its input, and to choose:
   Bridged, and games see it as it is.
 - Its [settings](#controller-settings), behind the button beside it.
 
-heka remembers all of these for each Controller.
+heka remembers all of these for each Controller. Up to 4 can be Bridged at once; a fifth
+is listed but not Bridged.
 
 |                                             | Xbox | PS4 |
 | ------------------------------------------- | ---- | --- |
@@ -86,6 +104,11 @@ USB. A Controller that loses both is **Held** for 30 seconds: its Virtual Contro
 stays, with everything released, and carries on when the Controller returns.
 
 ### Controller settings
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="720"
+       alt="A Controller's settings: name, rumble strength, light bar colour, player lights and Hide from games">
+</p>
 
 - **Name**, shown in place of the Controller's model, up to 24 characters.
 - **Rumble**, how strongly the Controller rumbles when a game asks: off, 25%, 50%,
@@ -187,12 +210,29 @@ cargo run -p heka-package       # the release zip, in target/dist
 cargo test --workspace
 ```
 
+`cargo run -p heka-app --example ui_preview` opens the window over made-up data, without
+a Controller or the drivers.
+
 `heka-package` builds `heka.exe` without running it, checks that it needs only DLLs that
 come with Windows, collects the third-party notices and writes the zip.
 
 To publish a release, set the version in `Cargo.toml` (`[workspace.package]`), commit it
-together with the updated `Cargo.lock`, then push a tag with the same version, such as
-`v0.1.0`. GitHub Actions builds the zip and publishes the GitHub Release.
+together with the updated `Cargo.lock`, wait for CI to pass on `main`, then push a tag
+with the same version, such as `v0.2.0`. GitHub Actions builds the zip and publishes the
+GitHub Release.
+
+### Project layout
+
+| Crate          | What is in it                                                                 |
+| -------------- | ----------------------------------------------------------------------------- |
+| `heka-core`    | Report parsing, translation, Bridge lifecycle and settings, with no Windows calls |
+| `heka-windows` | HID, ViGEmBus, HidHide and autostart access                                   |
+| `heka-app`     | The window ([GPUI](https://www.gpui.rs)) and the tray                         |
+| `heka-package` | The release zip and its third-party notices                                   |
+
+Windows and the drivers sit behind traits that `heka-core` defines, so its tests run with
+fakes in their place. [CONTEXT.md](CONTEXT.md) defines the terms used in the code, and
+[docs/adr](docs/adr) records the main decisions.
 
 ## License
 
