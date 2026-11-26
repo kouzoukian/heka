@@ -4,7 +4,7 @@
 //! and are shown as they arrive.
 
 use heka_core::lifecycle::MAX_BRIDGES;
-use heka_core::link::ControllerModel;
+use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::state::{Battery, Charge};
 
 pub const APP_NAME: &str = "heka";
@@ -15,8 +15,9 @@ pub const NO_CONTROLLERS: &str = "No Controllers";
 pub const DUALSENSE: &str = "DualSense";
 pub const DUALSHOCK4: &str = "DualShock 4";
 pub const ROW_STATE: &str = "State";
-pub const ROW_LINK: &str = "Link";
-pub const ROW_BATTERY: &str = "Battery";
+/// Named in tooltips: they share a row without labels.
+pub const ACTIVE_LINK: &str = "Active Link";
+pub const BATTERY: &str = "Battery";
 pub const ROW_ADDRESS: &str = "Address";
 pub const ROW_SUPPORT: &str = "Support";
 /// A DualShock 4's support row: heka's support has not been tried on one.
@@ -46,6 +47,24 @@ pub fn controller(model: ControllerModel) -> &'static str {
 
 pub fn held(seconds_left: u64) -> String {
     format!("Held, {seconds_left} s left")
+}
+
+pub fn link(link: Option<LinkKind>) -> &'static str {
+    match link {
+        Some(LinkKind::Usb) => USB,
+        Some(LinkKind::Bluetooth) => BLUETOOTH,
+        None => NO_LINK,
+    }
+}
+
+/// The battery in full, for the tooltip of a cell too narrow to show it all.
+pub fn battery_in_full(state: Option<Battery>) -> String {
+    let words = battery(state);
+    if words.starts_with(BATTERY) {
+        words
+    } else {
+        format!("{BATTERY} {words}")
+    }
 }
 
 /// What is left of a Hold, in the Controller list.
@@ -97,7 +116,7 @@ pub const Y: &str = "Y";
 
 // Empty window.
 pub const STARTING: &str = "Looking for Controllers";
-pub const NO_CONTROLLER: &str = "No Controller connected";
+pub const NO_CONTROLLER_CONNECTED: &str = "No Controller connected";
 pub const CONNECT_HINT: &str =
     "Connect a DualSense or DualShock 4 (experimental) with a USB cable or over Bluetooth.";
 

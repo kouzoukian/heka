@@ -214,6 +214,13 @@ fn a_battery_is_worded_without_a_level_the_controller_does_not_give() {
     assert_eq!(words(0, Charge::NotCharging), "Battery not charging");
     assert_eq!(words(0, Charge::Unknown), "Battery unknown");
     assert_eq!(text::battery(None), "Battery unknown");
+    // A tooltip names what the words alone may not.
+    let level = Some(Battery {
+        percent: 75,
+        charge: Charge::Discharging,
+    });
+    assert_eq!(text::battery_in_full(level), "Battery 75%");
+    assert_eq!(text::battery_in_full(None), "Battery unknown");
 }
 
 #[test]

@@ -8,7 +8,7 @@ fn mac(last: u8) -> MacAddress {
     MacAddress([0x02, 0, 0, 0, 0, last])
 }
 
-/// The controllers of the Controllers ending in `macs`, in that order.
+/// The entries of the Controllers whose MAC addresses end in `macs`, in that order.
 fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
     macs.iter()
         .map(|&last| ControllerEntry {

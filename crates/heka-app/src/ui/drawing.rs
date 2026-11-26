@@ -28,7 +28,7 @@ const MAX_WIDTH: f32 = 560.;
 const MARGIN: (f32, f32) = (20., 12.);
 
 /// The size of a label's lettering.
-const LABEL: f32 = 9.;
+const LABEL_SIZE: f32 = 9.;
 
 /// How wide the drawing is in a room `width` by `height`: as wide as both allow,
 /// within its limits.
@@ -89,7 +89,7 @@ fn letter(
     cx: &mut App,
 ) {
     let text = SharedString::from(text);
-    let size = px(LABEL * scale);
+    let size = px(LABEL_SIZE * scale);
     let run = TextRun {
         len: text.len(),
         font: window.text_style().font(),

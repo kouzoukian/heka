@@ -17,9 +17,8 @@ pub const GAP: Pixels = px(8.);
 pub const CONTROL: Pixels = px(24.);
 pub const TEXT: Pixels = px(13.);
 pub const SMALL_TEXT: Pixels = px(11.);
-/// A line of text that may wrap. With 6 above, 6 below and the border, one line
-/// fills a row.
-pub const LINE: Pixels = px(19.);
+/// A line of text in a strip: two of them fit in a row.
+pub const LINE: Pixels = px(14.);
 
 /// An icon of the one size the window uses.
 pub fn icon(name: IconName) -> Icon {

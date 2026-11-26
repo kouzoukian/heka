@@ -1,5 +1,8 @@
 //! The selected Controller's pane: its tab with Stop or Start, heka's notices,
 //! its properties and the live drawing. Without a Controller, the empty state.
+//!
+//! Everything above the drawing is a whole number of rows high at any width, so
+//! that it stays level with the panel's rows.
 
 use std::rc::Rc;
 
@@ -9,18 +12,17 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Theme};
+use gpui_component::{ActiveTheme, Selectable, Theme};
 use gpui_kit_assets::IconName;
-use heka_core::link::LinkKind;
 use heka_core::virtual_controller::OutputType;
 
 use crate::text;
 use crate::ui::assets::{battery_icon, link_icon};
+use crate::ui::banners::{clamped, notice_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
-use crate::ui::metrics::{CONTROL, GAP, INSET, LINE, ROW, SMALL_TEXT, icon};
+use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, EntryState, Screen, SendCommand};
-use crate::ui::panel::{faint, state_color};
-use crate::ui::setup_screen::{notice_banner, setup_banners};
+use crate::ui::panel::{entry_color, faint};
 
 /// The pane for `entry`, the selected Controller, if there is one.
 pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> Div {
@@ -31,7 +33,6 @@ pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
-        .children(screen.notices.iter().map(|n| notice_banner(n, cx)))
         .children(setup_banners(&screen.missing, send, cx));
     let body = match entry {
         Some(entry) => body
@@ -47,6 +48,14 @@ pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand
         .min_w_0()
         .h_full()
         .child(tab_strip(entry, send, cx))
+        // heka's notices stay in view while the rest scrolls.
+        .children(
+            screen
+                .notices
+                .iter()
+                .enumerate()
+                .map(|(place, notice)| notice_banner(place, notice, cx)),
+        )
         .child(body)
 }
 
@@ -58,6 +67,7 @@ fn tab_strip(entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> D
             .flex()
             .flex_none()
             .items_center()
+            .h_full()
             .gap(GAP)
             .px(INSET)
             .border_r_1()
@@ -72,18 +82,23 @@ fn tab_strip(entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> D
                     .child(entry.short_mac()),
             )
     });
-    div().flex().flex_none().h(ROW).children(tab).child(
-        // The line under the strip runs everywhere but under the tab.
-        div()
-            .flex()
-            .flex_1()
-            .items_center()
-            .justify_end()
-            .pr(GAP)
-            .border_b_1()
-            .border_color(theme.border)
-            .children(entry.map(|entry| toggle(entry, send))),
-    )
+    // The same box and line as the panel's header, so that the two read as one row.
+    div()
+        .flex()
+        .flex_none()
+        .h(ROW)
+        .border_b_1()
+        .border_color(theme.border)
+        .children(tab)
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_end()
+                .pr(GAP)
+                .children(entry.map(|entry| toggle(entry, send))),
+        )
 }
 
 fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {
@@ -96,8 +111,11 @@ fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {
     // One id per Controller, so that each keeps its own hover and tooltip.
     Button::new(SharedString::from(format!("toggle-{}", entry.mac)))
         .ghost()
-        .icon(icon(name))
         .size(CONTROL)
+        .p_0()
+        // A child, not `.icon`, which would resize it.
+        .child(icon(name))
+        .accessibility_label(label)
         .tooltip(label)
         .on_click(move |_, _, _| send(command))
 }
@@ -108,7 +126,7 @@ fn properties(entry: &ControllerEntry, send: &SendCommand, cx: &App) -> Div {
         div()
             .size(px(8.))
             .rounded_full()
-            .bg(state_color(entry.state, theme))
+            .bg(entry_color(entry, theme))
             .into_any_element(),
         state_label(entry.state).into_any_element(),
     ];
@@ -161,11 +179,6 @@ fn value(theme: &Theme) -> Div {
 /// The Active Link, the battery and the Output Type switch side by side, with
 /// dividers between them. Their icons and words name them; a tooltip says so.
 fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
-    let link = match entry.active_link {
-        Some(LinkKind::Usb) => text::USB,
-        Some(LinkKind::Bluetooth) => text::BLUETOOTH,
-        None => text::NO_LINK,
-    };
     div()
         .flex()
         .flex_none()
@@ -174,15 +187,15 @@ fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
         .border_color(theme.border)
         .text_color(theme.foreground)
         .child(
-            cell("link", text::ROW_LINK)
+            cell("link", text::ACTIVE_LINK.into())
                 .flex_none()
                 .border_r_1()
                 .border_color(theme.border)
                 .child(icon(link_icon(entry.active_link)))
-                .child(link),
+                .child(text::link(entry.active_link)),
         )
         .child(
-            cell("battery", text::ROW_BATTERY)
+            cell("battery", text::battery_in_full(entry.battery).into())
                 .flex_1()
                 .min_w_0()
                 .border_r_1()
@@ -196,14 +209,14 @@ fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
                 ),
         )
         .child(
-            cell("output", text::OUTPUT_TYPE)
+            cell("output", text::OUTPUT_TYPE.into())
                 .flex_none()
                 .child(output_switch(entry, send, theme)),
         )
 }
 
-/// One of the facts that share a row, named `name` in its tooltip.
-fn cell(id: &'static str, name: &'static str) -> Stateful<Div> {
+/// One of the facts that share a row, with `tip` in its tooltip.
+fn cell(id: &'static str, tip: SharedString) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -211,7 +224,7 @@ fn cell(id: &'static str, name: &'static str) -> Stateful<Div> {
         .gap(GAP)
         .h_full()
         .px(INSET)
-        .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
+        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
 fn state_label(state: EntryState) -> SharedString {
@@ -233,26 +246,22 @@ fn output_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
         let selected = entry.output_type == output_type;
         let command = entry.choose(output_type);
         let send = Rc::clone(send);
-        let hover = theme.accent.opacity(0.6);
-        div()
-            .id(SharedString::from(format!("{key}-{}", entry.mac)))
-            .flex()
-            .items_center()
+        Button::new(SharedString::from(format!("{key}-{}", entry.mac)))
+            .ghost()
+            .selected(selected)
             // The switch's border and padding bring it to a control's height.
             .h(CONTROL - px(6.))
             .px(GAP)
             .rounded(px(3.))
-            .text_size(SMALL_TEXT)
-            .cursor_pointer()
             .map(|this| {
                 if selected {
                     this.bg(theme.accent).text_color(theme.accent_foreground)
                 } else {
                     this.text_color(theme.muted_foreground)
-                        .hover(move |this| this.bg(hover))
                 }
             })
-            .child(label)
+            .accessibility_label(label)
+            .child(div().text_size(SMALL_TEXT).child(label))
             .on_click(move |_, _, _| {
                 if let Some(command) = command {
                     send(command);
@@ -271,18 +280,13 @@ fn output_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
 }
 
 /// The line that explains the Controller's state.
-fn note(entry: &ControllerEntry, detail: String, cx: &App) -> Div {
+fn note(entry: &ControllerEntry, detail: String, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
-    div()
-        .flex_none()
-        .px(INSET)
-        .py(px(6.))
-        .border_b_1()
-        .border_color(theme.border)
-        .text_size(SMALL_TEXT)
-        .line_height(LINE)
+    let words = SharedString::from(detail);
+    strip("note", 1, theme)
         .when(entry.error.is_some(), |this| this.text_color(theme.danger))
-        .child(detail)
+        .child(clamped(words.clone()))
+        .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 
 /// Shown while there is no Controller.
@@ -291,7 +295,7 @@ fn empty_state(starting: bool, cx: &App) -> Div {
     let (title, hint) = if starting {
         (text::STARTING, None)
     } else {
-        (text::NO_CONTROLLER, Some(text::CONNECT_HINT))
+        (text::NO_CONTROLLER_CONNECTED, Some(text::CONNECT_HINT))
     };
     div()
         .flex()
@@ -308,7 +312,7 @@ fn empty_state(starting: bool, cx: &App) -> Div {
             div()
                 .max_w(px(320.))
                 .text_size(SMALL_TEXT)
-                .line_height(LINE)
+                .line_height(px(18.))
                 .text_color(faint(theme))
                 .child(hint)
         }))

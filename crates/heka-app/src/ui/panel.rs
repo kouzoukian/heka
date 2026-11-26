@@ -28,6 +28,8 @@ pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx:
             .items_center()
             .h(ROW)
             .px(INSET)
+            .border_b_1()
+            .border_color(theme.sidebar)
             .text_size(SMALL_TEXT)
             .text_color(faint(theme))
             .child(text::NO_CONTROLLERS)
@@ -69,11 +71,6 @@ pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx:
 /// A Controller's state in colour, its name and its Active Link.
 fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -> Stateful<Div> {
     let mac = entry.mac;
-    let color = if entry.error.is_some() {
-        theme.danger
-    } else {
-        state_color(entry.state, theme)
-    };
     let end = match entry.state {
         EntryState::Held { seconds_left } => div()
             .text_size(SMALL_TEXT)
@@ -90,6 +87,10 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         .gap(GAP)
         .h(ROW)
         .px(INSET)
+        // The pane's rows end in a divider. The same line here, unseen, makes the
+        // highlight as high as theirs and puts the words of both on one level.
+        .border_b_1()
+        .border_color(theme.sidebar)
         .cursor_pointer()
         .map(|this| {
             if selected {
@@ -98,7 +99,7 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
                 this.hover(move |this| this.bg(hover))
             }
         })
-        .child(icon(IconName::Gamepad2).text_color(color))
+        .child(icon(IconName::Gamepad2).text_color(entry_color(entry, theme)))
         .child(entry.name)
         .child(
             div()
@@ -113,9 +114,13 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         .on_click(move |_, _, cx| choose(mac, cx))
 }
 
-/// The colour that stands for a Controller's state.
-pub fn state_color(state: EntryState, theme: &Theme) -> Hsla {
-    match state {
+/// The colour that stands for how a Controller is doing: its state's, or the
+/// colour of errors if its Bridge failed.
+pub fn entry_color(entry: &ControllerEntry, theme: &Theme) -> Hsla {
+    if entry.error.is_some() {
+        return theme.danger;
+    }
+    match entry.state {
         EntryState::Bridged => theme.success,
         EntryState::Held { .. } => theme.warning,
         EntryState::Stopped => faint(theme),

@@ -141,17 +141,21 @@ fn status_bar(screen: &Screen, cx: &App) -> StatusBar {
             .child(icon(name))
             .child(count.to_string())
     };
-    StatusBar::new()
-        .h(ROW)
-        .px(INSET)
+    // One item, so that the counts are spaced as the rest of the window is.
+    let counts = div()
+        .flex()
         .gap(INSET)
-        .text_size(SMALL_TEXT)
-        .left(count(IconName::CircleX, screen.errors(), theme.danger))
-        .left(count(
+        .child(count(IconName::CircleX, screen.errors(), theme.danger))
+        .child(count(
             IconName::TriangleAlert,
             screen.warnings(),
             theme.warning,
-        ))
+        ));
+    StatusBar::new()
+        .h(ROW)
+        .px(INSET)
+        .text_size(SMALL_TEXT)
+        .left(counts)
         .right(screen.summary())
 }
 
