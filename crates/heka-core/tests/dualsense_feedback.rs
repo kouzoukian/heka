@@ -10,11 +10,12 @@ mod common;
 use heka_core::dualsense::{
     PRODUCT_ID_DUALSENSE, PRODUCT_ID_DUALSENSE_EDGE, RumbleMode, rumble_mode, usb_output_report,
 };
-use heka_core::feedback::{Feedback, Rumble};
+use heka_core::feedback::{Feedback, Lightbar, Rumble};
 
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
         rumble: Rumble { large, small },
+        lightbar: None,
     }
 }
 
@@ -51,6 +52,41 @@ fn v2_rumble_selects_haptics_and_flags_compatible_vibration2() {
 fn feedback_off_still_sets_the_rumble_flags_with_both_motors_at_zero() {
     let report = usb_output_report(&Feedback::OFF, RumbleMode::Compatible);
     assert_eq!(report.to_vec(), expected(&[(0, 0x02), (1, 0x03)]));
+}
+
+// Lightbar: valid_flag1 bit 2 (`DS_OUTPUT_VALID_FLAG1_LIGHTBAR_CONTROL_ENABLE`), and
+// lightbar_red, lightbar_green, lightbar_blue at bytes 45, 46, 47.
+
+#[test]
+fn a_lightbar_colour_is_sent_with_the_rumble() {
+    let feedback = Feedback {
+        lightbar: Some(Lightbar {
+            red: 0xFF,
+            green: 0x10,
+            blue: 0x80,
+        }),
+        ..rumble(0xC8, 0x40)
+    };
+    let report = usb_output_report(&feedback, RumbleMode::Compatible);
+    assert_eq!(
+        report.to_vec(),
+        expected(&[
+            (0, 0x02),
+            (1, 0x03),
+            (2, 0x04),
+            (3, 0x40),
+            (4, 0xC8),
+            (45, 0xFF),
+            (46, 0x10),
+            (47, 0x80),
+        ])
+    );
+}
+
+#[test]
+fn no_lightbar_leaves_the_controllers_lightbar_alone() {
+    let report = usb_output_report(&rumble(0, 0), RumbleMode::Compatible);
+    assert_eq!(report[2] & 0x04, 0);
 }
 
 // Rumble mode. The firmware info feature report is 0x20, 64 bytes, with the

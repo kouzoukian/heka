@@ -257,3 +257,67 @@ fn quitting_removes_every_virtual_controller() {
     );
     assert_eq!(phases(&lifecycle), []);
 }
+
+// ---- Output Type ----------------------------------------------------------
+
+fn bridged_ps4(n: u8) -> Change {
+    Change::Bridged {
+        mac: mac(n),
+        output_type: OutputType::Ps4,
+    }
+}
+
+#[test]
+fn changing_the_output_type_replaces_the_virtual_controller_and_is_remembered() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+
+    assert_eq!(
+        lifecycle.set_output_type(mac(1), OutputType::Ps4, t0),
+        [removed(1, Removal::OutputTypeChanged), bridged_ps4(1)]
+    );
+    assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
+    assert_eq!(
+        lifecycle.settings().controller(mac(1)).output_type,
+        OutputType::Ps4
+    );
+}
+
+#[test]
+fn choosing_the_output_type_already_in_use_changes_nothing() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    assert_eq!(lifecycle.set_output_type(mac(1), OutputType::Xbox, t0), []);
+}
+
+#[test]
+fn a_stopped_controller_takes_its_new_output_type_when_started() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.stop(mac(1), t0);
+
+    assert_eq!(lifecycle.set_output_type(mac(1), OutputType::Ps4, t0), []);
+    assert_eq!(lifecycle.start(mac(1), t0), [bridged_ps4(1)]);
+}
+
+#[test]
+fn a_held_controller_that_changes_output_type_loses_its_virtual_controller() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.link_lost(mac(1), t0);
+
+    assert_eq!(
+        lifecycle.set_output_type(mac(1), OutputType::Ps4, t0),
+        [removed(1, Removal::OutputTypeChanged)]
+    );
+    assert_eq!(lifecycle.phase(mac(1)), None);
+    // It comes back as a new Controller with the new Output Type.
+    assert_eq!(
+        lifecycle.link_arrived(mac(1), t0 + secs(1.0)),
+        [bridged_ps4(1)]
+    );
+}

@@ -1,5 +1,6 @@
 mod bridging;
 mod settings_file;
+mod setup_screen;
 mod tray;
 
 use std::sync::{Arc, mpsc};
@@ -13,8 +14,10 @@ use gpui_component::button::Button;
 use gpui_component::{ActiveTheme, Root};
 use heka_core::autostart::{self, Autostart};
 use heka_core::lifecycle::Phase;
+use heka_core::setup::Driver;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
+use heka_core::virtual_controller::OutputType;
 use heka_windows::autostart::RunKey;
 use heka_windows::single_instance::{self, Instance};
 
@@ -45,16 +48,18 @@ impl MainView {
 fn status_text(status: &Status, controllers: usize) -> SharedString {
     match status {
         Status::Starting => "Starting".into(),
-        Status::NoBus(error) => format!("ViGEmBus is not available: {error}").into(),
         Status::HidError(error) => format!("Cannot look for Controllers: {error}").into(),
         Status::Running if controllers == 0 => "Connect a DualSense with a USB cable".into(),
         Status::Running => "".into(),
     }
 }
 
-fn phase_text(phase: Phase) -> SharedString {
+fn phase_text(phase: Phase, output_type: OutputType) -> SharedString {
     match phase {
-        Phase::Bridged => "Bridged as Xbox".into(),
+        Phase::Bridged => match output_type {
+            OutputType::Xbox => "Bridged as Xbox".into(),
+            OutputType::Ps4 => "Bridged as PS4".into(),
+        },
         Phase::Held { until } => {
             let left = until.saturating_duration_since(Instant::now()).as_secs();
             format!("Held, reconnect within {left} s").into()
@@ -71,6 +76,7 @@ fn input_text(state: ControllerState) -> SharedString {
         right_stick,
         left_trigger,
         right_trigger,
+        ..
     } = state;
     let pressed: Vec<&str> = Buttons::NAMED
         .iter()
@@ -88,7 +94,13 @@ fn input_text(state: ControllerState) -> SharedString {
 }
 
 impl MainView {
-    fn controller_row(&self, index: usize, view: &ControllerView, cx: &App) -> impl IntoElement {
+    fn controller_row(
+        &self,
+        index: usize,
+        view: &ControllerView,
+        no_bus: bool,
+        cx: &App,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let mac = view.mac;
         let bridging = Arc::clone(&self.bridging);
@@ -101,14 +113,25 @@ impl MainView {
                 .label("Stop")
                 .on_click(move |_, _, _| bridging.stop_controller(mac))
         };
-        let mut phase = phase_text(view.phase);
+        // A minimal Output Type switch; ticket #10 builds the real control.
+        let (label, other) = match view.output_type {
+            OutputType::Xbox => ("Output: Xbox", OutputType::Ps4),
+            OutputType::Ps4 => ("Output: PS4", OutputType::Xbox),
+        };
+        let output_button = {
+            let bridging = Arc::clone(&self.bridging);
+            Button::new(("output-type", index))
+                .label(label)
+                .on_click(move |_, _, _| bridging.set_output_type(mac, other))
+        };
+        let mut phase = match view.phase {
+            Phase::Waiting if no_bus => setup_screen::text::NOT_BRIDGED.into(),
+            phase => phase_text(phase, view.output_type),
+        };
         if let Some(error) = &view.error {
             phase = format!("{phase} ({error})").into();
         }
-        let input = match (view.phase, view.live.latest()) {
-            (Phase::Bridged, Some(state)) => input_text(state),
-            _ => "".into(),
-        };
+        let input = view.live.latest().map(input_text).unwrap_or_default();
         div()
             .flex()
             .flex_col()
@@ -123,7 +146,7 @@ impl MainView {
                     .items_center()
                     .justify_between()
                     .child(div().child(SharedString::from(format!("DualSense {mac}"))))
-                    .child(button),
+                    .child(div().flex().gap_2().child(output_button).child(button)),
             )
             .child(div().text_color(theme.muted_foreground).child(phase))
             .child(div().font_family("monospace").child(input))
@@ -133,12 +156,20 @@ impl MainView {
 impl Render for MainView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.bridging.snapshot();
+        let no_bus = snapshot
+            .setup
+            .as_ref()
+            .is_some_and(|setup| setup.is_missing(Driver::ViGEmBus));
         let rows: Vec<_> = snapshot
             .controllers
             .iter()
             .enumerate()
-            .map(|(index, view)| self.controller_row(index, view, cx))
+            .map(|(index, view)| self.controller_row(index, view, no_bus, cx))
             .collect();
+        let setup_screen = snapshot.setup.as_ref().and_then(|setup| {
+            let bridging = Arc::clone(&self.bridging);
+            setup_screen::setup_screen(setup, move || bridging.check_drivers(), cx)
+        });
         let theme = cx.theme();
         div()
             .size_full()
@@ -149,6 +180,7 @@ impl Render for MainView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .text_sm()
+            .children(setup_screen)
             .child(div().child(status_text(&snapshot.status, rows.len())))
             .children(
                 snapshot

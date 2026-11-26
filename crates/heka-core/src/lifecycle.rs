@@ -7,7 +7,8 @@
 //! The changes are also where per-Controller side effects attach. Hiding, for
 //! example, hides a Controller on [`Change::Bridged`] and [`Change::Returned`]
 //! (a returning Controller is a new device to the system), keeps it hidden while
-//! [`Phase::Held`], and restores it on [`Change::Removed`], whatever the reason.
+//! [`Phase::Held`], and restores it on [`Change::Removed`], except when the removal
+//! is [`Removal::OutputTypeChanged`] and a [`Change::Bridged`] follows at once.
 
 use std::time::{Duration, Instant};
 
@@ -33,8 +34,8 @@ pub enum Phase {
     Held { until: Instant },
     /// Connected, and the player told heka not to Bridge it.
     Stopped,
-    /// Connected and wanting a Bridge, but all [`MAX_BRIDGES`] are taken or the
-    /// last attempt failed.
+    /// Connected and wanting a Bridge, but all [`MAX_BRIDGES`] are taken, the
+    /// last attempt failed, or Virtual Controllers cannot be made.
     Waiting,
 }
 
@@ -47,6 +48,9 @@ pub enum Removal {
     Expired,
     /// The Virtual Controller could not be created or refused an update.
     Failed,
+    /// The player chose another Output Type. A Bridged Controller is Bridged again
+    /// at once, to a Virtual Controller of the new type.
+    OutputTypeChanged,
     /// heka is quitting.
     Quit,
 }
@@ -80,6 +84,8 @@ struct Entry {
 pub struct Lifecycle {
     settings: Settings,
     entries: Vec<Entry>,
+    /// Virtual Controllers cannot be made yet, so nothing is Bridged.
+    bridging_paused: bool,
 }
 
 impl Lifecycle {
@@ -87,7 +93,25 @@ impl Lifecycle {
         Self {
             settings,
             entries: Vec::new(),
+            bridging_paused: false,
         }
+    }
+
+    /// A lifecycle that lists Controllers but Bridges none until
+    /// [`Self::resume_bridging`].
+    pub fn paused(settings: Settings) -> Self {
+        Self {
+            bridging_paused: true,
+            ..Self::new(settings)
+        }
+    }
+
+    /// Virtual Controllers can be made now.
+    pub fn resume_bridging(&mut self, now: Instant) -> Vec<Change> {
+        self.bridging_paused = false;
+        let mut changes = Vec::new();
+        self.fill_slots(now, &mut changes);
+        changes
     }
 
     /// The settings as they stand, to be saved after [`Self::stop`] or [`Self::start`].
@@ -206,6 +230,42 @@ impl Lifecycle {
         changes
     }
 
+    /// The player chooses this Controller's Output Type. Remembered in the settings.
+    ///
+    /// A Bridged Controller's Virtual Controller is removed and a new one of this
+    /// type is Bridged in its place. A Held Controller's Virtual Controller is
+    /// removed and the Controller is forgotten until it returns. Otherwise the
+    /// choice takes effect at the next Bridge.
+    pub fn set_output_type(
+        &mut self,
+        mac: MacAddress,
+        output_type: OutputType,
+        now: Instant,
+    ) -> Vec<Change> {
+        let mut changes = Vec::new();
+        let Some(index) = self.index(mac) else {
+            return changes;
+        };
+        if self.settings.controller(mac).output_type == output_type {
+            return changes;
+        }
+        self.settings.set_output_type(mac, output_type);
+        let removed = Change::Removed {
+            mac,
+            why: Removal::OutputTypeChanged,
+        };
+        match self.entries[index].phase {
+            Phase::Bridged => changes.extend([removed, Change::Bridged { mac, output_type }]),
+            Phase::Held { .. } => {
+                self.entries.remove(index);
+                changes.push(removed);
+                self.fill_slots(now, &mut changes);
+            }
+            Phase::Stopped | Phase::Waiting => {}
+        }
+        changes
+    }
+
     /// The Bridge could not be made or broke down. Its Virtual Controller is gone;
     /// another is tried after [`BRIDGE_RETRY_DELAY`].
     pub fn bridge_failed(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
@@ -257,6 +317,9 @@ impl Lifecycle {
 
     /// Bridges waiting Controllers, oldest first, while slots are free.
     fn fill_slots(&mut self, now: Instant, changes: &mut Vec<Change>) {
+        if self.bridging_paused {
+            return;
+        }
         let mut used = self
             .entries
             .iter()

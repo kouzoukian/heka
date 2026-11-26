@@ -6,15 +6,17 @@
 //!
 //! Prints every DualSense HID collection it finds on stderr, then COUNT reports
 //! (default 50) as hex lines on stdout, in the format `heka-core`'s fixtures use.
-//! It also prints the firmware info feature report and the rumble mode chosen from
-//! it on stderr. Hold the inputs you want recorded while it runs. Nothing is sent
+//! It also prints the firmware info feature report, the rumble mode chosen from
+//! it and the motion calibration feature report on stderr. Hold the inputs you want recorded while it runs. Nothing is sent
 //! to the Controller: it opens the device and reads, nothing else.
 
 use std::io::Write;
 use std::time::{Duration, Instant};
 
 use heka_core::link::{LinkRead, LinkReader};
-use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_devices, dualsense_usb_paths};
+use heka_windows::hid::{
+    DualSenseUsbLink, dualsense_usb_devices, dualsense_usb_paths, read_calibration_report,
+};
 use hidapi::HidApi;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -60,6 +62,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => eprintln!("firmware info (feature report 0x20): not available"),
     }
     eprintln!("rumble mode: {:?}", link.rumble_mode());
+    let device = api.open_path(link.hid_path())?;
+    match read_calibration_report(&device) {
+        Some(report) => {
+            let hex: Vec<String> = report.iter().map(|b| format!("{b:02x}")).collect();
+            eprintln!("calibration (feature report 0x05): {}", hex.join(" "));
+            eprintln!(
+                "calibration parsed: {:?}",
+                heka_core::dualsense::parse_calibration(&report)
+            );
+        }
+        None => eprintln!("calibration (feature report 0x05): not available"),
+    }
+    drop(device);
 
     let mut out = std::io::stdout().lock();
     let mut buf = [0u8; 128];
