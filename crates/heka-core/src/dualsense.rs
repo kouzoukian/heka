@@ -102,10 +102,16 @@ const PAIRING_INFO_MAC: usize = 1;
 
 /// Reads the MAC address from a pairing-info feature report, report ID byte included.
 pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
+    mac_after_report_id(report, PAIRING_INFO_REPORT_ID)
+}
+
+/// The MAC address of a pairing-info feature report with report ID `id`, where a
+/// DualSense and a DualShock 4 both put it.
+pub(crate) fn mac_after_report_id(report: &[u8], id: u8) -> Result<MacAddress, ReportError> {
     if report.len() < PAIRING_INFO_MAC + 6 {
         return Err(ReportError::TooShort { len: report.len() });
     }
-    if report[0] != PAIRING_INFO_REPORT_ID {
+    if report[0] != id {
         return Err(ReportError::UnexpectedId { id: report[0] });
     }
     let mut mac = [0u8; 6];

@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
-use crate::link::{LinkKind, LinkReader, active_link};
+use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
 use crate::settings::Settings;
 use crate::virtual_controller::{OutputType, VirtualBus};
@@ -30,6 +30,8 @@ pub struct LinkId(u64);
 #[derive(Debug, Clone)]
 pub struct ControllerView {
     pub mac: MacAddress,
+    /// Which kind of Controller it is.
+    pub model: ControllerModel,
     pub phase: Phase,
     pub output_type: OutputType,
     /// The Link heka reads, `None` while Held.
@@ -52,6 +54,8 @@ struct LinkSlot {
 /// What heka holds for one listed Controller.
 #[derive(Default)]
 struct Slot {
+    /// As its Links say, remembered while it has none.
+    model: ControllerModel,
     live: Arc<LiveInput>,
     /// Every Link, in arrival order.
     links: Vec<LinkSlot>,
@@ -189,6 +193,7 @@ impl Supervisor {
                 let slot = self.slots.get(&mac);
                 ControllerView {
                     mac,
+                    model: slot.map(|slot| slot.model).unwrap_or_default(),
                     phase,
                     output_type: self.settings().controller(mac).output_type,
                     active_link: slot.and_then(Slot::active).map(|link| link.kind),
@@ -217,9 +222,12 @@ impl Supervisor {
             return (id, Vec::new());
         }
         let link = OpenLink::new(link);
-        self.slot(mac).links.push(LinkSlot {
+        let format = link.format();
+        let slot = self.slot(mac);
+        slot.model = format.model();
+        slot.links.push(LinkSlot {
             id,
-            kind: link.format().kind(),
+            kind: format.kind(),
             open: Some(link),
         });
         let changes = self.lifecycle.link_arrived(mac, now);

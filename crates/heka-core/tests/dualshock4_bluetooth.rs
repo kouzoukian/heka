@@ -48,10 +48,7 @@ fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
         state,
         parse_usb_input_report(&usb, &Calibration::UNCALIBRATED).unwrap()
     );
-    assert_eq!(
-        state.buttons,
-        Buttons::CROSS | Buttons::L1 | Buttons::PS
-    );
+    assert_eq!(state.buttons, Buttons::CROSS | Buttons::L1 | Buttons::PS);
 }
 
 #[test]
@@ -61,7 +58,11 @@ fn a_fourth_touch_report_can_be_the_newest() {
     report[35] = 4;
     report[64..68].copy_from_slice(&[9, 100, 0, 0]);
     common::seal(0xA1, &mut report);
-    let finger = Finger { id: 9, x: 100, y: 0 };
+    let finger = Finger {
+        id: 9,
+        x: 100,
+        y: 0,
+    };
     assert_eq!(parse(&report).unwrap().touch, [Some(finger), None]);
 }
 
@@ -112,7 +113,10 @@ fn calibration_report() -> Vec<u8> {
 #[test]
 fn the_bluetooth_calibration_pairs_each_gyro_axis_with_its_own_limits() {
     let calibration = parse_bluetooth_calibration(&calibration_report()).unwrap();
-    assert_eq!(calibration.gyro([100, 100, -100]), [51_200, 25_600, -12_800]);
+    assert_eq!(
+        calibration.gyro([100, 100, -100]),
+        [51_200, 25_600, -12_800]
+    );
     assert_eq!(calibration.accel([8100, 100, -2048]), [8192, 0, -4096]);
 }
 

@@ -4,8 +4,33 @@ use std::fmt;
 
 use crate::calibration::Calibration;
 use crate::dualsense::{self, RumbleMode};
+use crate::dualshock4;
 use crate::feedback::Feedback;
 use crate::state::ControllerState;
+
+/// Which kind of Controller is at the other end of a Link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ControllerModel {
+    /// DualSense or DualSense Edge.
+    #[default]
+    DualSense,
+    /// DualShock 4, either hardware revision. Support is experimental.
+    DualShock4,
+}
+
+/// The kind of Controller a HID device with these IDs is, or `None` if heka does
+/// not read it. A Virtual Controller made by ViGEmBus carries a DualShock 4's IDs:
+/// only its MAC address tells them apart
+/// ([`crate::mac::MacAddress::is_virtual_controller`]).
+pub fn controller_model(vendor_id: u16, product_id: u16) -> Option<ControllerModel> {
+    if dualsense::is_dualsense(vendor_id, product_id) {
+        Some(ControllerModel::DualSense)
+    } else if dualshock4::is_dualshock4(vendor_id, product_id) {
+        Some(ControllerModel::DualShock4)
+    } else {
+        None
+    }
+}
 
 /// Which report layout a Link delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,6 +41,11 @@ pub enum ReportFormat {
     /// DualSense or DualSense Edge over Bluetooth, full report `0x31`, with the
     /// Controller's motion calibration.
     DualSenseBluetooth(Calibration),
+    /// DualShock 4 over USB, report `0x01`, with the Controller's motion calibration.
+    DualShock4Usb(Calibration),
+    /// DualShock 4 over Bluetooth, full report `0x11`, with the Controller's motion
+    /// calibration.
+    DualShock4Bluetooth(Calibration),
 }
 
 impl ReportFormat {
@@ -28,14 +58,28 @@ impl ReportFormat {
             Self::DualSenseBluetooth(calibration) => {
                 dualsense::parse_bluetooth_input_report(report, &calibration)
             }
+            Self::DualShock4Usb(calibration) => {
+                dualshock4::parse_usb_input_report(report, &calibration)
+            }
+            Self::DualShock4Bluetooth(calibration) => {
+                dualshock4::parse_bluetooth_input_report(report, &calibration)
+            }
         }
     }
 
     /// Whether the Link delivering this format is USB or Bluetooth.
     pub fn kind(self) -> LinkKind {
         match self {
-            Self::DualSenseUsb(_) => LinkKind::Usb,
-            Self::DualSenseBluetooth(_) => LinkKind::Bluetooth,
+            Self::DualSenseUsb(_) | Self::DualShock4Usb(_) => LinkKind::Usb,
+            Self::DualSenseBluetooth(_) | Self::DualShock4Bluetooth(_) => LinkKind::Bluetooth,
+        }
+    }
+
+    /// Which kind of Controller delivers this format.
+    pub fn model(self) -> ControllerModel {
+        match self {
+            Self::DualSenseUsb(_) | Self::DualSenseBluetooth(_) => ControllerModel::DualSense,
+            Self::DualShock4Usb(_) | Self::DualShock4Bluetooth(_) => ControllerModel::DualShock4,
         }
     }
 }
@@ -121,6 +165,10 @@ pub enum FeedbackFormat {
         seq: u8,
         lightbar_ready: bool,
     },
+    /// DualShock 4 over USB, report `0x05`.
+    DualShock4Usb,
+    /// DualShock 4 over Bluetooth, report `0x11`, with a CRC32.
+    DualShock4Bluetooth,
 }
 
 impl FeedbackFormat {
@@ -162,6 +210,10 @@ impl FeedbackFormat {
                 reports
                     .push(dualsense::bluetooth_output_report(feedback, *mode, next_seq()).to_vec());
                 reports
+            }
+            Self::DualShock4Usb => vec![dualshock4::usb_output_report(feedback).to_vec()],
+            Self::DualShock4Bluetooth => {
+                vec![dualshock4::bluetooth_output_report(feedback).to_vec()]
             }
         }
     }

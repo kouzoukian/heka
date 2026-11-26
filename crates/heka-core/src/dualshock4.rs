@@ -1,19 +1,137 @@
-//! DualShock 4 (both hardware revisions) input reports. Experimental: written from
-//! public sources and never tried on a DualShock 4.
+//! DualShock 4 (both hardware revisions) input, feature and output reports.
+//! Experimental: written from public sources and never tried on a DualShock 4.
 //!
 //! Layout source: Linux `drivers/hid/hid-playstation.c` at commit `4dd10fbbeb9c`
-//! (`struct dualshock4_input_report_common`, `struct dualshock4_input_report_usb`,
-//! `dualshock4_parse_report`). Offsets are into the report as read from HID, report
-//! ID byte included.
+//! (the `struct dualshock4_*` report layouts, the `DS4_*` definitions,
+//! `dualshock4_parse_report`, `dualshock4_get_calibration_data` and
+//! `dualshock4_get_mac_address`), and SDL `src/joystick/hidapi/SDL_hidapi_ps4.c`
+//! at commit `3ebae2a704f9` where named. Offsets are into the report as read from
+//! HID, report ID byte included.
 
 use crate::calibration::{self, Calibration};
 use crate::crc;
 use crate::dualsense;
+use crate::feedback::Feedback;
 use crate::link::ReportError;
+use crate::mac::{InvalidMacAddress, MacAddress};
 use crate::state::{
     Battery, Buttons, Charge, ControllerState, DUALSENSE_TOUCHPAD_HEIGHT,
     DUALSHOCK4_TOUCHPAD_HEIGHT, Finger, Motion, Stick, rescale_touch_y,
 };
+
+/// Product ID of the first DualShock 4 (`USB_DEVICE_ID_SONY_PS4_CONTROLLER` in
+/// Linux `drivers/hid/hid-ids.h`). ViGEmBus's virtual DualShock 4 uses it too.
+pub const PRODUCT_ID_DUALSHOCK4: u16 = 0x05C4;
+/// Product ID of the second hardware revision (`USB_DEVICE_ID_SONY_PS4_CONTROLLER_2`).
+pub const PRODUCT_ID_DUALSHOCK4_V2: u16 = 0x09CC;
+
+/// True for a product ID that heka reads as a DualShock 4.
+pub fn is_dualshock4(vendor_id: u16, product_id: u16) -> bool {
+    vendor_id == dualsense::VENDOR_ID
+        && matches!(product_id, PRODUCT_ID_DUALSHOCK4 | PRODUCT_ID_DUALSHOCK4_V2)
+}
+
+/// Feature report holding the Controller's MAC address over USB
+/// (`DS4_FEATURE_REPORT_PAIRING_INFO`). Reading it sends nothing to the Controller
+/// but the request. Over Bluetooth use [`parse_bluetooth_serial`].
+pub const PAIRING_INFO_REPORT_ID: u8 = 0x12;
+/// Its length including the report ID (`DS4_FEATURE_REPORT_PAIRING_INFO_SIZE`).
+pub const PAIRING_INFO_LEN: usize = 16;
+
+/// Reads the MAC address from a pairing-info feature report, report ID byte included.
+pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
+    dualsense::mac_after_report_id(report, PAIRING_INFO_REPORT_ID)
+}
+
+/// The MAC address in the HID serial number of a DualShock 4 on Bluetooth: 12 hex
+/// digits in the order printed on the label. The kernel too takes the address from
+/// the Bluetooth stack there, not from a feature report
+/// (`dualshock4_get_mac_address`; SDL `HIDAPI_DriverPS4_InitDevice` reads the
+/// serial number so).
+pub fn parse_bluetooth_serial(serial: &str) -> Result<MacAddress, InvalidMacAddress> {
+    if serial.len() != 12 || !serial.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(InvalidMacAddress);
+    }
+    match u64::from_str_radix(serial, 16) {
+        // All zeros is no address.
+        Ok(0) | Err(_) => Err(InvalidMacAddress),
+        Ok(address) => {
+            let [_, _, bytes @ ..] = address.to_be_bytes();
+            Ok(MacAddress(bytes))
+        }
+    }
+}
+
+// Output reports. Layout: `struct dualshock4_output_report_common`, which both
+// Links carry, and the `DS4_OUTPUT_*` definitions.
+
+/// Report ID of the USB output report (`DS4_OUTPUT_REPORT_USB`).
+pub const USB_OUTPUT_REPORT_ID: u8 = 0x05;
+/// Its length including the report ID (`DS4_OUTPUT_REPORT_USB_SIZE`).
+pub const USB_OUTPUT_REPORT_LEN: usize = 32;
+/// Where the common block starts over USB.
+const USB_OUTPUT_COMMON: usize = 1;
+
+/// Report ID of the Bluetooth output report (`DS4_OUTPUT_REPORT_BT`).
+pub const BT_OUTPUT_REPORT_ID: u8 = 0x11;
+/// Its length including the report ID and CRC (`DS4_OUTPUT_REPORT_BT_SIZE`).
+pub const BT_OUTPUT_REPORT_LEN: usize = 78;
+/// Where the common block starts over Bluetooth: after the report ID,
+/// `hw_control` and `audio_control`.
+const BT_OUTPUT_COMMON: usize = 3;
+const OUT_BT_HW_CONTROL: usize = 1; // hw_control
+/// The report carries HID data and ends in a CRC (`DS4_OUTPUT_HWCTL_HID`,
+/// `DS4_OUTPUT_HWCTL_CRC32`).
+const HW_CONTROL_HID_AND_CRC: u8 = 0x80 | 0x40;
+/// The milliseconds between the DualShock 4's Bluetooth input reports, in the low
+/// bits of `hw_control` (`DS4_BT_DEFAULT_POLL_INTERVAL_MS`). Every report states
+/// it, as SDL's do, because 0 there means 1 ms.
+const BT_POLL_INTERVAL_MS: u8 = 4;
+
+// Offsets into `struct dualshock4_output_report_common`.
+const OUT_VALID_FLAG0: usize = 0; // valid_flag0
+const OUT_MOTOR_RIGHT: usize = 3; // motor_right
+const OUT_MOTOR_LEFT: usize = 4; // motor_left
+const OUT_LIGHTBAR: usize = 5; // lightbar_red, lightbar_green, lightbar_blue
+
+const FLAG0_MOTOR: u8 = 0x01; // DS4_OUTPUT_VALID_FLAG0_MOTOR
+const FLAG0_LED: u8 = 0x02; // DS4_OUTPUT_VALID_FLAG0_LED
+
+/// Builds the USB output report that sets the rumble motors and, when the
+/// Feedback has one, the lightbar colour. Nothing else on the Controller changes.
+pub fn usb_output_report(feedback: &Feedback) -> [u8; USB_OUTPUT_REPORT_LEN] {
+    let mut report = [0u8; USB_OUTPUT_REPORT_LEN];
+    report[0] = USB_OUTPUT_REPORT_ID;
+    write_feedback(&mut report[USB_OUTPUT_COMMON..], feedback);
+    report
+}
+
+/// Builds the Bluetooth output report that shows this Feedback, as
+/// [`usb_output_report`] does, with its CRC.
+pub fn bluetooth_output_report(feedback: &Feedback) -> [u8; BT_OUTPUT_REPORT_LEN] {
+    let mut report = [0u8; BT_OUTPUT_REPORT_LEN];
+    report[0] = BT_OUTPUT_REPORT_ID;
+    report[OUT_BT_HW_CONTROL] = HW_CONTROL_HID_AND_CRC | BT_POLL_INTERVAL_MS;
+    write_feedback(&mut report[BT_OUTPUT_COMMON..], feedback);
+    crc::seal(crc::BT_OUTPUT_SEED, &mut report);
+    report
+}
+
+/// Fills in the common block. The large (Xbox left) motor drives the DualShock 4's
+/// left motor, as `dualshock4_play_effect` maps the strong magnitude.
+fn write_feedback(common: &mut [u8], feedback: &Feedback) {
+    common[OUT_VALID_FLAG0] = FLAG0_MOTOR;
+    common[OUT_MOTOR_LEFT] = feedback.rumble.large;
+    common[OUT_MOTOR_RIGHT] = feedback.rumble.small;
+    if let Some(lightbar) = feedback.lightbar {
+        common[OUT_VALID_FLAG0] |= FLAG0_LED;
+        common[OUT_LIGHTBAR..OUT_LIGHTBAR + 3].copy_from_slice(&[
+            lightbar.red,
+            lightbar.green,
+            lightbar.blue,
+        ]);
+    }
+}
 
 /// Report ID of the USB input report (`DS4_INPUT_REPORT_USB`).
 pub const USB_INPUT_REPORT_ID: u8 = 0x01;
