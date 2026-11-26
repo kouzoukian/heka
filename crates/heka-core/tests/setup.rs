@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use heka_core::calibration::Calibration;
 use heka_core::hiding::HidHideStatus;
 use heka_core::lifecycle::{Change, Phase};
 use heka_core::link::{LinkRead, LinkReader, ReportFormat};
@@ -47,7 +48,7 @@ struct FakeLink(LinkHandle);
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb
+        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -397,4 +398,22 @@ fn a_link_lost_just_before_vigem_bus_arrives_is_not_bridged() {
     assert_eq!(setup::check(&drivers, &mut supervisor, t0).1, []);
     assert!(supervisor.controllers().is_empty());
     assert_eq!(drivers.bus.plugged(), 0);
+}
+
+#[test]
+fn an_output_type_chosen_without_vigem_bus_is_used_once_it_arrives() {
+    let t0 = Instant::now();
+    let drivers = FakeDrivers::without_vigem_bus();
+    let mut supervisor = started(&drivers, t0);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    assert_eq!(supervisor.set_output_type(mac(1), OutputType::Ps4, t0), []);
+
+    drivers.install_vigem_bus();
+    assert_eq!(
+        setup::check(&drivers, &mut supervisor, t0).1,
+        [Change::Bridged {
+            mac: mac(1),
+            output_type: OutputType::Ps4
+        }]
+    );
 }

@@ -5,11 +5,12 @@
 
 mod common;
 
+use heka_core::calibration::Calibration;
 use heka_core::dualsense::parse_usb_input_report;
 use heka_core::xbox::XboxReport;
 
 fn xbox(report: &[u8]) -> XboxReport {
-    XboxReport::from_state(&parse_usb_input_report(report).unwrap())
+    XboxReport::from_state(&parse_usb_input_report(report, &Calibration::UNCALIBRATED).unwrap())
 }
 
 #[test]

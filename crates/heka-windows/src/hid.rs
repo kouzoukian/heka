@@ -10,6 +10,7 @@ use std::fmt;
 
 use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 
+use heka_core::calibration::Calibration;
 use heka_core::dualsense::{self, RumbleMode};
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportError, ReportFormat,
@@ -38,6 +39,7 @@ pub struct DualSenseUsbLink {
     device: HidDevice,
     path: CString,
     firmware_info: Option<Vec<u8>>,
+    calibration: Calibration,
     rumble_mode: RumbleMode,
     writer: Option<DualSenseUsbWriter>,
 }
@@ -54,6 +56,7 @@ impl DualSenseUsbLink {
         };
         let device = info.open_device(api)?;
         let firmware_info = read_firmware_info(&device);
+        let calibration = read_calibration(&device);
         let rumble_mode = dualsense::rumble_mode(info.product_id(), firmware_info.as_deref());
         let writer = match info.open_device(api) {
             Ok(device) => Some(DualSenseUsbWriter {
@@ -69,6 +72,7 @@ impl DualSenseUsbLink {
             device,
             path: info.path().to_owned(),
             firmware_info,
+            calibration,
             rumble_mode,
             writer,
         }))
@@ -85,6 +89,7 @@ impl DualSenseUsbLink {
         let device = api.open_path(path).map_err(OpenError::Hid)?;
         let mac = read_mac(&device)?;
         let firmware_info = read_firmware_info(&device);
+        let calibration = read_calibration(&device);
         let rumble_mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
         let writer = match api.open_path(path) {
             Ok(device) => Some(DualSenseUsbWriter {
@@ -100,6 +105,7 @@ impl DualSenseUsbLink {
             device,
             path: path.to_owned(),
             firmware_info,
+            calibration,
             rumble_mode,
             writer,
         };
@@ -130,6 +136,27 @@ fn read_firmware_info(device: &HidDevice) -> Option<Vec<u8>> {
     let len = device.get_feature_report(&mut buf).ok()?;
     buf.truncate(len);
     Some(buf)
+}
+
+/// Reads the motion calibration feature report, report ID included. Reading a
+/// feature report changes nothing on the Controller.
+pub fn read_calibration_report(device: &HidDevice) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; dualsense::CALIBRATION_REPORT_LEN];
+    buf[0] = dualsense::CALIBRATION_REPORT_ID;
+    let len = device.get_feature_report(&mut buf).ok()?;
+    buf.truncate(len);
+    Some(buf)
+}
+
+/// The Controller's motion calibration, or full scale if it cannot be read.
+fn read_calibration(device: &HidDevice) -> Calibration {
+    match read_calibration_report(device).map(|report| dualsense::parse_calibration(&report)) {
+        Some(Ok(calibration)) => calibration,
+        other => {
+            eprintln!("heka: no motion calibration for this DualSense: {other:?}");
+            Calibration::UNCALIBRATED
+        }
+    }
 }
 
 /// Reads the pairing-info feature report. Reading a feature report changes nothing
@@ -171,7 +198,7 @@ impl std::error::Error for OpenError {}
 
 impl LinkReader for DualSenseUsbLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb
+        ReportFormat::DualSenseUsb(self.calibration)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {

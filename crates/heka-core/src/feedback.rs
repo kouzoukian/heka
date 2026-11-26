@@ -15,16 +15,28 @@ impl Rumble {
     pub const OFF: Self = Self { large: 0, small: 0 };
 }
 
+/// A lightbar colour, each channel 0 = off to 255 = full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Lightbar {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
 /// Everything a game currently asks the Controller to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Feedback {
     pub rumble: Rumble,
+    /// The colour a game set, or `None` to leave the Controller's lightbar as it
+    /// is: an Xbox Virtual Controller has no lightbar.
+    pub lightbar: Option<Lightbar>,
 }
 
 impl Feedback {
-    /// Both motors stopped.
+    /// Both motors stopped, the lightbar left as it is.
     pub const OFF: Self = Self {
         rumble: Rumble::OFF,
+        lightbar: None,
     };
 }
 

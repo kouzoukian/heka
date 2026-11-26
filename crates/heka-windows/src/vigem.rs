@@ -4,13 +4,14 @@
 
 use std::time::Duration;
 
-use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Rumble};
+use heka_core::ps4::Ps4Translator;
 use heka_core::state::ControllerState;
 use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
 use heka_core::xbox::XboxReport;
 use vigem_rust::{
-    Client, NotificationReceiver, Ready, RecvTimeoutError, TargetHandle, X360Button,
-    X360Notification, X360Report, Xbox360,
+    Client, Ds4Notification, Ds4ReportEx, DualShock4, NotificationReceiver, Ready,
+    RecvTimeoutError, TargetHandle, X360Button, X360Notification, X360Report, Xbox360,
 };
 
 /// A connection to ViGEmBus. Every Virtual Controller it plugs is removed when
@@ -39,6 +40,73 @@ impl VirtualBus for VigemBus {
                     .map_err(VirtualError::new)?;
                 Ok(Box::new(VigemXbox { target }))
             }
+            OutputType::Ps4 => {
+                let target = self
+                    .client
+                    .new_ds4_target()
+                    .plug()
+                    .and_then(|pending| pending.wait_for_ready())
+                    .map_err(VirtualError::new)?;
+                Ok(Box::new(VigemPs4 {
+                    target,
+                    translator: Ps4Translator::default(),
+                }))
+            }
+        }
+    }
+}
+
+struct VigemPs4 {
+    target: TargetHandle<DualShock4, Ready>,
+    translator: Ps4Translator,
+}
+
+impl VirtualController for VigemPs4 {
+    fn output_type(&self) -> OutputType {
+        OutputType::Ps4
+    }
+
+    fn update(&mut self, state: &ControllerState) -> Result<(), VirtualError> {
+        let report = Ds4ReportEx::from_bytes(self.translator.report(state));
+        self.target.update_ex(&report).map_err(VirtualError::new)
+    }
+
+    fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
+        self.target.unplug().map_err(VirtualError::new)
+    }
+
+    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
+        match self.target.register_notification() {
+            Ok(receiver) => Some(Box::new(VigemPs4Feedback(receiver))),
+            Err(error) => {
+                eprintln!("heka: no Feedback from the Virtual Controller: {error}");
+                None
+            }
+        }
+    }
+}
+
+/// Rumble and lightbar colour a game sends to a PS4 Virtual Controller. Every
+/// notification carries both, so the lightbar shows whatever colour the game
+/// last asked for.
+struct VigemPs4Feedback(NotificationReceiver<Ds4Notification>);
+
+impl FeedbackSource for VigemPs4Feedback {
+    fn next(&mut self, timeout: Duration) -> FeedbackEvent {
+        match self.0.recv_timeout(timeout) {
+            Ok(notification) => FeedbackEvent::Feedback(Feedback {
+                rumble: Rumble {
+                    large: notification.large_motor,
+                    small: notification.small_motor,
+                },
+                lightbar: Some(Lightbar {
+                    red: notification.lightbar.red,
+                    green: notification.lightbar.green,
+                    blue: notification.lightbar.blue,
+                }),
+            }),
+            Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
+            Err(_) => FeedbackEvent::Closed,
         }
     }
 }
@@ -86,6 +154,7 @@ impl FeedbackSource for VigemXboxFeedback {
                     large: notification.large_motor,
                     small: notification.small_motor,
                 },
+                lightbar: None,
             }),
             Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
             // Disconnected, or a bus error, which vigem-rust documents as often
@@ -135,5 +204,78 @@ mod tests {
         for (ours, theirs) in pairs {
             assert_eq!(ours, theirs.bits());
         }
+    }
+
+    #[test]
+    fn ps4_report_bytes_land_on_vigem_rusts_ds4_fields() {
+        use heka_core::state::{Buttons, Finger, Motion, Stick};
+        use vigem_rust::{Ds4ButtonFlags, Ds4Dpad, Ds4SpecialButton, TouchState};
+
+        let state = ControllerState {
+            buttons: Buttons::CROSS
+                | Buttons::CREATE
+                | Buttons::R3
+                | Buttons::PS
+                | Buttons::TOUCHPAD
+                | Buttons::DPAD_DOWN
+                | Buttons::DPAD_LEFT,
+            left_stick: Stick { x: 1, y: 2 },
+            right_stick: Stick { x: 3, y: 4 },
+            left_trigger: 5,
+            right_trigger: 6,
+            touch: [
+                Some(Finger {
+                    id: 9,
+                    x: 100,
+                    y: 0,
+                }),
+                None,
+            ],
+            motion: Motion {
+                gyro: [102_400, 0, -102_400],
+                accel: [8192, 0, -8192],
+                timestamp: 0x0001_2340,
+            },
+        };
+        let bytes = Ps4Translator::default().report(&state);
+        let report = Ds4ReportEx::from_bytes(bytes);
+        let le16 = |at: usize| i16::from_le_bytes([bytes[at], bytes[at + 1]]);
+        assert_eq!(
+            [{ report.gyro_x }, { report.gyro_y }, { report.gyro_z }],
+            [le16(12), 0, le16(16)]
+        );
+        assert!({ report.gyro_x } > 0 && { report.gyro_z } < 0);
+        assert_eq!(
+            [{ report.accel_x }, { report.accel_z }],
+            [le16(18), le16(22)]
+        );
+        assert_eq!(
+            (
+                report.thumb_lx,
+                report.thumb_ly,
+                report.thumb_rx,
+                report.thumb_ry
+            ),
+            (1, 2, 3, 4)
+        );
+        let buttons = report.buttons;
+        assert_eq!(buttons.dpad(), Ds4Dpad::SouthWest);
+        assert_eq!(
+            buttons.flags(),
+            Ds4ButtonFlags::CROSS | Ds4ButtonFlags::SHARE | Ds4ButtonFlags::THUMB_RIGHT
+        );
+        assert_eq!(
+            report.special,
+            Ds4SpecialButton::PS | Ds4SpecialButton::TOUCHPAD
+        );
+        assert_eq!((report.trigger_left, report.trigger_right), (5, 6));
+        assert_eq!({ report.timestamp }, 0x1234);
+        assert_eq!(report.touch_packets_n, 1);
+        let touch = report.current_touch;
+        assert!(matches!(
+            touch.finger_1(),
+            TouchState::Down { tracking_num: 9, at } if (at.x(), at.y()) == (100, 0)
+        ));
+        assert!(matches!(touch.finger_2(), TouchState::Up));
     }
 }
