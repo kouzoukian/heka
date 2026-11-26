@@ -8,7 +8,9 @@
 //! it is Bridged and again when it returns from a Hold, stays Hidden while Held, and
 //! is restored whenever its Virtual Controller is removed. Every Link of a Hidden
 //! Controller is Hidden, including one that arrives later. A start after a crash
-//! first restores what the crashed run Hid.
+//! first restores what the crashed run Hid. Before looking for Controllers heka adds
+//! itself to HidHide's allowed applications, so it also finds a Controller another
+//! tool hid; it stays allowed until it quits.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -209,17 +211,22 @@ struct Hider {
     /// Controllers to Hide that are not Hidden yet, retried every poll, for
     /// example while HidHide's own client holds the driver.
     pending: HashSet<MacAddress>,
+    /// heka is not in HidHide's allowed applications yet, so it cannot find a
+    /// Controller another tool hid. Retried every poll; Bridging goes on meanwhile.
+    allow_pending: bool,
     note: Option<String>,
 }
 
 impl Hider {
-    /// Opens HidHide and undoes whatever a killed run left Hidden.
+    /// Opens HidHide, undoes whatever a killed run left Hidden, and allows heka so
+    /// that the first look for Controllers also finds ones other tools hid.
     fn open() -> Self {
         let mut hider = Self {
             hiding: None,
             devices: HashMap::new(),
             wanted: HashSet::new(),
             pending: HashSet::new(),
+            allow_pending: false,
             note: None,
         };
         match hidhide::hiding() {
@@ -228,10 +235,28 @@ impl Hider {
                     hider.note = Some(text::cannot_restore_earlier_run(&error.to_string()));
                 }
                 hider.hiding = Some(hiding);
+                hider.allow_pending = true;
+                hider.allow();
             }
             Err(error) => hider.note = Some(text::cannot_hide_at_all(&error.to_string())),
         }
         hider
+    }
+
+    fn allow(&mut self) {
+        let Some(hiding) = &self.hiding else {
+            self.allow_pending = false;
+            return;
+        };
+        match hiding.allow_heka() {
+            Ok(()) => {
+                self.allow_pending = false;
+                if self.pending.is_empty() {
+                    self.note = None;
+                }
+            }
+            Err(error) => self.note = Some(text::not_allowed(&error.to_string())),
+        }
     }
 
     /// Records the device behind a Link before the Supervisor hears of it, and
@@ -289,6 +314,9 @@ impl Hider {
     }
 
     fn retry(&mut self) {
+        if self.allow_pending {
+            self.allow();
+        }
         let pending: Vec<MacAddress> = self.pending.iter().copied().collect();
         for mac in pending {
             self.hide(mac);
@@ -318,7 +346,7 @@ impl Hider {
         match result {
             Ok(()) => {
                 self.pending.remove(&mac);
-                if self.pending.is_empty() {
+                if self.pending.is_empty() && !self.allow_pending {
                     self.note = None;
                 }
             }

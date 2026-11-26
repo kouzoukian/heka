@@ -385,6 +385,158 @@ fn detection_reads_hidhide_and_changes_nothing() {
     assert!(world.lock().unwrap().writes.is_empty());
 }
 
+/// The maintainer's PC: DS4Windows left the DualSense hidden and is the only allowed app.
+fn hidden_by_ds4windows() -> HidHideConfig {
+    HidHideConfig {
+        active: true,
+        inverse: false,
+        hidden_devices: vec![USB_LINK.into()],
+        allowed_apps: vec![DS4WINDOWS.into()],
+    }
+}
+
+#[test]
+fn heka_allows_itself_before_any_controller_is_bridged_journalling_it_first() {
+    let world = world(hidden_by_ds4windows());
+    let hiding = hiding(&world);
+
+    hiding.allow_heka().unwrap();
+
+    let writes = world.lock().unwrap().writes.clone();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].journal_then.allowed_app.as_deref(), Some(HEKA));
+    let config_now = config(&world);
+    assert_eq!(config_now.allowed_apps, [DS4WINDOWS, HEKA]);
+    assert_eq!(config_now.hidden_devices, [USB_LINK]);
+    assert!(config_now.active);
+}
+
+#[test]
+fn heka_stays_allowed_after_the_last_bridge_ends_and_is_removed_on_quit() {
+    let world = world(hidden_by_ds4windows());
+    let hiding = hiding(&world);
+    hiding.allow_heka().unwrap();
+
+    // The Controller DS4Windows hid can now be opened and Bridged.
+    hiding.hide("pad-1", &path(USB_LINK)).unwrap();
+    hiding.release("pad-1").unwrap();
+    assert_eq!(config(&world).allowed_apps, [DS4WINDOWS, HEKA]);
+    assert_eq!(
+        config(&world).hidden_devices,
+        [USB_LINK],
+        "heka never unhides what it did not hide"
+    );
+
+    hiding.restore_all().unwrap();
+    assert_eq!(config(&world), hidden_by_ds4windows());
+    assert!(world.lock().unwrap().journal.is_empty());
+}
+
+#[test]
+fn ending_the_last_bridge_undoes_hiding_and_cloak_but_keeps_heka_allowed() {
+    let world = world(HidHideConfig::default());
+    let hiding = hiding(&world);
+    hiding.allow_heka().unwrap();
+    hiding.hide("pad-1", &path(USB_LINK)).unwrap();
+
+    hiding.release("pad-1").unwrap();
+
+    assert_eq!(
+        config(&world),
+        HidHideConfig {
+            allowed_apps: vec![HEKA.into()],
+            ..HidHideConfig::default()
+        }
+    );
+    hiding.restore_all().unwrap();
+    assert_eq!(config(&world), HidHideConfig::default());
+    assert!(world.lock().unwrap().journal.is_empty());
+}
+
+#[test]
+fn heka_allowed_by_someone_else_is_left_allowed_on_quit() {
+    let before = HidHideConfig {
+        allowed_apps: vec![DS4WINDOWS.into(), HEKA.to_lowercase()],
+        ..hidden_by_ds4windows()
+    };
+    let world = world(before.clone());
+    let hiding = hiding(&world);
+
+    hiding.allow_heka().unwrap();
+    hiding.restore_all().unwrap();
+
+    assert_eq!(config(&world), before);
+    assert!(world.lock().unwrap().writes.is_empty());
+}
+
+#[test]
+fn with_an_inverted_application_list_heka_does_not_list_itself_at_start() {
+    let before = HidHideConfig {
+        inverse: true,
+        ..hidden_by_ds4windows()
+    };
+    let world = world(before.clone());
+    let hiding = hiding(&world);
+
+    hiding.allow_heka().unwrap();
+    hiding.restore_all().unwrap();
+
+    assert_eq!(config(&world), before);
+    assert!(world.lock().unwrap().writes.is_empty());
+}
+
+#[test]
+fn the_next_start_removes_heka_from_the_allowed_apps_after_a_kill() {
+    let world = world(hidden_by_ds4windows());
+    let killed = hiding(&world);
+    killed.allow_heka().unwrap();
+    std::mem::forget(killed);
+
+    let next = hiding(&world);
+    next.recover().unwrap();
+    assert_eq!(config(&world), hidden_by_ds4windows());
+
+    // The next run allows itself again and cleans up on quit as usual.
+    next.allow_heka().unwrap();
+    assert_eq!(config(&world).allowed_apps, [DS4WINDOWS, HEKA]);
+    next.restore_all().unwrap();
+    assert_eq!(config(&world), hidden_by_ds4windows());
+    assert!(world.lock().unwrap().journal.is_empty());
+}
+
+#[test]
+fn a_busy_hidhide_at_start_is_reported_and_allowing_succeeds_on_retry() {
+    let world = world(hidden_by_ds4windows());
+    let hiding = hiding(&world);
+    world.lock().unwrap().fail_with = Some(HidHideError::InUse);
+
+    assert!(hiding.allow_heka().is_err());
+    assert_eq!(config(&world), hidden_by_ds4windows());
+
+    world.lock().unwrap().fail_with = None;
+    hiding.allow_heka().unwrap();
+    assert_eq!(config(&world).allowed_apps, [DS4WINDOWS, HEKA]);
+    hiding.restore_all().unwrap();
+    assert_eq!(config(&world), hidden_by_ds4windows());
+}
+
+#[test]
+fn heka_allowed_while_hidhide_fails_mid_change_is_still_removed_on_quit() {
+    // The journal is saved, then the write fails: the entry stays journalled and the
+    // quit finds nothing to remove.
+    let world = world(hidden_by_ds4windows());
+    let hiding = hiding(&world);
+    hiding.allow_heka().unwrap();
+    world.lock().unwrap().fail_with = Some(HidHideError::InUse);
+    assert!(hiding.restore_all().is_err());
+    world.lock().unwrap().fail_with = None;
+
+    hiding.restore_all().unwrap();
+
+    assert_eq!(config(&world), hidden_by_ds4windows());
+    assert!(world.lock().unwrap().journal.is_empty());
+}
+
 #[test]
 fn a_link_removed_from_hidhide_by_someone_else_is_hidden_again_on_return() {
     let world = world(dev_pc());

@@ -273,7 +273,8 @@ pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
 }
 
 /// heka's [`Hiding`] over the real driver, journalled at [`journal_path`]. Call
-/// [`Hiding::recover`] on it once before the first Bridge.
+/// [`Hiding::recover`] on it once, then [`Hiding::allow_heka`], before looking for
+/// Controllers.
 pub fn hiding() -> io::Result<Hiding> {
     let journal = journal_path().ok_or_else(|| io::Error::other("LOCALAPPDATA is not set"))?;
     Ok(Hiding::new(
