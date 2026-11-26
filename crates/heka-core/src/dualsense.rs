@@ -1,10 +1,11 @@
-//! DualSense and DualSense Edge input reports.
+//! DualSense and DualSense Edge input and output reports.
 //!
 //! Layout source: Linux `drivers/hid/hid-playstation.c` (`struct dualsense_input_report`,
 //! the `DS_BUTTONS*` bit definitions and `ps_gamepad_hat_mapping`). Offsets below are
 //! into the USB report as read from HID, so they are one more than the struct offsets
 //! because byte 0 is the report ID (the kernel reads the struct from `&data[1]`).
 
+use crate::feedback::Feedback;
 use crate::link::ReportError;
 use crate::mac::MacAddress;
 use crate::state::{Buttons, ControllerState, Stick};
@@ -126,4 +127,80 @@ pub fn parse_usb_input_report(report: &[u8]) -> Result<ControllerState, ReportEr
         left_trigger: report[LEFT_TRIGGER],
         right_trigger: report[RIGHT_TRIGGER],
     })
+}
+
+// Output report. Layout source: Linux `hid-playstation.c` (`struct
+// dualsense_output_report_usb`, `struct dualsense_output_report_common`, the
+// `DS_OUTPUT_VALID_FLAG*` bits and `dualsense_output_worker`). Offsets are into the
+// USB report: the common block starts at byte 1, after the report ID.
+
+/// Report ID of the USB output report (`DS_OUTPUT_REPORT_USB`).
+pub const USB_OUTPUT_REPORT_ID: u8 = 0x02;
+/// Length of the USB output report including its report ID (`DS_OUTPUT_REPORT_USB_SIZE`).
+pub const USB_OUTPUT_REPORT_LEN: usize = 63;
+
+const OUT_VALID_FLAG0: usize = 1; // common.valid_flag0
+const OUT_MOTOR_RIGHT: usize = 3; // common.motor_right
+const OUT_MOTOR_LEFT: usize = 4; // common.motor_left
+const OUT_VALID_FLAG2: usize = 39; // common.valid_flag2
+
+const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0; // DS_OUTPUT_VALID_FLAG0_COMPATIBLE_VIBRATION
+const FLAG0_HAPTICS_SELECT: u8 = 1 << 1; // DS_OUTPUT_VALID_FLAG0_HAPTICS_SELECT
+const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG2_COMPATIBLE_VIBRATION2
+
+/// How a DualSense imitates classic two-motor rumble with its haptic actuators.
+///
+/// The kernel notes that newer firmware made `CompatibleV2` the default on
+/// PlayStation and other platforms because it feels like classic rumble, and that
+/// both devices still accept `Compatible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RumbleMode {
+    /// The original rumble emulation, accepted by every firmware.
+    Compatible,
+    /// The revised emulation: DualSense update version 2.21 and later, every DualSense Edge.
+    CompatibleV2,
+}
+
+/// Report ID of the firmware info feature report (`DS_FEATURE_REPORT_FIRMWARE_INFO`).
+pub const FIRMWARE_INFO_REPORT_ID: u8 = 0x20;
+/// Its length including the report ID (`DS_FEATURE_REPORT_FIRMWARE_INFO_SIZE`).
+pub const FIRMWARE_INFO_REPORT_LEN: usize = 64;
+/// Offset of the little-endian update version (`dualsense_get_firmware_info`).
+const UPDATE_VERSION: usize = 44;
+/// Update version 2.21, the first with v2 rumble (`DS_FEATURE_VERSION(2, 21)`).
+const UPDATE_VERSION_V2_RUMBLE: u16 = 0x0215;
+
+/// The rumble mode for a DualSense, from its product ID and its firmware info
+/// feature report (report ID byte included), as `dualsense_create` decides it.
+///
+/// A DualSense whose firmware info cannot be read gets `Compatible`, which every
+/// firmware accepts.
+pub fn rumble_mode(product_id: u16, firmware_info: Option<&[u8]>) -> RumbleMode {
+    if product_id == PRODUCT_ID_DUALSENSE_EDGE {
+        return RumbleMode::CompatibleV2;
+    }
+    let update_version = firmware_info
+        .filter(|info| info.len() >= FIRMWARE_INFO_REPORT_LEN && info[0] == FIRMWARE_INFO_REPORT_ID)
+        .map(|info| u16::from_le_bytes([info[UPDATE_VERSION], info[UPDATE_VERSION + 1]]));
+    match update_version {
+        Some(version) if version >= UPDATE_VERSION_V2_RUMBLE => RumbleMode::CompatibleV2,
+        _ => RumbleMode::Compatible,
+    }
+}
+
+/// Builds the USB output report that sets the rumble motors and nothing else.
+///
+/// The large (Xbox left) motor drives the DualSense left motor, as the kernel maps
+/// a force-feedback effect's strong magnitude to `motor_left`.
+pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTPUT_REPORT_LEN] {
+    let mut report = [0u8; USB_OUTPUT_REPORT_LEN];
+    report[0] = USB_OUTPUT_REPORT_ID;
+    report[OUT_VALID_FLAG0] = FLAG0_HAPTICS_SELECT;
+    match mode {
+        RumbleMode::Compatible => report[OUT_VALID_FLAG0] |= FLAG0_COMPATIBLE_VIBRATION,
+        RumbleMode::CompatibleV2 => report[OUT_VALID_FLAG2] |= FLAG2_COMPATIBLE_VIBRATION2,
+    }
+    report[OUT_MOTOR_LEFT] = feedback.rumble.large;
+    report[OUT_MOTOR_RIGHT] = feedback.rumble.small;
+    report
 }

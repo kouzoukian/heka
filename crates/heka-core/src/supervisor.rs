@@ -9,13 +9,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::bridge::{Bridge, BridgeEnd, LiveInput};
+use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::LinkReader;
 use crate::mac::MacAddress;
 use crate::settings::Settings;
-use crate::state::ControllerState;
-use crate::virtual_controller::{OutputType, VirtualBus, VirtualController};
+use crate::virtual_controller::{OutputType, VirtualBus};
 
 /// Names one Link given to [`Supervisor::link_arrived`], to report it gone later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,10 +39,10 @@ struct Slot {
     /// The Controller's current Link, if it has one.
     link_id: Option<LinkId>,
     /// The Link while no Bridge reads it (Stopped, waiting, or between steps).
-    link: Option<Box<dyn LinkReader>>,
+    link: Option<OpenLink>,
     bridge: Option<Bridge>,
     /// The Virtual Controller while Held.
-    held: Option<Box<dyn VirtualController>>,
+    held: Option<Plugged>,
     error: Option<String>,
 }
 
@@ -108,7 +107,7 @@ impl Supervisor {
             return (id, Vec::new());
         }
         slot.link_id = Some(id);
-        slot.link = Some(link);
+        slot.link = Some(OpenLink::new(link));
         let changes = self.lifecycle.link_arrived(mac, now);
         (id, self.apply(changes, now))
     }
@@ -241,11 +240,11 @@ impl Supervisor {
         };
         let controller = match held {
             Some(controller) => controller,
-            None => self.bus.plug(output_type).map_err(|e| e.to_string())?,
+            None => Plugged::new(self.bus.plug(output_type).map_err(|e| e.to_string())?),
         };
         let slot = self.slot(mac);
         let link = slot.link.take().expect("checked above");
-        let bridge = Bridge::start(link, controller, Arc::clone(&slot.live))
+        let bridge = Bridge::resume(link, controller, Arc::clone(&slot.live))
             .map_err(|e| format!("cannot start the input thread: {e}"))?;
         slot.bridge = Some(bridge);
         slot.error = None;
@@ -284,8 +283,8 @@ impl Supervisor {
 }
 
 /// Shows everything released and sticks centred, and keeps the Virtual Controller.
-fn release(mut controller: Box<dyn VirtualController>) -> Box<dyn VirtualController> {
+fn release(mut controller: Plugged) -> Plugged {
     // Best effort: a failure shows on the next update or removal.
-    let _ = controller.update(&ControllerState::NEUTRAL);
+    let _ = controller.release();
     controller
 }

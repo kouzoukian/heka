@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use crate::feedback::FeedbackSource;
 use crate::state::ControllerState;
 
 /// The kind of Virtual Controller a Controller drives.
@@ -34,6 +35,12 @@ pub trait VirtualController: Send {
 
     /// Removes the Virtual Controller from the system.
     fn unplug(self: Box<Self>) -> Result<(), VirtualError>;
+
+    /// Hands over the Feedback games send to this Virtual Controller, for another
+    /// thread to own. `None` when it carries no Feedback, or once it has been taken.
+    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
+        None
+    }
 }
 
 /// A backend failure, carrying the backend's own error.

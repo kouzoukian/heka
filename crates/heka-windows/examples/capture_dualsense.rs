@@ -6,8 +6,9 @@
 //!
 //! Prints every DualSense HID collection it finds on stderr, then COUNT reports
 //! (default 50) as hex lines on stdout, in the format `heka-core`'s fixtures use.
-//! Hold the inputs you want recorded while it runs. Nothing is sent to the
-//! Controller: it opens the device and reads, nothing else.
+//! It also prints the firmware info feature report and the rumble mode chosen from
+//! it on stderr. Hold the inputs you want recorded while it runs. Nothing is sent
+//! to the Controller: it opens the device and reads, nothing else.
 
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -51,6 +52,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut link) = DualSenseUsbLink::open_first(&api)? else {
         return Err("no DualSense on USB".into());
     };
+    match link.firmware_info() {
+        Some(info) => {
+            let hex: Vec<String> = info.iter().map(|b| format!("{b:02x}")).collect();
+            eprintln!("firmware info (feature report 0x20): {}", hex.join(" "));
+        }
+        None => eprintln!("firmware info (feature report 0x20): not available"),
+    }
+    eprintln!("rumble mode: {:?}", link.rumble_mode());
 
     let mut out = std::io::stdout().lock();
     let mut buf = [0u8; 128];
