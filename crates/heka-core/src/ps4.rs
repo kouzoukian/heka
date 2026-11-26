@@ -7,7 +7,10 @@
 //! definitions the kernel uses for both pads.
 
 use crate::calibration::Calibration;
-use crate::state::{Buttons, ControllerState, Finger};
+use crate::state::{
+    Buttons, ControllerState, DUALSENSE_TOUCHPAD_HEIGHT, DUALSHOCK4_TOUCHPAD_HEIGHT, Finger,
+    rescale_touch_y,
+};
 
 /// Length of a PS4 Virtual Controller report.
 pub const REPORT_LEN: usize = 63;
@@ -52,10 +55,6 @@ const BUTTON_BITS: [(Buttons, usize, u8); 14] = [
     (Buttons::PS, BUTTONS_2, 1 << 0),
     (Buttons::TOUCHPAD, BUTTONS_2, 1 << 1),
 ];
-
-/// Touchpad sizes (`DS_TOUCHPAD_HEIGHT`, `DS4_TOUCHPAD_HEIGHT`). Both are 1920 wide.
-const DUALSENSE_TOUCHPAD_HEIGHT: u32 = 1080;
-const DUALSHOCK4_TOUCHPAD_HEIGHT: u32 = 942;
 
 /// The DualShock 4 calibration ViGEmBus hands games for its virtual pad (feature
 /// report `0x02`), from `sys/Ds4Pdo.cpp`. Motion is written as the raw readings
@@ -171,21 +170,15 @@ fn touch_point(finger: Option<Finger>) -> [u8; 4] {
     let Some(finger) = finger else {
         return [TOUCH_INACTIVE, 0, 0, 0];
     };
-    let y = scale_y(finger.y);
+    let y = rescale_touch_y(
+        finger.y,
+        DUALSENSE_TOUCHPAD_HEIGHT,
+        DUALSHOCK4_TOUCHPAD_HEIGHT,
+    );
     [
         finger.id & !TOUCH_INACTIVE,
         (finger.x & 0xFF) as u8,
         ((finger.x >> 8) & 0x0F) as u8 | ((y & 0x0F) << 4) as u8,
         (y >> 4) as u8,
     ]
-}
-
-/// A DualSense touchpad y (`0..=1079`) on the DualShock 4 pad (`0..=941`), rounded.
-fn scale_y(y: u16) -> u16 {
-    let (from, to) = (
-        DUALSENSE_TOUCHPAD_HEIGHT - 1,
-        DUALSHOCK4_TOUCHPAD_HEIGHT - 1,
-    );
-    let y = u32::from(y).min(from);
-    ((y * to + from / 2) / from) as u16
 }

@@ -40,6 +40,54 @@ pub fn derived(changes: &[(usize, u8)]) -> Vec<u8> {
     report
 }
 
+/// DERIVED: a resting DualShock 4's USB input report with `(offset, value)` bytes
+/// overwritten. No DualShock 4 capture exists, so it is written from `struct
+/// dualshock4_input_report_usb` in Linux `hid-playstation.c`: report ID 0x01, 64
+/// bytes, sticks at 1..=4, buttons at 5..=7 (hat 8 = released), triggers at 8 and
+/// 9, the touch report count at 33, then touch reports of 9 bytes from 34
+/// (timestamp, then two 4-byte fingers). One touch report, both fingers lifted.
+pub fn ds4_usb(changes: &[(usize, u8)]) -> Vec<u8> {
+    let mut report = vec![0u8; 64];
+    let resting = [
+        (0, 0x01),
+        (1, 0x80),
+        (2, 0x80),
+        (3, 0x80),
+        (4, 0x80),
+        (5, 0x08),
+        (33, 1),
+        (35, 0x80),
+        (39, 0x80),
+    ];
+    for &(offset, value) in resting.iter().chain(changes) {
+        report[offset] = value;
+    }
+    report
+}
+
+/// DERIVED: the DualShock 4 Bluetooth input report carrying the same input as a
+/// USB report, from `struct dualshock4_input_report_bt`: report ID 0x11, 78
+/// bytes, the common block from byte 3 (byte 1 over USB), the touch report count
+/// at 35, four touch reports from 36 (USB holds three; the fourth is left with
+/// both fingers lifted), and a CRC32 seeded with 0xA1 in the last 4 bytes.
+pub fn ds4_bluetooth_from_usb(usb: &[u8]) -> Vec<u8> {
+    let mut report = vec![0u8; 78];
+    report[0] = 0x11;
+    report[1] = 0xC0;
+    report[3..63].copy_from_slice(&usb[1..61]);
+    report[64] = 0x80;
+    report[68] = 0x80;
+    seal(0xA1, &mut report);
+    report
+}
+
+/// Writes [`reference_crc`] of everything before the last 4 bytes into them.
+pub fn seal(seed: u8, report: &mut [u8]) {
+    let split = report.len() - 4;
+    let crc = reference_crc(seed, &report[..split]);
+    report[split..].copy_from_slice(&crc.to_le_bytes());
+}
+
 /// A bit-at-a-time CRC-32 (IEEE, reflected), independent of `heka_core::crc`,
 /// over `seed` then `bytes`, as Bluetooth reports carry it (`ps_check_crc32`).
 pub fn reference_crc(seed: u8, bytes: &[u8]) -> u32 {
