@@ -2,6 +2,8 @@
 //!
 //! Everything here only reads. No output or feature report is ever sent.
 
+use std::ffi::{CStr, CString};
+
 use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 
 use heka_core::dualsense;
@@ -27,6 +29,7 @@ pub fn dualsense_usb_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> 
 /// A USB Link to a DualSense, read on the Bridge's input thread.
 pub struct DualSenseUsbLink {
     device: HidDevice,
+    path: CString,
 }
 
 impl DualSenseUsbLink {
@@ -36,7 +39,15 @@ impl DualSenseUsbLink {
             return Ok(None);
         };
         let device = info.open_device(api)?;
-        Ok(Some(Self { device }))
+        Ok(Some(Self {
+            device,
+            path: info.path().to_owned(),
+        }))
+    }
+
+    /// The `hidapi` path of this Link, for [`crate::hidhide::device_instance_path`].
+    pub fn hid_path(&self) -> &CStr {
+        &self.path
     }
 }
 
