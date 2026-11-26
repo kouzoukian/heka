@@ -2,14 +2,19 @@
 
 mod common;
 
+use heka_core::calibration::Calibration;
 use heka_core::dualsense::parse_usb_input_report;
 use heka_core::link::ReportError;
-use heka_core::state::{Buttons, Stick};
+use heka_core::state::{Buttons, ControllerState, Stick};
+
+fn parse(report: &[u8]) -> Result<ControllerState, ReportError> {
+    parse_usb_input_report(report, &Calibration::UNCALIBRATED)
+}
 
 #[test]
 fn captured_idle_reports_show_nothing_pressed() {
     for report in common::captured_idle() {
-        let state = parse_usb_input_report(&report).unwrap();
+        let state = parse(&report).unwrap();
         assert_eq!(state.buttons, Buttons::NONE);
         assert_eq!(state.left_trigger, 0);
         assert_eq!(state.right_trigger, 0);
@@ -42,7 +47,7 @@ fn derived_reports_show_each_button() {
         ((10, 0x04), Buttons::MUTE),
     ];
     for (change, expected) in cases {
-        let state = parse_usb_input_report(&common::derived(&[change])).unwrap();
+        let state = parse(&common::derived(&[change])).unwrap();
         assert_eq!(
             state.buttons, expected,
             "byte {} = {:#04x}",
@@ -70,7 +75,7 @@ fn derived_reports_show_every_dpad_direction() {
         (15, Buttons::NONE),
     ];
     for (hat, expected) in cases {
-        let state = parse_usb_input_report(&common::derived(&[(8, hat)])).unwrap();
+        let state = parse(&common::derived(&[(8, hat)])).unwrap();
         assert_eq!(state.buttons, expected, "hat {hat}");
     }
 }
@@ -78,7 +83,7 @@ fn derived_reports_show_every_dpad_direction() {
 #[test]
 fn derived_report_with_everything_pressed_keeps_buttons_and_dpad_apart() {
     let state =
-        parse_usb_input_report(&common::derived(&[(8, 0xF2), (9, 0xFF), (10, 0x07)])).unwrap();
+        parse(&common::derived(&[(8, 0xF2), (9, 0xFF), (10, 0x07)])).unwrap();
     for (button, name) in Buttons::NAMED {
         let expected = !matches!(name, "Up" | "Down" | "Left");
         assert_eq!(state.buttons.contains(button), expected, "{name}");
@@ -87,7 +92,7 @@ fn derived_report_with_everything_pressed_keeps_buttons_and_dpad_apart() {
 
 #[test]
 fn derived_reports_show_stick_extremes_and_trigger_travel() {
-    let state = parse_usb_input_report(&common::derived(&[
+    let state = parse(&common::derived(&[
         (1, 0x00),
         (2, 0xFF),
         (3, 0xFF),
@@ -106,18 +111,18 @@ fn derived_reports_show_stick_extremes_and_trigger_travel() {
 fn reports_that_are_not_dualsense_usb_input_are_refused() {
     let baseline = common::captured_baseline();
     assert_eq!(
-        parse_usb_input_report(&baseline[..10]),
+        parse(&baseline[..10]),
         Err(ReportError::TooShort { len: 10 })
     );
     assert_eq!(
-        parse_usb_input_report(&common::derived(&[(0, 0x31)])),
+        parse(&common::derived(&[(0, 0x31)])),
         Err(ReportError::UnexpectedId { id: 0x31 })
     );
 }
 
 #[test]
 fn captured_baseline_shows_the_resting_sticks() {
-    let state = parse_usb_input_report(&common::captured_baseline()).unwrap();
+    let state = parse(&common::captured_baseline()).unwrap();
     // The first captured line starts `01 7e 7d 7f 7c`.
     assert_eq!(state.left_stick, Stick { x: 0x7e, y: 0x7d });
     assert_eq!(state.right_stick, Stick { x: 0x7f, y: 0x7c });

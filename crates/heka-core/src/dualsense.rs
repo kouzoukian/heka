@@ -5,10 +5,11 @@
 //! into the USB report as read from HID, so they are one more than the struct offsets
 //! because byte 0 is the report ID (the kernel reads the struct from `&data[1]`).
 
+use crate::calibration::{self, CALIBRATION_BLOCK_LEN, Calibration};
 use crate::feedback::Feedback;
 use crate::link::ReportError;
 use crate::mac::MacAddress;
-use crate::state::{Buttons, ControllerState, Stick};
+use crate::state::{Buttons, ControllerState, Finger, Motion, Stick};
 
 /// Sony's USB vendor ID.
 pub const VENDOR_ID: u16 = 0x054C;
@@ -102,8 +103,51 @@ pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
     Ok(MacAddress(mac))
 }
 
-/// Reads a DualSense USB input report, report ID byte included.
-pub fn parse_usb_input_report(report: &[u8]) -> Result<ControllerState, ReportError> {
+/// Feature report holding the motion sensors' factory calibration
+/// (`DS_FEATURE_REPORT_CALIBRATION`). Reading it sends nothing to the Controller
+/// but the request.
+pub const CALIBRATION_REPORT_ID: u8 = 0x05;
+/// Its length including the report ID (`DS_FEATURE_REPORT_CALIBRATION_SIZE`).
+pub const CALIBRATION_REPORT_LEN: usize = 41;
+
+/// Reads the calibration feature report, report ID byte included. Axes whose
+/// data is unusable get the kernel's full-scale fallback.
+pub fn parse_calibration(report: &[u8]) -> Result<Calibration, ReportError> {
+    calibration::check_report(report, CALIBRATION_REPORT_ID, CALIBRATION_BLOCK_LEN)?;
+    Ok(Calibration::from_paired_block(report))
+}
+
+const GYRO: usize = 16; // gyro[3], le16 each
+const ACCEL: usize = 22; // accel[3], le16 each
+const SENSOR_TIMESTAMP: usize = 28; // sensor_timestamp, le32
+const TOUCH_POINTS: usize = 33; // points[2], 4 bytes each
+
+/// `DS_TOUCH_POINT_INACTIVE`: set in a touch point's contact byte when no finger is down.
+const TOUCH_INACTIVE: u8 = 1 << 7;
+
+fn le16(report: &[u8], offset: usize) -> i16 {
+    i16::from_le_bytes([report[offset], report[offset + 1]])
+}
+
+/// One touch point: contact, x_lo, x_hi (low nibble) | y_lo (high nibble), y_hi
+/// (`struct dualsense_touch_point`, `DS_TOUCH_POINT_X`, `DS_TOUCH_POINT_Y`).
+fn touch_point(point: &[u8]) -> Option<Finger> {
+    if point[0] & TOUCH_INACTIVE != 0 {
+        return None;
+    }
+    Some(Finger {
+        id: point[0],
+        x: u16::from(point[1]) | (u16::from(point[2] & 0x0F) << 8),
+        y: u16::from(point[2] >> 4) | (u16::from(point[3]) << 4),
+    })
+}
+
+/// Reads a DualSense USB input report, report ID byte included, applying the
+/// Controller's motion calibration.
+pub fn parse_usb_input_report(
+    report: &[u8],
+    calibration: &Calibration,
+) -> Result<ControllerState, ReportError> {
     if report.len() < USB_INPUT_REPORT_LEN {
         return Err(ReportError::TooShort { len: report.len() });
     }
@@ -114,7 +158,22 @@ pub fn parse_usb_input_report(report: &[u8]) -> Result<ControllerState, ReportEr
     for (byte, mask, button) in BUTTON_BITS {
         buttons.set(button, report[byte] & mask != 0);
     }
+    let gyro = std::array::from_fn(|i| le16(report, GYRO + 2 * i));
+    let accel = std::array::from_fn(|i| le16(report, ACCEL + 2 * i));
+    let timestamp = u32::from_le_bytes(
+        report[SENSOR_TIMESTAMP..SENSOR_TIMESTAMP + 4]
+            .try_into()
+            .expect("four bytes"),
+    );
     Ok(ControllerState {
+        touch: std::array::from_fn(|i| {
+            touch_point(&report[TOUCH_POINTS + 4 * i..TOUCH_POINTS + 4 * i + 4])
+        }),
+        motion: Motion {
+            gyro: calibration.gyro(gyro),
+            accel: calibration.accel(accel),
+            timestamp,
+        },
         buttons,
         left_stick: Stick {
             x: report[LEFT_X],
@@ -142,10 +201,15 @@ pub const USB_OUTPUT_REPORT_LEN: usize = 63;
 const OUT_VALID_FLAG0: usize = 1; // common.valid_flag0
 const OUT_MOTOR_RIGHT: usize = 3; // common.motor_right
 const OUT_MOTOR_LEFT: usize = 4; // common.motor_left
+const OUT_VALID_FLAG1: usize = 2; // common.valid_flag1
 const OUT_VALID_FLAG2: usize = 39; // common.valid_flag2
+const OUT_LIGHTBAR_RED: usize = 45; // common.lightbar_red
+const OUT_LIGHTBAR_GREEN: usize = 46; // common.lightbar_green
+const OUT_LIGHTBAR_BLUE: usize = 47; // common.lightbar_blue
 
 const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0; // DS_OUTPUT_VALID_FLAG0_COMPATIBLE_VIBRATION
 const FLAG0_HAPTICS_SELECT: u8 = 1 << 1; // DS_OUTPUT_VALID_FLAG0_HAPTICS_SELECT
+const FLAG1_LIGHTBAR_CONTROL_ENABLE: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG1_LIGHTBAR_CONTROL_ENABLE
 const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG2_COMPATIBLE_VIBRATION2
 
 /// How a DualSense imitates classic two-motor rumble with its haptic actuators.
@@ -188,10 +252,13 @@ pub fn rumble_mode(product_id: u16, firmware_info: Option<&[u8]>) -> RumbleMode 
     }
 }
 
-/// Builds the USB output report that sets the rumble motors and nothing else.
+/// Builds the USB output report that sets the rumble motors and, when the
+/// Feedback has one, the lightbar colour. Nothing else on the Controller changes.
 ///
 /// The large (Xbox left) motor drives the DualSense left motor, as the kernel maps
-/// a force-feedback effect's strong magnitude to `motor_left`.
+/// a force-feedback effect's strong magnitude to `motor_left`. Over USB the
+/// lightbar takes a colour without the setup step Bluetooth needs (the kernel's
+/// `dualsense_reset_leds` comment).
 pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTPUT_REPORT_LEN] {
     let mut report = [0u8; USB_OUTPUT_REPORT_LEN];
     report[0] = USB_OUTPUT_REPORT_ID;
@@ -202,5 +269,11 @@ pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTP
     }
     report[OUT_MOTOR_LEFT] = feedback.rumble.large;
     report[OUT_MOTOR_RIGHT] = feedback.rumble.small;
+    if let Some(lightbar) = feedback.lightbar {
+        report[OUT_VALID_FLAG1] |= FLAG1_LIGHTBAR_CONTROL_ENABLE;
+        report[OUT_LIGHTBAR_RED] = lightbar.red;
+        report[OUT_LIGHTBAR_GREEN] = lightbar.green;
+        report[OUT_LIGHTBAR_BLUE] = lightbar.blue;
+    }
     report
 }

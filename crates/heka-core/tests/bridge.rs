@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use heka_core::calibration::Calibration;
 use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink};
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
@@ -53,7 +54,7 @@ impl FakeLink {
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb
+        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -251,7 +252,7 @@ fn stopping_hands_back_the_link_and_the_virtual_controller() {
     let BridgeEnd::Stopped { link, controller } = bridge.stop() else {
         panic!("expected Stopped");
     };
-    assert_eq!(link.format(), ReportFormat::DualSenseUsb);
+    assert_eq!(link.format(), ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED));
     assert!(!record.lock().unwrap().unplugged);
     controller.unplug().unwrap();
     assert!(record.lock().unwrap().unplugged);
@@ -351,6 +352,7 @@ fn a_failing_virtual_controller_is_removed_and_the_link_handed_back() {
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
         rumble: Rumble { large, small },
+        lightbar: None,
     }
 }
 

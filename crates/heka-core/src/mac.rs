@@ -7,6 +7,19 @@ use std::str::FromStr;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MacAddress(pub [u8; 6]);
 
+/// The vendor prefix ViGEmBus gives every virtual DualShock 4 it creates
+/// (`GenerateRandomMacAddress` in ViGEmBus `sys/Ds4Pdo.cpp`: "C0:13:37").
+const VIGEM_DS4_PREFIX: [u8; 3] = [0xC0, 0x13, 0x37];
+
+impl MacAddress {
+    /// True for a virtual DualShock 4 made by ViGEmBus, such as heka's own PS4
+    /// Virtual Controllers. It carries Sony's IDs, so only its MAC address tells
+    /// it apart from a real DualShock 4.
+    pub fn is_virtual_controller(self) -> bool {
+        self.0[..3] == VIGEM_DS4_PREFIX
+    }
+}
+
 impl fmt::Display for MacAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let [a, b, c, d, e, g] = self.0;

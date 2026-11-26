@@ -106,6 +106,31 @@ impl Stick {
     pub const CENTER: Self = Self { x: 0x80, y: 0x80 };
 }
 
+/// One finger on the touchpad, in DualSense touchpad units: `x` runs `0..=1919`
+/// left to right and `y` runs `0..=1079` top to bottom (`DS_TOUCHPAD_WIDTH` and
+/// `DS_TOUCHPAD_HEIGHT` in Linux `hid-playstation.c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Finger {
+    /// The Controller's contact number, `0..=127`. It stays the same while the
+    /// finger stays down.
+    pub id: u8,
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Motion sensors, calibrated, in the units Linux `hid-playstation.c` normalises
+/// both DualShock 4 and DualSense to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Motion {
+    /// Angular rate around x (pitch), y (yaw) and z (roll), in 1/1024 degree per second.
+    pub gyro: [i32; 3],
+    /// Acceleration along x, y and z, in 1/8192 g.
+    pub accel: [i32; 3],
+    /// When the sensors were sampled, in ticks of 1/3 µs, wrapping (the DualSense's
+    /// own sensor clock).
+    pub timestamp: u32,
+}
+
 /// Everything a Controller reports that heka passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ControllerState {
@@ -116,16 +141,25 @@ pub struct ControllerState {
     pub left_trigger: u8,
     /// R2 travel, `0` released to `255` fully pressed.
     pub right_trigger: u8,
+    /// Up to two fingers on the touchpad, in the Controller's order.
+    pub touch: [Option<Finger>; 2],
+    pub motion: Motion,
 }
 
 impl ControllerState {
-    /// Everything released and both sticks centred.
+    /// Everything released, both sticks centred, no finger down and no motion.
     pub const NEUTRAL: Self = Self {
         buttons: Buttons::NONE,
         left_stick: Stick::CENTER,
         right_stick: Stick::CENTER,
         left_trigger: 0,
         right_trigger: 0,
+        touch: [None, None],
+        motion: Motion {
+            gyro: [0; 3],
+            accel: [0; 3],
+            timestamp: 0,
+        },
     };
 }
 

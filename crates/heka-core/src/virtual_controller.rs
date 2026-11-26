@@ -18,6 +18,8 @@ pub enum OutputType {
     /// An Xbox 360 controller.
     #[default]
     Xbox,
+    /// A DualShock 4, with touchpad, motion and lightbar.
+    Ps4,
 }
 
 /// Creates Virtual Controllers.

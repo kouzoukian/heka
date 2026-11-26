@@ -45,6 +45,15 @@ fn the_file_is_keyed_by_mac_address() {
 }
 
 #[test]
+fn a_ps4_output_type_is_remembered_across_a_save() {
+    let text = r#"{"controllers": {"11:22:33:44:55:66": {"output_type": "ps4"}}}"#;
+    let settings = Settings::load(Some(text));
+    assert_eq!(settings.controller(MAC).output_type, OutputType::Ps4);
+    let reloaded = Settings::load(Some(&settings.to_json()));
+    assert_eq!(reloaded.controller(MAC).output_type, OutputType::Ps4);
+}
+
+#[test]
 fn unknown_fields_and_bad_entries_do_not_lose_the_good_ones() {
     // A later version may add fields; a hand edit may break one entry.
     let text = r#"{
