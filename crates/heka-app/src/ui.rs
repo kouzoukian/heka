@@ -2,6 +2,7 @@ pub mod assets;
 pub mod banners;
 pub mod detail;
 pub mod drawing;
+pub mod log;
 pub mod metrics;
 pub mod model;
 pub mod pad;

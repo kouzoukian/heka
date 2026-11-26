@@ -378,6 +378,11 @@ pub fn cannot_draw(error: &str) -> String {
     format!("cannot draw a Controller: {error}")
 }
 
+pub const LOG: &str = "Log";
+pub const COPY_LOG: &str = "Copy log";
+pub const OPEN_LOG_FOLDER: &str = "Open log folder";
+pub const NOTHING_LOGGED: &str = "Nothing logged yet";
+
 pub mod log {
     use std::path::Path;
 
@@ -529,5 +534,9 @@ pub mod log {
 
     pub fn cannot_change_autostart(error: &str) -> String {
         format!("cannot change Start with Windows: {error}")
+    }
+
+    pub fn cannot_open_log_folder(error: &str) -> String {
+        format!("cannot open the log folder: {error}")
     }
 }

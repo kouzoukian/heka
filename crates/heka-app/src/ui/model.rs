@@ -10,6 +10,7 @@ use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
 use heka_core::virtual_controller::OutputType;
 
+use crate::log::Recent;
 use crate::text;
 use crate::ui::pad::PadModel;
 
@@ -29,6 +30,7 @@ pub enum Command {
     SetNickname(MacAddress, String),
     ChangePreference(MacAddress, PreferenceChange),
     CheckDrivers,
+    OpenLogFolder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +39,7 @@ pub struct Screen {
     pub missing: Vec<Missing>,
     pub notices: Vec<Notice>,
     pub controllers: Vec<ControllerEntry>,
+    pub log: Recent,
 }
 
 impl Screen {

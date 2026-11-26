@@ -28,7 +28,7 @@ it twice. The live pairing of the two is a **Bridge**.
   Controller reconnects.
 - **No double input:** the real Controller is hidden from games through HidHide.
 - **Up to 4 Controllers**, each with its own name, rumble strength and lights.
-- **A log** to attach to a report. It stays on your PC.
+- **A log** you can read in the window and attach to a report. It stays on your PC.
 - **Portable:** a zip with no installer. No telemetry.
 
 ## Setup
@@ -125,6 +125,13 @@ stays, with everything released, and carries on when the Controller returns.
   [Hiding Controllers](#hiding-controllers).
 
 Rumble and lights apply while the Controller is Bridged.
+
+### Log view
+
+The button at the right of the status bar opens the log; press it again, or select a
+Controller, to go back. It lists what heka did in this run, newest first. **Copy log**
+puts it on the clipboard and **Open log folder** shows the log files. See
+[The log](#the-log).
 
 ### Tray
 

@@ -5,7 +5,10 @@ use gpui_kit_assets::{IconName, icon_assets};
 use heka_core::link::LinkKind;
 use heka_core::state::{Battery, Charge};
 
-icon_assets!(ExtraIcons, [Bluetooth, Gamepad2, Palette, Unplug, Usb]);
+icon_assets!(
+    ExtraIcons,
+    [Bluetooth, Gamepad2, Palette, ScrollText, Unplug, Usb]
+);
 
 pub struct Assets;
 
