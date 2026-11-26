@@ -126,9 +126,23 @@ pub struct Battery {
     pub charge: Charge,
 }
 
+/// Touchpad heights (`DS_TOUCHPAD_HEIGHT` and `DS4_TOUCHPAD_HEIGHT` in Linux
+/// `hid-playstation.c`). Both touchpads are 1920 wide.
+pub(crate) const DUALSENSE_TOUCHPAD_HEIGHT: u16 = 1080;
+pub(crate) const DUALSHOCK4_TOUCHPAD_HEIGHT: u16 = 942;
+
+/// A touchpad y moved from a pad `from` high to a pad `to` high, rounded. Going
+/// from the shorter pad to the taller one and back gives the same y.
+pub(crate) fn rescale_touch_y(y: u16, from: u16, to: u16) -> u16 {
+    let (from, to) = (u32::from(from) - 1, u32::from(to) - 1);
+    let y = u32::from(y).min(from);
+    ((y * to + from / 2) / from) as u16
+}
+
 /// One finger on the touchpad, in DualSense touchpad units: `x` runs `0..=1919`
 /// left to right and `y` runs `0..=1079` top to bottom (`DS_TOUCHPAD_WIDTH` and
-/// `DS_TOUCHPAD_HEIGHT` in Linux `hid-playstation.c`).
+/// `DS_TOUCHPAD_HEIGHT` in Linux `hid-playstation.c`). A DualShock 4's shorter pad
+/// is scaled to these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Finger {
     /// The Controller's contact number, `0..=127`. It stays the same while the
@@ -146,8 +160,9 @@ pub struct Motion {
     pub gyro: [i32; 3],
     /// Acceleration along x, y and z, in 1/8192 g.
     pub accel: [i32; 3],
-    /// When the sensors were sampled, in ticks of 1/3 µs, wrapping (the DualSense's
-    /// own sensor clock).
+    /// When the sensors were sampled, in ticks of 1/3 µs (the DualSense's own
+    /// sensor clock), wrapping. A DualShock 4's 16-bit clock counts 16 of these
+    /// per tick, so its timestamps wrap at 2^20.
     pub timestamp: u32,
 }
 

@@ -1,4 +1,4 @@
-//! Runs the Bridge lifecycle for every DualSense on USB or Bluetooth.
+//! Runs the Bridge lifecycle for every Controller on USB or Bluetooth.
 //!
 //! One supervisor thread owns the [`Supervisor`]: it checks for the drivers, finds
 //! Controllers as they come and go, carries out the player's Stop and Start, and
@@ -25,7 +25,7 @@ use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
 use heka_core::virtual_controller::OutputType;
 use heka_windows::drivers::InstalledDrivers;
-use heka_windows::hid::{DualSenseLink, dualsense_paths};
+use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
 
@@ -236,7 +236,7 @@ impl Hider {
 
     /// Records the device behind a Link before the Supervisor hears of it, and
     /// Hides it if its Controller is already Hidden.
-    fn link_seen(&mut self, mac: MacAddress, link: &DualSenseLink) {
+    fn link_seen(&mut self, mac: MacAddress, link: &ControllerLink) {
         let device = hidhide::device_instance_path(link.hid_path())
             .map_err(|error| text::cannot_identify_for_hiding(&error.to_string()));
         self.devices
@@ -341,11 +341,13 @@ impl Hider {
     }
 }
 
-/// Finds DualSense Links by HID path and reports arrivals and departures.
+/// Finds Links by HID path and reports arrivals and departures.
 #[derive(Default)]
 struct Discovery {
     api: Option<HidApi>,
     known: HashMap<CString, (LinkId, MacAddress)>,
+    /// Virtual Controllers present, heka's own among them, not to be opened again.
+    virtual_controllers: HashSet<CString>,
 }
 
 impl Discovery {
@@ -362,7 +364,9 @@ impl Discovery {
             }
             None => self.api.insert(HidApi::new().map_err(|e| e.to_string())?),
         };
-        let present = dualsense_paths(api);
+        let present = controller_paths(api);
+        self.virtual_controllers
+            .retain(|path| present.contains(path));
 
         let gone: Vec<CString> = self
             .known
@@ -378,18 +382,21 @@ impl Discovery {
         }
 
         for path in present {
-            if self.known.contains_key(&path) {
+            if self.known.contains_key(&path) || self.virtual_controllers.contains(&path) {
                 continue;
             }
             // Retried next scan on failure, for example while another app holds it.
-            match DualSenseLink::open_path(api, &path) {
+            match ControllerLink::open_path(api, &path) {
                 Ok((link, mac)) => {
                     hider.link_seen(mac, &link);
                     let (id, changes) = supervisor.link_arrived(mac, Box::new(link), now);
                     self.known.insert(path, (id, mac));
                     hider.follow(&changes);
                 }
-                Err(error) => eprintln!("heka: cannot open a DualSense: {error}"),
+                Err(OpenError::VirtualController) => {
+                    self.virtual_controllers.insert(path);
+                }
+                Err(error) => eprintln!("heka: cannot open a Controller: {error}"),
             }
         }
         Ok(())

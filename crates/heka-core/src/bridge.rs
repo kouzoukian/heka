@@ -21,7 +21,8 @@ use crate::link::{LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::state::ControllerState;
 use crate::virtual_controller::{VirtualController, VirtualError};
 
-/// Larger than any input report heka reads (DualSense over Bluetooth is 78 bytes).
+/// Larger than any input report heka reads (the full Bluetooth reports are 78 bytes).
+/// A longer read, such as one Windows pads, is cut off here.
 const READ_BUFFER_LEN: usize = 128;
 
 /// The latest Controller state of a running Bridge, for the UI to sample.

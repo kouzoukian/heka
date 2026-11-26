@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use heka_core::calibration::Calibration;
+use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
-use heka_core::link::{LinkKind, LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
@@ -24,22 +25,32 @@ struct Script {
     lost: bool,
 }
 
-/// A Link the test feeds reports to and can pull out. USB unless made by
-/// [`LinkHandle::bluetooth`].
-#[derive(Clone, Default)]
-struct LinkHandle(Arc<Mutex<Script>>, bool);
+/// A Link the test feeds reports to and can pull out. A DualSense on USB unless
+/// made another way.
+#[derive(Clone)]
+struct LinkHandle(Arc<Mutex<Script>>, ReportFormat);
+
+impl Default for LinkHandle {
+    fn default() -> Self {
+        Self::delivering(ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED))
+    }
+}
 
 impl LinkHandle {
+    fn delivering(format: ReportFormat) -> Self {
+        Self(Arc::default(), format)
+    }
+
     fn bluetooth() -> Self {
-        Self(Arc::default(), true)
+        Self::delivering(ReportFormat::DualSenseBluetooth(Calibration::UNCALIBRATED))
     }
 
     /// Sends this USB report in the Link's own format.
     fn send_input(&self, usb: Vec<u8>) {
-        if self.1 {
-            self.send(common::bluetooth_from_usb(&usb));
-        } else {
-            self.send(usb);
+        match self.1 {
+            ReportFormat::DualSenseBluetooth(_) => self.send(common::bluetooth_from_usb(&usb)),
+            ReportFormat::DualShock4Bluetooth(_) => self.send(common::ds4_bluetooth_from_usb(&usb)),
+            ReportFormat::DualSenseUsb(_) | ReportFormat::DualShock4Usb(_) => self.send(usb),
         }
     }
 
@@ -60,11 +71,7 @@ struct FakeLink(LinkHandle);
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        if (self.0).1 {
-            ReportFormat::DualSenseBluetooth(Calibration::UNCALIBRATED)
-        } else {
-            ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
-        }
+        (self.0).1
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -443,6 +450,43 @@ fn heka_never_bridges_its_own_ps4_virtual_controller() {
 }
 
 // ---- Several Links --------------------------------------------------------
+
+#[test]
+fn a_dualshock_4_on_both_links_is_one_controller_that_stays_a_dualshock_4_while_held() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    // The two ways a DualShock 4 gives its address: the serial number over
+    // Bluetooth and the pairing-info report (0x12, address reversed) over USB.
+    let by_bluetooth = parse_bluetooth_serial("a4ae11020304").unwrap();
+    let by_usb = parse_pairing_info(&[0x12, 0x04, 0x03, 0x02, 0x11, 0xAE, 0xA4]).unwrap();
+    let bluetooth =
+        LinkHandle::delivering(ReportFormat::DualShock4Bluetooth(Calibration::UNCALIBRATED));
+    let usb = LinkHandle::delivering(ReportFormat::DualShock4Usb(Calibration::UNCALIBRATED));
+
+    supervisor.link_arrived(by_bluetooth, bluetooth.reader(), t0);
+    let model = |supervisor: &Supervisor| supervisor.controllers()[0].model;
+    assert_eq!(model(&supervisor), ControllerModel::DualShock4);
+    // DERIVED: a resting DualShock 4 report with Cross pressed (byte 5 bit 5).
+    bluetooth.send_input(common::ds4_usb(&[(5, 0x28)]));
+    wait_until(|| bus.last_state(0).map(|s| s.buttons) == Some(Buttons::CROSS));
+
+    let (usb_id, changes) = supervisor.link_arrived(by_usb, usb.reader(), t0);
+    assert_eq!(changes, []);
+    assert_eq!(bus.plugged(), 1);
+    assert_eq!(supervisor.controllers().len(), 1);
+    assert_eq!(supervisor.controllers()[0].active_link, Some(LinkKind::Usb));
+    usb.send_input(common::ds4_usb(&[(5, 0x18)]));
+    wait_until(|| bus.last_state(0).map(|s| s.buttons) == Some(Buttons::SQUARE));
+
+    supervisor.link_gone(usb_id, t0);
+    bluetooth.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+    assert!(matches!(
+        supervisor.controllers()[0].phase,
+        Phase::Held { .. }
+    ));
+    assert_eq!(model(&supervisor), ControllerModel::DualShock4);
+}
 
 fn square() -> Vec<u8> {
     // DERIVED: captured baseline with Square pressed (buttons[0] bit 4).

@@ -100,7 +100,30 @@ impl Calibration {
     /// at 1, 3, 5; pitch plus/minus at 7/9, yaw at 11/13, roll at 15/17; speed
     /// plus/minus at 19/21; accel x plus/minus at 23/25, y at 27/29, z at 31/33.
     pub fn from_paired_block(block: &[u8]) -> Self {
-        let f = |i: usize| i32::from(i16::from_le_bytes([block[1 + 2 * i], block[2 + 2 * i]]));
+        Self::from_paired_fields(fields(block))
+    }
+
+    /// Reads a calibration block as the DualShock 4 orders it over Bluetooth
+    /// (feature report `0x05`): the three gyro plus values (pitch, yaw, roll at 7,
+    /// 9, 11), then the three minus values (at 13, 15, 17). Everything else is where
+    /// [`Self::from_paired_block`] has it (`dualshock4_get_calibration_data`).
+    pub fn from_grouped_block(block: &[u8]) -> Self {
+        let mut f = fields(block);
+        let [pitch_plus, yaw_plus, roll_plus] = [f[3], f[4], f[5]];
+        let [pitch_minus, yaw_minus, roll_minus] = [f[6], f[7], f[8]];
+        f[3..9].copy_from_slice(&[
+            pitch_plus,
+            pitch_minus,
+            yaw_plus,
+            yaw_minus,
+            roll_plus,
+            roll_minus,
+        ]);
+        Self::from_paired_fields(f)
+    }
+
+    fn from_paired_fields(fields: [i32; FIELDS]) -> Self {
+        let f = |i: usize| fields[i];
         let speed_2x = f(9) + f(10);
         let gyro = |bias: i32, plus: i32, minus: i32| {
             let denom = (plus - bias).abs() + (minus - bias).abs();
@@ -160,6 +183,11 @@ impl Calibration {
     pub fn raw_accel(&self, value: [i32; 3]) -> [i16; 3] {
         std::array::from_fn(|i| self.accel[i].invert(value[i]))
     }
+}
+
+/// The fields of a calibration block, report ID byte included, in the block's order.
+fn fields(block: &[u8]) -> [i32; FIELDS] {
+    std::array::from_fn(|i| i32::from(i16::from_le_bytes([block[1 + 2 * i], block[2 + 2 * i]])))
 }
 
 /// Checks a calibration feature report's ID and length, report ID byte included.

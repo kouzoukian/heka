@@ -1,5 +1,5 @@
 //! One Controller's card: its name, Link, battery, Output Type switch, state,
-//! Stop or Start, and the live drawing.
+//! Stop or Start, whether its support is experimental, and the live drawing.
 
 use std::rc::Rc;
 
@@ -41,6 +41,7 @@ pub fn card(model: &CardModel, send: &Send, cx: &App) -> Div {
         .rounded(theme.radius_lg)
         .child(header(model, id.clone(), send, cx))
         .child(facts(model, id, send, cx))
+        .children(model.experimental.then(experimental))
         .child(
             div()
                 .flex()
@@ -65,6 +66,15 @@ pub fn card(model: &CardModel, send: &Send, cx: &App) -> Div {
                 .text_color(color)
                 .child(detail)
         }))
+}
+
+/// The label on a card whose Controller heka supports experimentally.
+fn experimental() -> Div {
+    div()
+        .flex()
+        .px(px(PADDING))
+        .pt_2()
+        .child(Tag::warning().outline().small().child(text::EXPERIMENTAL))
 }
 
 /// Name, state and Stop or Start.

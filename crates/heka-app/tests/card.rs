@@ -8,7 +8,7 @@ use heka_app::ui::model::{CardModel, CardState, Command, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
 use heka_core::lifecycle::Phase;
-use heka_core::link::{LinkKind, LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
 use heka_core::state::{Battery, Buttons, Charge};
@@ -20,6 +20,7 @@ const MAC: MacAddress = MacAddress([0x02, 0, 0, 0, 0, 1]);
 fn view(phase: Phase) -> ControllerView {
     ControllerView {
         mac: MAC,
+        model: ControllerModel::DualSense,
         phase,
         output_type: OutputType::Xbox,
         active_link: Some(LinkKind::Usb),
@@ -95,6 +96,18 @@ fn a_card_names_its_controller_and_says_why_a_bridge_failed() {
         card.detail().as_deref(),
         Some("Could not Bridge: no free slot")
     );
+}
+
+#[test]
+fn only_a_dualshock_4_card_says_that_its_support_is_experimental() {
+    let mut dualshock4 = view(Phase::Bridged);
+    dualshock4.model = ControllerModel::DualShock4;
+
+    let card = card_of(&dualshock4, Instant::now());
+
+    assert_eq!(card.name, "DualShock 4");
+    assert!(card.experimental);
+    assert!(!card_of(&view(Phase::Bridged), Instant::now()).experimental);
 }
 
 #[test]

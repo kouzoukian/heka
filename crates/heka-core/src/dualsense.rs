@@ -64,6 +64,16 @@ const BUTTON_BITS: [(usize, u8, Buttons); 15] = [
     (BUTTONS_2, 1 << 2, Buttons::MUTE),
 ];
 
+/// Every button of the three button bytes, d-pad included. A DualShock 4 packs
+/// them the same way (the kernel reads both with the `DS_BUTTONS*` definitions).
+pub(crate) fn buttons(bytes: &[u8]) -> Buttons {
+    let mut buttons = hat_to_dpad(bytes[0] & HAT_MASK);
+    for (byte, mask, button) in BUTTON_BITS {
+        buttons.set(button, bytes[byte - BUTTONS_0] & mask != 0);
+    }
+    buttons
+}
+
 /// The d-pad for a hat value, clockwise from 0 = up (`ps_gamepad_hat_mapping`).
 /// Any value past 7 means released.
 fn hat_to_dpad(hat: u8) -> Buttons {
@@ -92,10 +102,16 @@ const PAIRING_INFO_MAC: usize = 1;
 
 /// Reads the MAC address from a pairing-info feature report, report ID byte included.
 pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
+    mac_after_report_id(report, PAIRING_INFO_REPORT_ID)
+}
+
+/// The MAC address of a pairing-info feature report with report ID `id`, where a
+/// DualSense and a DualShock 4 both put it.
+pub(crate) fn mac_after_report_id(report: &[u8], id: u8) -> Result<MacAddress, ReportError> {
     if report.len() < PAIRING_INFO_MAC + 6 {
         return Err(ReportError::TooShort { len: report.len() });
     }
-    if report[0] != PAIRING_INFO_REPORT_ID {
+    if report[0] != id {
         return Err(ReportError::UnexpectedId { id: report[0] });
     }
     let mut mac = [0u8; 6];
@@ -133,7 +149,7 @@ fn le16(report: &[u8], offset: usize) -> i16 {
 
 /// One touch point: contact, x_lo, x_hi (low nibble) | y_lo (high nibble), y_hi
 /// (`struct dualsense_touch_point`, `DS_TOUCH_POINT_X`, `DS_TOUCH_POINT_Y`).
-fn touch_point(point: &[u8]) -> Option<Finger> {
+pub(crate) fn touch_point(point: &[u8]) -> Option<Finger> {
     if point[0] & TOUCH_INACTIVE != 0 {
         return None;
     }
@@ -156,10 +172,6 @@ pub fn parse_usb_input_report(
     if report[0] != USB_INPUT_REPORT_ID {
         return Err(ReportError::UnexpectedId { id: report[0] });
     }
-    let mut buttons = hat_to_dpad(report[BUTTONS_0] & HAT_MASK);
-    for (byte, mask, button) in BUTTON_BITS {
-        buttons.set(button, report[byte] & mask != 0);
-    }
     let gyro = std::array::from_fn(|i| le16(report, GYRO + 2 * i));
     let accel = std::array::from_fn(|i| le16(report, ACCEL + 2 * i));
     let timestamp = u32::from_le_bytes(
@@ -176,7 +188,7 @@ pub fn parse_usb_input_report(
             accel: calibration.accel(accel),
             timestamp,
         },
-        buttons,
+        buttons: buttons(&report[BUTTONS_0..=BUTTONS_2]),
         left_stick: Stick {
             x: report[LEFT_X],
             y: report[LEFT_Y],

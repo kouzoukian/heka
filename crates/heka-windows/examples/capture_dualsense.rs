@@ -6,8 +6,9 @@
 //!
 //! Prints every DualSense HID collection it finds on stderr, then COUNT reports
 //! (default 50) as hex lines on stdout, in the format `heka-core`'s fixtures use.
-//! It also prints the firmware info feature report, the rumble mode chosen from
-//! it and the motion calibration feature report on stderr. Hold the inputs you want recorded while it runs. Nothing is sent
+//! It also prints the firmware info feature report, the Feedback format with the
+//! rumble mode chosen from it and the motion calibration feature report on
+//! stderr. Hold the inputs you want recorded while it runs. Nothing is sent
 //! to the Controller: it opens the device and reads, nothing else.
 
 use std::io::Write;
@@ -15,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use heka_core::link::{LinkRead, LinkReader};
 use heka_windows::hid::{
-    DualSenseLink, dualsense_usb_devices, dualsense_usb_paths, read_calibration_report,
+    ControllerLink, dualsense_usb_devices, dualsense_usb_paths, read_calibration_report,
+    read_firmware_info,
 };
 use hidapi::HidApi;
 
@@ -45,24 +47,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dualsense_usb_devices(&api).count()
     );
     for path in dualsense_usb_paths(&api) {
-        match DualSenseLink::open_path(&api, &path) {
+        match ControllerLink::open_path(&api, &path) {
             Ok((_, mac)) => eprintln!("MAC address {mac}"),
             Err(error) => eprintln!("cannot open {path:?}: {error}"),
         }
     }
 
-    let Some(mut link) = DualSenseLink::open_first(&api)? else {
+    let Some(path) = dualsense_usb_paths(&api).into_iter().next() else {
         return Err("no DualSense on USB".into());
     };
-    match link.firmware_info() {
+    let (mut link, _) = ControllerLink::open_path(&api, &path)?;
+    let device = api.open_path(link.hid_path())?;
+    match read_firmware_info(&device) {
         Some(info) => {
             let hex: Vec<String> = info.iter().map(|b| format!("{b:02x}")).collect();
             eprintln!("firmware info (feature report 0x20): {}", hex.join(" "));
         }
         None => eprintln!("firmware info (feature report 0x20): not available"),
     }
-    eprintln!("rumble mode: {:?}", link.rumble_mode());
-    let device = api.open_path(link.hid_path())?;
+    if let Some(writer) = link.feedback_writer() {
+        // Only names the rumble mode: nothing is written.
+        eprintln!("Feedback format: {:?}", writer.format());
+    }
     match read_calibration_report(&device) {
         Some(report) => {
             let hex: Vec<String> = report.iter().map(|b| format!("{b:02x}")).collect();
