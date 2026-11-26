@@ -1,3 +1,6 @@
+// Release builds open no console window. Debug builds keep it, to show messages.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod bridging;
 mod settings_file;
 mod tray;

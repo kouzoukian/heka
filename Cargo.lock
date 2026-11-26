@@ -2844,6 +2844,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "heka-package"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "heka-windows"
 version = "0.1.0"
 dependencies = [
