@@ -4,6 +4,7 @@
 
 pub mod bridge;
 pub mod dualsense;
+pub mod feedback;
 pub mod link;
 pub mod state;
 pub mod virtual_controller;

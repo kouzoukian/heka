@@ -7,8 +7,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use crate::link::{LinkRead, LinkReader};
+use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource};
+use crate::link::{LinkRead, LinkReader, LinkWriter};
 use crate::state::ControllerState;
 use crate::virtual_controller::{VirtualController, VirtualError};
 
@@ -47,25 +49,55 @@ pub enum BridgeEnd {
 pub struct Bridge {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<BridgeEnd>>,
+    feedback: Option<JoinHandle<()>>,
 }
 
 impl Bridge {
     /// Starts the input thread. Until it ends, it owns the Link and the Virtual Controller.
     ///
+    /// When both carry Feedback, a Feedback thread passes it from the Virtual
+    /// Controller to the Link, so a slow write never holds up input. It stops the
+    /// rumble when the Bridge ends.
+    ///
     /// When the Link is lost the Virtual Controller is released, then removed.
     pub fn start(
-        link: Box<dyn LinkReader>,
-        controller: Box<dyn VirtualController>,
+        mut link: Box<dyn LinkReader>,
+        mut controller: Box<dyn VirtualController>,
         live: Arc<LiveInput>,
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
+        let feedback = match (controller.feedback(), link.feedback_writer()) {
+            (Some(source), Some(writer)) => {
+                Some(thread::Builder::new().name("heka-feedback".into()).spawn({
+                    let stop = Arc::clone(&stop);
+                    move || run_feedback(source, writer, &stop)
+                })?)
+            }
+            _ => None,
+        };
         let thread = thread::Builder::new().name("heka-bridge".into()).spawn({
             let stop = Arc::clone(&stop);
-            move || run(link, controller, &live, &stop)
-        })?;
+            move || {
+                let end = run(link, controller, &live, &stop);
+                // Ends the Feedback thread too when the input thread ends on its own.
+                stop.store(true, Ordering::Relaxed);
+                end
+            }
+        });
+        let thread = match thread {
+            Ok(thread) => thread,
+            Err(error) => {
+                stop.store(true, Ordering::Relaxed);
+                if let Some(feedback) = feedback {
+                    let _ = feedback.join();
+                }
+                return Err(error);
+            }
+        };
         Ok(Self {
             stop,
             thread: Some(thread),
+            feedback,
         })
     }
 
@@ -82,11 +114,16 @@ impl Bridge {
 
     fn join(&mut self) -> BridgeEnd {
         self.stop.store(true, Ordering::Relaxed);
-        match self.thread.take().map(JoinHandle::join) {
+        let feedback = self.feedback.take().map(JoinHandle::join);
+        let end = match self.thread.take().map(JoinHandle::join) {
             Some(Ok(end)) => end,
             Some(Err(panic)) => std::panic::resume_unwind(panic),
             None => BridgeEnd::Stopped,
+        };
+        if let Some(Err(panic)) = feedback {
+            std::panic::resume_unwind(panic);
         }
+        end
     }
 }
 
@@ -134,4 +171,34 @@ fn run(
     // Virtual Controller when heka's bus handle closes.
     let _ = controller.unplug();
     end
+}
+
+/// How long the Feedback thread waits for Feedback before checking for a stop.
+const FEEDBACK_POLL: Duration = Duration::from_millis(50);
+
+fn run_feedback(
+    mut source: Box<dyn FeedbackSource>,
+    mut writer: Box<dyn LinkWriter>,
+    stop: &AtomicBool,
+) {
+    let format = writer.format();
+    // What the Controller shows. It is at rest until heka first sends Feedback,
+    // so a Bridge no game rumbles never sends an output report.
+    let mut shown = Feedback::OFF;
+    let mut show = |feedback: Feedback| {
+        // Kept unchanged on a failed write, so the next Feedback is sent again.
+        if feedback != shown && writer.write(&format.report(&feedback)).is_ok() {
+            shown = feedback;
+        }
+    };
+    while !stop.load(Ordering::Relaxed) {
+        match source.next(FEEDBACK_POLL) {
+            FeedbackEvent::Feedback(feedback) => show(feedback),
+            FeedbackEvent::Timeout => {}
+            FeedbackEvent::Closed => break,
+        }
+    }
+    // The Bridge is ending, or the Virtual Controller is gone: nothing will stop
+    // the motors after this. On a lost Link the write fails, which is harmless.
+    show(Feedback::OFF);
 }

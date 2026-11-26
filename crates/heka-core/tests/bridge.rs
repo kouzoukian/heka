@@ -3,15 +3,21 @@
 mod common;
 
 use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use heka_core::bridge::{Bridge, BridgeEnd, LiveInput};
-use heka_core::link::{LinkRead, LinkReader, ReportFormat};
+use heka_core::dualsense::{RumbleMode, usb_output_report};
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
+use heka_core::link::{
+    FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
+};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::virtual_controller::{OutputType, VirtualController, VirtualError};
 
-/// One scripted read. After the script runs out the Link stays up and silent.
+/// One scripted read. After the script runs out the Link stays up and silent,
+/// apart from steps sent later through [`FakeLink::live`].
 enum Step {
     Report(Vec<u8>),
     Lost,
@@ -19,13 +25,29 @@ enum Step {
 
 struct FakeLink {
     script: VecDeque<Step>,
+    later: Option<Receiver<Step>>,
+    writer: Option<Box<FakeWriter>>,
 }
 
 impl FakeLink {
     fn new(script: impl IntoIterator<Item = Step>) -> Box<Self> {
         Box::new(Self {
             script: script.into_iter().collect(),
+            later: None,
+            writer: None,
         })
+    }
+
+    /// A silent Link that reads the steps sent to it, and can carry Feedback.
+    fn live() -> (Box<Self>, Sender<Step>, Arc<Mutex<Written>>) {
+        let (steps, later) = mpsc::channel();
+        let (writer, written) = FakeWriter::new();
+        let link = Box::new(Self {
+            script: VecDeque::new(),
+            later: Some(later),
+            writer: Some(writer),
+        });
+        (link, steps, written)
     }
 }
 
@@ -35,7 +57,12 @@ impl LinkReader for FakeLink {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
-        match self.script.pop_front() {
+        let step = self.script.pop_front().or_else(|| {
+            self.later
+                .as_ref()
+                .and_then(|later| later.recv_timeout(Duration::from_millis(1)).ok())
+        });
+        match step {
             Some(Step::Report(bytes)) => {
                 buf[..bytes.len()].copy_from_slice(&bytes);
                 LinkRead::Report(bytes.len())
@@ -46,6 +73,52 @@ impl LinkReader for FakeLink {
                 LinkRead::Timeout
             }
         }
+    }
+
+    fn feedback_writer(&mut self) -> Option<Box<dyn LinkWriter>> {
+        self.writer
+            .take()
+            .map(|writer| writer as Box<dyn LinkWriter>)
+    }
+}
+
+/// The output reports a [`FakeWriter`] was asked to send.
+#[derive(Default)]
+struct Written {
+    reports: Vec<Vec<u8>>,
+    /// Writes that have started, including one still blocked.
+    started: usize,
+}
+
+struct FakeWriter {
+    written: Arc<Mutex<Written>>,
+    /// When set, every write waits for a message, or for the sender to be dropped.
+    gate: Option<Receiver<()>>,
+}
+
+impl FakeWriter {
+    fn new() -> (Box<Self>, Arc<Mutex<Written>>) {
+        let written = Arc::new(Mutex::new(Written::default()));
+        let writer = Box::new(Self {
+            written: Arc::clone(&written),
+            gate: None,
+        });
+        (writer, written)
+    }
+}
+
+impl LinkWriter for FakeWriter {
+    fn format(&self) -> FeedbackFormat {
+        FeedbackFormat::DualSenseUsb(RumbleMode::CompatibleV2)
+    }
+
+    fn write(&mut self, report: &[u8]) -> Result<(), LinkWriteError> {
+        self.written.lock().unwrap().started += 1;
+        if let Some(gate) = &self.gate {
+            let _ = gate.recv();
+        }
+        self.written.lock().unwrap().reports.push(report.to_vec());
+        Ok(())
     }
 }
 
@@ -58,6 +131,7 @@ struct Record {
 struct FakeController {
     record: Arc<Mutex<Record>>,
     fail_updates: bool,
+    feedback: Option<Receiver<Feedback>>,
 }
 
 impl FakeController {
@@ -66,8 +140,17 @@ impl FakeController {
         let controller = Box::new(Self {
             record: Arc::clone(&record),
             fail_updates: false,
+            feedback: None,
         });
         (controller, record)
+    }
+
+    /// A Virtual Controller that passes on the Feedback a game sends through the sender.
+    fn with_feedback() -> (Box<Self>, Arc<Mutex<Record>>, Sender<Feedback>) {
+        let (mut controller, record) = Self::new();
+        let (game, feedback) = mpsc::channel();
+        controller.feedback = Some(feedback);
+        (controller, record, game)
     }
 }
 
@@ -87,6 +170,24 @@ impl VirtualController for FakeController {
     fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
         self.record.lock().unwrap().unplugged = true;
         Ok(())
+    }
+
+    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
+        self.feedback
+            .take()
+            .map(|feedback| Box::new(FakeFeedback(feedback)) as Box<dyn FeedbackSource>)
+    }
+}
+
+struct FakeFeedback(Receiver<Feedback>);
+
+impl FeedbackSource for FakeFeedback {
+    fn next(&mut self, timeout: Duration) -> FeedbackEvent {
+        match self.0.recv_timeout(timeout) {
+            Ok(feedback) => FeedbackEvent::Feedback(feedback),
+            Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
+            Err(RecvTimeoutError::Disconnected) => FeedbackEvent::Closed,
+        }
     }
 }
 
@@ -209,4 +310,155 @@ fn a_failing_virtual_controller_ends_the_bridge_without_panicking() {
         BridgeEnd::VirtualControllerFailed(_)
     ));
     assert!(record.lock().unwrap().unplugged);
+}
+
+// Feedback. The writer reports CompatibleV2, so the expected bytes are the v2
+// USB output report that `dualsense_feedback.rs` checks byte by byte.
+
+fn rumble(large: u8, small: u8) -> Feedback {
+    Feedback {
+        rumble: Rumble { large, small },
+    }
+}
+
+fn output_report(feedback: Feedback) -> Vec<u8> {
+    usb_output_report(&feedback, RumbleMode::CompatibleV2).to_vec()
+}
+
+#[test]
+fn rumble_from_the_game_reaches_the_controller() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(rumble(200, 64))
+    );
+    bridge.stop();
+}
+
+#[test]
+fn the_rumble_stops_when_the_game_stops_it() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    game.send(Feedback::OFF).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+
+    assert_eq!(
+        written.lock().unwrap().reports[1],
+        output_report(Feedback::OFF)
+    );
+    bridge.stop();
+}
+
+#[test]
+fn stopping_the_bridge_stops_the_rumble() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+    bridge.stop();
+
+    assert_eq!(
+        written.lock().unwrap().reports,
+        [output_report(rumble(200, 64)), output_report(Feedback::OFF)]
+    );
+}
+
+#[test]
+fn losing_the_link_stops_the_rumble() {
+    let (link, steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+    steps.send(Step::Lost).unwrap();
+
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+    assert_eq!(
+        written.lock().unwrap().reports[1],
+        output_report(Feedback::OFF)
+    );
+    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost));
+}
+
+#[test]
+fn a_bridge_that_never_rumbled_sends_the_controller_nothing() {
+    let (link, steps, written) = FakeLink::live();
+    let (controller, record, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    // A game that only ever asks for stopped motors.
+    game.send(Feedback::OFF).unwrap();
+    steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| record.lock().unwrap().updates.len() == 1);
+    bridge.stop();
+
+    assert_eq!(written.lock().unwrap().started, 0);
+}
+
+#[test]
+fn feedback_the_controller_already_shows_is_not_sent_again() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    game.send(rumble(200, 64)).unwrap();
+    game.send(rumble(10, 0)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+
+    assert_eq!(
+        written.lock().unwrap().reports,
+        [output_report(rumble(200, 64)), output_report(rumble(10, 0))]
+    );
+    bridge.stop();
+}
+
+#[test]
+fn the_rumble_stops_when_the_virtual_controller_stops_sending_feedback() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+    drop(game);
+
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+    assert_eq!(
+        written.lock().unwrap().reports[1],
+        output_report(Feedback::OFF)
+    );
+    assert!(!bridge.is_finished());
+    bridge.stop();
+}
+
+#[test]
+fn a_feedback_write_that_hangs_does_not_delay_input() {
+    let (mut link, steps, written) = FakeLink::live();
+    let (release, gate) = mpsc::channel();
+    link.writer.as_mut().unwrap().gate = Some(gate);
+    let (controller, record, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().started == 1);
+    // The write is now stuck. Input keeps flowing.
+    steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| record.lock().unwrap().updates.len() == 1);
+    assert!(written.lock().unwrap().reports.is_empty());
+
+    drop(release);
+    bridge.stop();
 }
