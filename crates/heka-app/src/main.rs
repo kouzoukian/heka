@@ -67,6 +67,7 @@ fn input_text(state: ControllerState) -> SharedString {
         right_stick,
         left_trigger,
         right_trigger,
+        battery,
     } = state;
     let pressed: Vec<&str> = Buttons::NAMED
         .iter()
@@ -74,8 +75,9 @@ fn input_text(state: ControllerState) -> SharedString {
         .map(|(_, name)| *name)
         .collect();
     let stick = |stick: Stick| format!("{:>3},{:>3}", stick.x, stick.y);
+    let battery = battery.map_or_else(String::new, |b| format!("  Battery {}%", b.percent));
     format!(
-        "L {}  R {}  L2 {left_trigger:>3}  R2 {right_trigger:>3}  {}",
+        "L {}  R {}  L2 {left_trigger:>3}  R2 {right_trigger:>3}{battery}  {}",
         stick(left_stick),
         stick(right_stick),
         pressed.join(" "),

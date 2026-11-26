@@ -106,6 +106,26 @@ impl Stick {
     pub const CENTER: Self = Self { x: 0x80, y: 0x80 };
 }
 
+/// Whether a Controller's battery is charging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Charge {
+    Discharging,
+    Charging,
+    Full,
+    /// Plugged in but not charging, for example because it is too hot or too cold.
+    NotCharging,
+    /// The Controller reports a charging error or a state heka does not know.
+    Unknown,
+}
+
+/// A Controller's battery as it last reported it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Battery {
+    /// `0..=100`. Controllers report it in steps of 10%.
+    pub percent: u8,
+    pub charge: Charge,
+}
+
 /// Everything a Controller reports that heka passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ControllerState {
@@ -116,6 +136,8 @@ pub struct ControllerState {
     pub left_trigger: u8,
     /// R2 travel, `0` released to `255` fully pressed.
     pub right_trigger: u8,
+    /// `None` when the report carries no battery level.
+    pub battery: Option<Battery>,
 }
 
 impl ControllerState {
@@ -126,6 +148,7 @@ impl ControllerState {
         right_stick: Stick::CENTER,
         left_trigger: 0,
         right_trigger: 0,
+        battery: None,
     };
 }
 

@@ -11,6 +11,8 @@ use crate::state::ControllerState;
 pub enum ReportFormat {
     /// DualSense or DualSense Edge over USB, report `0x01`.
     DualSenseUsb,
+    /// DualSense or DualSense Edge over Bluetooth, full report `0x31`.
+    DualSenseBluetooth,
 }
 
 impl ReportFormat {
@@ -18,8 +20,33 @@ impl ReportFormat {
     pub fn parse(self, report: &[u8]) -> Result<ControllerState, ReportError> {
         match self {
             Self::DualSenseUsb => dualsense::parse_usb_input_report(report),
+            Self::DualSenseBluetooth => dualsense::parse_bluetooth_input_report(report),
         }
     }
+
+    /// Whether the Link delivering this format is USB or Bluetooth.
+    pub fn kind(self) -> LinkKind {
+        match self {
+            Self::DualSenseUsb => LinkKind::Usb,
+            Self::DualSenseBluetooth => LinkKind::Bluetooth,
+        }
+    }
+}
+
+/// How a Link reaches the PC. When a Controller has both, USB is the Active Link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LinkKind {
+    Usb,
+    Bluetooth,
+}
+
+/// Which of a Controller's Links heka reads from, given each Link's kind in
+/// arrival order: the first USB Link, otherwise the first Link.
+pub fn active_link(links: &[LinkKind]) -> Option<usize> {
+    links
+        .iter()
+        .position(|&kind| kind == LinkKind::Usb)
+        .or(if links.is_empty() { None } else { Some(0) })
 }
 
 /// Why a report could not be read as an input report of the expected format.
@@ -29,6 +56,8 @@ pub enum ReportError {
     TooShort { len: usize },
     /// The report has a different report ID, for example a feature or other input report.
     UnexpectedId { id: u8 },
+    /// A Bluetooth report whose CRC does not match its contents.
+    BadCrc,
 }
 
 impl fmt::Display for ReportError {
@@ -36,6 +65,7 @@ impl fmt::Display for ReportError {
         match self {
             Self::TooShort { len } => write!(f, "input report too short ({len} bytes)"),
             Self::UnexpectedId { id } => write!(f, "unexpected report ID {id:#04x}"),
+            Self::BadCrc => f.write_str("report CRC does not match"),
         }
     }
 }
@@ -70,18 +100,32 @@ pub trait LinkReader: Send {
     }
 }
 
-/// Which output report layout a Link takes Feedback in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Which output report layout a Link takes Feedback in, with whatever a Link must
+/// remember between reports.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FeedbackFormat {
     /// DualSense or DualSense Edge over USB, report `0x02`, rumbling in this mode.
     DualSenseUsb(RumbleMode),
+    /// DualSense or DualSense Edge over Bluetooth, report `0x31`, rumbling in this
+    /// mode. Each report carries the next sequence number, `seq`, and a CRC32.
+    DualSenseBluetooth { mode: RumbleMode, seq: u8 },
 }
 
 impl FeedbackFormat {
-    /// The output report that shows this Feedback on the Controller, report ID included.
-    pub fn report(self, feedback: &Feedback) -> Vec<u8> {
+    /// A DualSense over Bluetooth, starting from sequence number 0.
+    pub fn dualsense_bluetooth(mode: RumbleMode) -> Self {
+        Self::DualSenseBluetooth { mode, seq: 0 }
+    }
+
+    /// The next output report that shows this Feedback on the Controller, report ID included.
+    pub fn report(&mut self, feedback: &Feedback) -> Vec<u8> {
         match self {
-            Self::DualSenseUsb(mode) => dualsense::usb_output_report(feedback, mode).to_vec(),
+            Self::DualSenseUsb(mode) => dualsense::usb_output_report(feedback, *mode).to_vec(),
+            Self::DualSenseBluetooth { mode, seq } => {
+                let report = dualsense::bluetooth_output_report(feedback, *mode, *seq);
+                *seq = (*seq + 1) % dualsense::BT_OUTPUT_SEQUENCE_LEN;
+                report.to_vec()
+            }
         }
     }
 }

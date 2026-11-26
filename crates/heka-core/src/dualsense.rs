@@ -5,10 +5,11 @@
 //! into the USB report as read from HID, so they are one more than the struct offsets
 //! because byte 0 is the report ID (the kernel reads the struct from `&data[1]`).
 
+use crate::crc;
 use crate::feedback::Feedback;
 use crate::link::ReportError;
 use crate::mac::MacAddress;
-use crate::state::{Buttons, ControllerState, Stick};
+use crate::state::{Battery, Buttons, Charge, ControllerState, Stick};
 
 /// Sony's USB vendor ID.
 pub const VENDOR_ID: u16 = 0x054C;
@@ -38,6 +39,7 @@ const RIGHT_TRIGGER: usize = 6; // rz
 const BUTTONS_0: usize = 8; // buttons[0]
 const BUTTONS_1: usize = 9; // buttons[1]
 const BUTTONS_2: usize = 10; // buttons[2]
+const STATUS_0: usize = 53; // status[0]
 
 /// `DS_BUTTONS0_HAT_SWITCH`: the low nibble of buttons[0].
 const HAT_MASK: u8 = 0x0F;
@@ -126,7 +128,69 @@ pub fn parse_usb_input_report(report: &[u8]) -> Result<ControllerState, ReportEr
         },
         left_trigger: report[LEFT_TRIGGER],
         right_trigger: report[RIGHT_TRIGGER],
+        battery: Some(battery(report[STATUS_0])),
     })
+}
+
+/// Report ID of the full Bluetooth input report (`DS_INPUT_REPORT_BT`).
+pub const BT_INPUT_REPORT_ID: u8 = 0x31;
+/// Its length including the report ID and CRC (`DS_INPUT_REPORT_BT_SIZE`).
+pub const BT_INPUT_REPORT_LEN: usize = 78;
+/// Where `struct dualsense_input_report` starts: `dualsense_parse_report` reads it
+/// from `&data[2]` over Bluetooth and from `&data[1]` over USB.
+const BT_INPUT_COMMON: usize = 2;
+
+/// Reads a DualSense full Bluetooth input report, report ID byte and CRC included.
+///
+/// The input itself is laid out as in the USB report, so it is read by
+/// [`parse_usb_input_report`] from a USB-shaped copy: whatever that reads, a
+/// Bluetooth Link reads too.
+pub fn parse_bluetooth_input_report(report: &[u8]) -> Result<ControllerState, ReportError> {
+    if report.len() < BT_INPUT_REPORT_LEN {
+        return Err(ReportError::TooShort { len: report.len() });
+    }
+    if report[0] != BT_INPUT_REPORT_ID {
+        return Err(ReportError::UnexpectedId { id: report[0] });
+    }
+    let report = &report[..BT_INPUT_REPORT_LEN];
+    if !crc::has_valid_crc(crc::BT_INPUT_SEED, report) {
+        return Err(ReportError::BadCrc);
+    }
+    let mut usb = [0u8; USB_INPUT_REPORT_LEN];
+    usb[0] = USB_INPUT_REPORT_ID;
+    usb[1..].copy_from_slice(&report[BT_INPUT_COMMON..BT_INPUT_COMMON + USB_INPUT_REPORT_LEN - 1]);
+    parse_usb_input_report(&usb)
+}
+
+/// Reads `status[0]` as `dualsense_parse_report` does.
+fn battery(status: u8) -> Battery {
+    let capacity = status & 0x0F; // DS_STATUS0_BATTERY_CAPACITY
+    let level = (capacity * 10 + 5).min(100);
+    match status >> 4 {
+        // DS_STATUS0_CHARGING
+        0x0 => Battery {
+            percent: level,
+            charge: Charge::Discharging,
+        },
+        0x1 => Battery {
+            percent: level,
+            charge: Charge::Charging,
+        },
+        0x2 => Battery {
+            percent: 100,
+            charge: Charge::Full,
+        },
+        // Voltage or temperature out of range, or a temperature error.
+        0xA | 0xB => Battery {
+            percent: 0,
+            charge: Charge::NotCharging,
+        },
+        // 0xF is a charging error.
+        _ => Battery {
+            percent: 0,
+            charge: Charge::Unknown,
+        },
+    }
 }
 
 // Output report. Layout source: Linux `hid-playstation.c` (`struct
@@ -202,5 +266,41 @@ pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTP
     }
     report[OUT_MOTOR_LEFT] = feedback.rumble.large;
     report[OUT_MOTOR_RIGHT] = feedback.rumble.small;
+    report
+}
+
+/// Report ID of the Bluetooth output report (`DS_OUTPUT_REPORT_BT`).
+pub const BT_OUTPUT_REPORT_ID: u8 = 0x31;
+/// Its length including the report ID and CRC (`DS_OUTPUT_REPORT_BT_SIZE`).
+pub const BT_OUTPUT_REPORT_LEN: usize = 78;
+/// The tag byte `dualsense_init_output_report` always sets (`DS_OUTPUT_TAG`).
+const BT_OUTPUT_TAG: u8 = 0x10;
+const OUT_BT_SEQ_TAG: usize = 1; // seq_tag: sequence number in bits 4..8 (`DS_OUTPUT_SEQ_NO`)
+const OUT_BT_TAG: usize = 2; // tag
+/// Where `struct dualsense_output_report_common` starts: after the report ID and two header bytes.
+const OUT_BT_COMMON: usize = 3;
+/// `sizeof(struct dualsense_output_report_common)`.
+const OUT_COMMON_LEN: usize = 47;
+/// How many sequence numbers a Bluetooth output report cycles through.
+pub const BT_OUTPUT_SEQUENCE_LEN: u8 = 16;
+
+/// Builds the Bluetooth output report that shows this Feedback, with sequence
+/// number `seq` (`0..16`) and its CRC.
+///
+/// The common block is the one [`usb_output_report`] builds, so whatever that
+/// sets on the Controller a Bluetooth Link sets too.
+pub fn bluetooth_output_report(
+    feedback: &Feedback,
+    mode: RumbleMode,
+    seq: u8,
+) -> [u8; BT_OUTPUT_REPORT_LEN] {
+    let usb = usb_output_report(feedback, mode);
+    let mut report = [0u8; BT_OUTPUT_REPORT_LEN];
+    report[0] = BT_OUTPUT_REPORT_ID;
+    report[OUT_BT_SEQ_TAG] = (seq % BT_OUTPUT_SEQUENCE_LEN) << 4;
+    report[OUT_BT_TAG] = BT_OUTPUT_TAG;
+    report[OUT_BT_COMMON..OUT_BT_COMMON + OUT_COMMON_LEN]
+        .copy_from_slice(&usb[1..=OUT_COMMON_LEN]);
+    crc::seal(crc::BT_OUTPUT_SEED, &mut report);
     report
 }

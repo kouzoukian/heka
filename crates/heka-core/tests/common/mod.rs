@@ -39,3 +39,34 @@ pub fn derived(changes: &[(usize, u8)]) -> Vec<u8> {
     }
     report
 }
+
+/// A bit-at-a-time CRC-32 (IEEE, reflected), independent of `heka_core::crc`,
+/// over `seed` then `bytes`, as Bluetooth reports carry it (`ps_check_crc32`).
+pub fn reference_crc(seed: u8, bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in std::iter::once(&seed).chain(bytes) {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+/// DERIVED: the Bluetooth input report carrying the same input as a USB report.
+///
+/// Layout from Linux `hid-playstation.c`: report ID 0x31, 78 bytes, `struct
+/// dualsense_input_report` from byte 2 (the USB report has it from byte 1), and a
+/// CRC32 seeded with 0xA1 in the last 4 bytes (`dualsense_parse_report`).
+pub fn bluetooth_from_usb(usb: &[u8]) -> Vec<u8> {
+    let mut report = vec![0u8; 78];
+    report[0] = 0x31;
+    report[2..65].copy_from_slice(&usb[1..64]);
+    let crc = reference_crc(0xA1, &report[..74]);
+    report[74..].copy_from_slice(&crc.to_le_bytes());
+    report
+}

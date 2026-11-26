@@ -296,7 +296,7 @@ fn run_feedback(
     mut writer: Box<dyn LinkWriter>,
     stop: &AtomicBool,
 ) -> FeedbackParts {
-    let format = writer.format();
+    let mut format = writer.format();
     // What the Controller shows. It is at rest until heka first sends Feedback,
     // so a Bridge no game rumbles never sends an output report.
     let mut shown = Feedback::OFF;

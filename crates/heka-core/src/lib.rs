@@ -3,6 +3,7 @@
 //! This crate makes no Windows calls and takes no Windows-only dependencies.
 
 pub mod bridge;
+pub mod crc;
 pub mod dualsense;
 pub mod feedback;
 pub mod hiding;
