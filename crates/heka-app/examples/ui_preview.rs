@@ -84,6 +84,7 @@ impl Fake {
             // Without ViGEmBus nothing is Bridged, but input still shows.
             for card in &mut cards {
                 card.state = CardState::NotBridged;
+                card.active_link = card.active_link.or(Some(LinkKind::Usb));
                 card.error = None;
             }
         }

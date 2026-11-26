@@ -23,8 +23,8 @@ use crate::{text, theme};
 
 /// How often the window samples the screen, about 60 times a second.
 ///
-/// A little under a 60 Hz frame on purpose: Windows timers run on a tick of up to
-/// 15.6 ms, so asking for 16 ms can wake on the second tick, at half the rate.
+/// A little under a 60 Hz frame, to leave room for the timer waking late. The
+/// `ui_preview` example prints the rate: 54 to 63 a second in a release build.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(15);
 
 /// Sets up gpui-component and the theme. Call once, before opening the window, in
