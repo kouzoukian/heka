@@ -122,8 +122,13 @@ own rumble and light bar colours, and may create their own virtual controllers.
   the light bar, and games may see an extra controller.
 - **Steam Input**: Steam can read a PlayStation controller itself and give games its own
   virtual controller, which causes double input. Turn off Steam Input for PlayStation
-  controllers in Steam's controller settings, and check the game's own controller setting
-  in Steam. If Steam was already running when heka Hid the Controller, restart Steam.
+  controllers in Steam's controller settings. If Steam was already running when heka Hid
+  the Controller, restart Steam.
+- **A game does not respond, or reads the wrong buttons**: some games need Steam Input on
+  and others need it off. Try both in the game's own controller setting in Steam, and
+  close and reopen the game after each change. With it on, pick a gamepad layout: a layout
+  that sends keyboard, mouse or game actions replaces the buttons of the Virtual
+  Controller.
 
 ## Troubleshooting
 
