@@ -64,6 +64,9 @@ impl Render for MainView {
             .text_color(theme.foreground)
             .text_sm()
             .child(div().child(status_text(&status)));
+        if let Some(note) = self.bridging.hiding_note() {
+            view = view.child(div().text_color(theme.warning).child(note));
+        }
 
         let Some(state) = state else {
             return view.child(

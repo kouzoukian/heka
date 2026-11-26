@@ -4,6 +4,8 @@
 //! [`DualSenseUsbWriter`], which the Bridge's Feedback thread owns and uses only
 //! when a game sends Feedback.
 
+use std::ffi::{CStr, CString};
+
 use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 
 use heka_core::dualsense::{self, RumbleMode};
@@ -31,6 +33,7 @@ pub fn dualsense_usb_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> 
 /// A USB Link to a DualSense, read on the Bridge's input thread.
 pub struct DualSenseUsbLink {
     device: HidDevice,
+    path: CString,
     firmware_info: Option<Vec<u8>>,
     rumble_mode: RumbleMode,
     writer: Option<DualSenseUsbWriter>,
@@ -61,10 +64,16 @@ impl DualSenseUsbLink {
         };
         Ok(Some(Self {
             device,
+            path: info.path().to_owned(),
             firmware_info,
             rumble_mode,
             writer,
         }))
+    }
+
+    /// The `hidapi` path of this Link, for [`crate::hidhide::device_instance_path`].
+    pub fn hid_path(&self) -> &CStr {
+        &self.path
     }
 
     /// The firmware info feature report as read on open, report ID included.
