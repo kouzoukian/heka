@@ -176,8 +176,9 @@ together with the updated `Cargo.lock`, then push a tag with the same version, s
 heka is licensed under either of the [MIT license](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
 
-The theme is Zed's One Dark, under the MIT license. The release zip carries its notice
-(`LICENSE-ONE-DARK`) and the notices of everything built into `heka.exe`
+The theme is Min Dark (Solid), from Miguel Solorio's Min Theme and its Zed port by
+Phillip Bronzel, under the MIT license. The release zip carries its notices
+(`LICENSE-MIN-THEME`) and those of everything built into `heka.exe`
 (`THIRD-PARTY-NOTICES.txt` and `THIRD-PARTY-NOTICES-RUST.html`).
 
 heka is not affiliated with or endorsed by Sony Interactive Entertainment or Microsoft.

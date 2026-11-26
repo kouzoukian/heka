@@ -66,16 +66,22 @@ pub fn all_bridges_taken() -> String {
     format!("{MAX_BRIDGES} Controllers are already Bridged.")
 }
 
-// Live drawing: the names printed on a DualSense.
+// Live drawing: the names printed on a DualShock 4.
 pub const L1: &str = "L1";
 pub const R1: &str = "R1";
 pub const L2: &str = "L2";
 pub const R2: &str = "R2";
 pub const PS: &str = "PS";
-pub const CROSS_SYMBOL: &str = "✕";
-pub const CIRCLE_SYMBOL: &str = "○";
-pub const SQUARE_SYMBOL: &str = "□";
-pub const TRIANGLE_SYMBOL: &str = "△";
+
+// Live drawing: the names printed on an Xbox pad.
+pub const LB: &str = "LB";
+pub const RB: &str = "RB";
+pub const LT: &str = "LT";
+pub const RT: &str = "RT";
+pub const A: &str = "A";
+pub const B: &str = "B";
+pub const X: &str = "X";
+pub const Y: &str = "Y";
 
 // Empty window.
 pub const STARTING: &str = "Looking for Controllers";

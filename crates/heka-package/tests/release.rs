@@ -52,8 +52,8 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
         files,
         [
             "LICENSE-APACHE",
+            "LICENSE-MIN-THEME",
             "LICENSE-MIT",
-            "LICENSE-ONE-DARK",
             "README.md",
             "THIRD-PARTY-NOTICES-RUST.html",
             "THIRD-PARTY-NOTICES.txt",
@@ -73,10 +73,10 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
         "the standard library's notices"
     );
     let notices = read("THIRD-PARTY-NOTICES.txt");
-    // One Dark's holder, and the code in AccessKit that comes from Chromium.
-    assert!(notices.contains("Copyright (c) 2014 GitHub Inc."));
+    // Min Theme's holders, and the code in AccessKit that comes from Chromium.
+    assert!(notices.contains("Copyright (c) 2018-2021 Miguel Solorio"));
     assert!(notices.contains("The Chromium Authors"));
-    assert!(read("LICENSE-ONE-DARK").contains("GitHub Inc."));
+    assert!(read("LICENSE-MIN-THEME").contains("Copyright (c) 2024 Phillip"));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! heka's interface, in Zed's layout and the One Dark theme (ADR 0002).
+//! heka's interface, in Zed's layout and the Min Dark theme (ADR 0002).
 //!
 //! Nothing here touches HID, ViGEmBus or HidHide: the window draws a
 //! [`ui::model::Screen`] that a [`ui::model::Backend`] gives it. The `heka`

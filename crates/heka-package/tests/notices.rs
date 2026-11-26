@@ -143,12 +143,12 @@ fn fails_rather_than_leave_a_crate_without_its_license_text() {
 #[test]
 fn prints_notices_that_come_from_no_crate() {
     let section = Section {
-        title: "One Dark theme".into(),
+        title: "Min Dark theme".into(),
         text: "Copyright (c) 2014 GitHub Inc.\r\n".into(),
     };
 
     let text = notices(&[], &[section]).unwrap();
 
-    assert!(text.contains("One Dark theme"));
+    assert!(text.contains("Min Dark theme"));
     assert!(text.contains("Copyright (c) 2014 GitHub Inc.\n"));
 }

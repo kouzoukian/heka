@@ -24,7 +24,7 @@ pub struct Release<'a> {
     pub crates: &'a [Crate],
 }
 
-const ONE_DARK_LICENSE: &str = "crates/heka-app/themes/LICENSE-ONE-DARK";
+const MIN_THEME_LICENSE: &str = "crates/heka-app/themes/LICENSE-MIN-THEME";
 const CHROMIUM: &str = include_str!("../notices/chromium.txt");
 
 impl Release<'_> {
@@ -39,13 +39,13 @@ impl Release<'_> {
         fs::create_dir_all(&folder)
             .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
 
-        let one_dark = self.workspace.join(ONE_DARK_LICENSE);
+        let min_theme = self.workspace.join(MIN_THEME_LICENSE);
         for (file, source) in [
             ("heka.exe", self.exe.to_path_buf()),
             ("README.md", self.workspace.join("README.md")),
             ("LICENSE-MIT", self.workspace.join("LICENSE-MIT")),
             ("LICENSE-APACHE", self.workspace.join("LICENSE-APACHE")),
-            ("LICENSE-ONE-DARK", one_dark.clone()),
+            ("LICENSE-MIN-THEME", min_theme.clone()),
             (
                 "THIRD-PARTY-NOTICES-RUST.html",
                 self.rust_notices.to_path_buf(),
@@ -55,12 +55,12 @@ impl Release<'_> {
                 .map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
         }
 
-        let one_dark = fs::read_to_string(&one_dark)
-            .map_err(|error| format!("cannot read {}: {error}", one_dark.display()))?;
+        let min_theme = fs::read_to_string(&min_theme)
+            .map_err(|error| format!("cannot read {}: {error}", min_theme.display()))?;
         let sections = [
             Section {
-                title: "One Dark theme, converted from Zed's assets/themes/one/one.json".into(),
-                text: one_dark,
+                title: "Min Dark theme, converted from the Zed port of Min Theme".into(),
+                text: min_theme,
             },
             Section {
                 title: "Code derived from Chromium, in the AccessKit crates".into(),

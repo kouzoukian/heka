@@ -1,0 +1,98 @@
+{
+  "name": "Min Theme",
+  "author": "Miguel Solorio; Zed port by Phillip Bronzel",
+  "url": "https://github.com/phibr0/zed-min-theme/blob/3bee5ec2d77cdfffa40c64c84251cec4402e3aae/themes/min-theme.json",
+  "_license": "MIT, Copyright (c) 2018-2021 Miguel Solorio and (c) 2024 Phillip. The full notices are in LICENSE-MIN-THEME, next to this file.",
+  "_changes": "Min Dark (Solid) from the Zed port, converted to gpui-component's theme keys. Colours only, without syntax highlighting. The base colours are the theme's terminal colours, with its added-line green and its orange for green and yellow.",
+  "themes": [
+    {
+      "name": "Min Dark (Solid)",
+      "mode": "dark",
+      "radius": 4,
+      "radius.lg": 6,
+      "shadow": false,
+      "colors": {
+        "background": "#1a1a1a",
+        "foreground": "#bbbbbb",
+        "border": "#2a2a2a",
+        "input.border": "#2a2a2a",
+        "ring": "#79b8ff",
+        "caret": "#bbbbbb",
+        "selection.background": "#79b8ff3d",
+        "window.border": "#2a2a2a",
+
+        "muted.background": "#1f1f1f",
+        "muted.foreground": "#999999",
+        "accent.background": "#2a2a2a",
+        "accent.foreground": "#f8f8f8",
+
+        "group_box.background": "#141414",
+        "group_box.foreground": "#bbbbbb",
+        "popover.background": "#1a1a1a",
+        "popover.foreground": "#bbbbbb",
+
+        "button.background": "#1f1f1f",
+        "button.foreground": "#bbbbbb",
+        "button.hover.background": "#2a2a2a",
+        "button.active.background": "#333333",
+
+        "secondary.background": "#1f1f1f",
+        "secondary.foreground": "#bbbbbb",
+        "secondary.hover.background": "#2a2a2a",
+        "secondary.active.background": "#333333",
+
+        "primary.background": "#79b8ff",
+        "primary.foreground": "#141414",
+
+        "danger.background": "#f97583",
+        "danger.foreground": "#141414",
+        "warning.background": "#ffab70",
+        "warning.foreground": "#141414",
+        "success.background": "#6c9c77",
+        "success.foreground": "#141414",
+        "info.background": "#79b8ff",
+        "info.foreground": "#141414",
+
+        "link": "#79b8ff",
+        "drag.border": "#79b8ff",
+        "drop_target.background": "#72727280",
+
+        "list.background": "#141414",
+        "list.hover.background": "#2a2a2a",
+        "list.active.background": "#2a2a2a",
+
+        "title_bar.background": "#141414",
+        "title_bar.border": "#2a2a2a",
+        "status_bar.background": "#141414",
+        "status_bar.border": "#2a2a2a",
+
+        "sidebar.background": "#141414",
+        "sidebar.foreground": "#999999",
+        "sidebar.border": "#2a2a2a",
+
+        "tab_bar.background": "#1a1a1a",
+        "tab.background": "#1a1a1a",
+        "tab.foreground": "#999999",
+        "tab.active.background": "#1a1a1a",
+        "tab.active.foreground": "#f8f8f8",
+
+        "scrollbar.background": "#00000000",
+        "scrollbar.thumb.background": "#bbbbbb33",
+        "scrollbar.thumb.hover.background": "#bbbbbb66",
+
+        "base.red": "#fa7584",
+        "base.red.light": "#ff9caa",
+        "base.green": "#6c9c77",
+        "base.green.light": "#8fbf9a",
+        "base.blue": "#79b8ff",
+        "base.blue.light": "#a3d0ff",
+        "base.yellow": "#ffab70",
+        "base.yellow.light": "#ffc9a3",
+        "base.magenta": "#b392f1",
+        "base.magenta.light": "#cfb8ff",
+        "base.cyan": "#79b8ff",
+        "base.cyan.light": "#a3d0ff"
+      }
+    }
+  ]
+}

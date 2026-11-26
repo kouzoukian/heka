@@ -49,7 +49,7 @@ pub fn card(model: &CardModel, send: &Send, cx: &App) -> Div {
                 .px(px(PADDING))
                 .pt_1()
                 .pb(px(PADDING))
-                .child(drawing(model.pad, cx)),
+                .child(drawing(model.output_type, model.pad, cx)),
         )
         .children(model.detail().map(|detail| {
             let color = if model.error.is_some() {
