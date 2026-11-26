@@ -62,6 +62,28 @@ fn gyro_and_accel_apply_the_factory_calibration() {
 }
 
 #[test]
+fn a_resting_controller_reads_one_g_and_almost_no_rotation() {
+    let report = common::reports(include_str!("fixtures/dualsense_usb_calibration.hex")).remove(0);
+    let calibration = parse_calibration(&report).unwrap();
+    for report in common::captured_idle() {
+        let motion = parse_usb_input_report(&report, &calibration)
+            .unwrap()
+            .motion;
+        let g = motion
+            .accel
+            .iter()
+            .map(|a| f64::from(*a).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!((g / 8192.0 - 1.0).abs() < 0.05, "{:?} is {g}", motion.accel);
+        for rate in motion.gyro {
+            // Under 2 degrees per second.
+            assert!(rate.abs() < 2 * 1024, "{:?}", motion.gyro);
+        }
+    }
+}
+
+#[test]
 fn sensor_timestamp_is_read_as_is() {
     let changes = [(28, 0x78), (29, 0x56), (30, 0x34), (31, 0x12)];
     let state =

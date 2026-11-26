@@ -35,8 +35,8 @@ impl AxisCalibration {
 
     /// Raw reading to calibrated units, truncating like the kernel's `mult_frac`.
     pub fn apply(self, raw: i16) -> i32 {
-        let value = i64::from(self.numer) * (i64::from(raw) - i64::from(self.bias))
-            / i64::from(self.denom);
+        let value =
+            i64::from(self.numer) * (i64::from(raw) - i64::from(self.bias)) / i64::from(self.denom);
         value.clamp(i32::MIN.into(), i32::MAX.into()) as i32
     }
 
@@ -46,7 +46,10 @@ impl AxisCalibration {
         if self.numer == 0 {
             return 0;
         }
-        let raw = div_round(i64::from(value) * i64::from(self.denom), i64::from(self.numer));
+        let raw = div_round(
+            i64::from(value) * i64::from(self.denom),
+            i64::from(self.numer),
+        );
         (raw + i64::from(self.bias)).clamp(i16::MIN.into(), i16::MAX.into()) as i16
     }
 }
@@ -129,7 +132,11 @@ impl Calibration {
                 gyro(f(1), f(5), f(6)),
                 gyro(f(2), f(7), f(8)),
             ],
-            accel: [accel(f(11), f(12)), accel(f(13), f(14)), accel(f(15), f(16))],
+            accel: [
+                accel(f(11), f(12)),
+                accel(f(13), f(14)),
+                accel(f(15), f(16)),
+            ],
         }
     }
 

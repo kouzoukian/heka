@@ -61,9 +61,9 @@ const DUALSHOCK4_TOUCHPAD_HEIGHT: u32 = 942;
 /// report `0x02`), from `sys/Ds4Pdo.cpp`. Motion is written as the raw readings
 /// that this calibration turns back into the Controller's calibrated motion.
 const VIRTUAL_CALIBRATION_REPORT: [u8; 37] = [
-    0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x87, 0x22, 0x7B, 0xDD, 0xB2, 0x22, 0x47, 0xDD,
-    0xBD, 0x22, 0x43, 0xDD, 0x1C, 0x02, 0x1C, 0x02, 0x7F, 0x1E, 0x2E, 0xDF, 0x60, 0x1F, 0x4C,
-    0xE0, 0x3A, 0x1D, 0xC6, 0xDE, 0x08, 0x00,
+    0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x87, 0x22, 0x7B, 0xDD, 0xB2, 0x22, 0x47, 0xDD, 0xBD,
+    0x22, 0x43, 0xDD, 0x1C, 0x02, 0x1C, 0x02, 0x7F, 0x1E, 0x2E, 0xDF, 0x60, 0x1F, 0x4C, 0xE0, 0x3A,
+    0x1D, 0xC6, 0xDE, 0x08, 0x00,
 ];
 
 /// Builds PS4 Virtual Controller reports for one Bridge. It remembers the last
@@ -139,8 +139,20 @@ fn hat(buttons: Buttons) -> u8 {
     let down = buttons.contains(Buttons::DPAD_DOWN);
     let left = buttons.contains(Buttons::DPAD_LEFT);
     let right = buttons.contains(Buttons::DPAD_RIGHT);
-    let vertical = if up == down { 0 } else if up { 1 } else { -1 };
-    let horizontal = if left == right { 0 } else if right { 1 } else { -1 };
+    let vertical = if up == down {
+        0
+    } else if up {
+        1
+    } else {
+        -1
+    };
+    let horizontal = if left == right {
+        0
+    } else if right {
+        1
+    } else {
+        -1
+    };
     match (vertical, horizontal) {
         (1, 0) => 0,
         (1, 1) => 1,
@@ -170,7 +182,10 @@ fn touch_point(finger: Option<Finger>) -> [u8; 4] {
 
 /// A DualSense touchpad y (`0..=1079`) on the DualShock 4 pad (`0..=941`), rounded.
 fn scale_y(y: u16) -> u16 {
-    let (from, to) = (DUALSENSE_TOUCHPAD_HEIGHT - 1, DUALSHOCK4_TOUCHPAD_HEIGHT - 1);
+    let (from, to) = (
+        DUALSENSE_TOUCHPAD_HEIGHT - 1,
+        DUALSHOCK4_TOUCHPAD_HEIGHT - 1,
+    );
     let y = u32::from(y).min(from);
     ((y * to + from / 2) / from) as u16
 }

@@ -82,8 +82,7 @@ fn derived_reports_show_every_dpad_direction() {
 
 #[test]
 fn derived_report_with_everything_pressed_keeps_buttons_and_dpad_apart() {
-    let state =
-        parse(&common::derived(&[(8, 0xF2), (9, 0xFF), (10, 0x07)])).unwrap();
+    let state = parse(&common::derived(&[(8, 0xF2), (9, 0xFF), (10, 0x07)])).unwrap();
     for (button, name) in Buttons::NAMED {
         let expected = !matches!(name, "Up" | "Down" | "Left");
         assert_eq!(state.buttons.contains(button), expected, "{name}");

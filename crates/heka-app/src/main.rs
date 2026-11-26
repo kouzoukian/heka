@@ -13,6 +13,7 @@ use gpui_component::{ActiveTheme, Root};
 use heka_core::lifecycle::Phase;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
+use heka_core::virtual_controller::OutputType;
 
 use bridging::{Bridging, Status};
 
@@ -48,9 +49,12 @@ fn status_text(status: &Status, controllers: usize) -> SharedString {
     }
 }
 
-fn phase_text(phase: Phase) -> SharedString {
+fn phase_text(phase: Phase, output_type: OutputType) -> SharedString {
     match phase {
-        Phase::Bridged => "Bridged as Xbox".into(),
+        Phase::Bridged => match output_type {
+            OutputType::Xbox => "Bridged as Xbox".into(),
+            OutputType::Ps4 => "Bridged as PS4".into(),
+        },
         Phase::Held { until } => {
             let left = until.saturating_duration_since(Instant::now()).as_secs();
             format!("Held, reconnect within {left} s").into()
@@ -67,6 +71,7 @@ fn input_text(state: ControllerState) -> SharedString {
         right_stick,
         left_trigger,
         right_trigger,
+        ..
     } = state;
     let pressed: Vec<&str> = Buttons::NAMED
         .iter()
@@ -97,7 +102,18 @@ impl MainView {
                 .label("Stop")
                 .on_click(move |_, _, _| bridging.stop_controller(mac))
         };
-        let mut phase = phase_text(view.phase);
+        // A minimal Output Type switch; ticket #10 builds the real control.
+        let (label, other) = match view.output_type {
+            OutputType::Xbox => ("Output: Xbox", OutputType::Ps4),
+            OutputType::Ps4 => ("Output: PS4", OutputType::Xbox),
+        };
+        let output_button = {
+            let bridging = Arc::clone(&self.bridging);
+            Button::new(("output-type", index))
+                .label(label)
+                .on_click(move |_, _, _| bridging.set_output_type(mac, other))
+        };
+        let mut phase = phase_text(view.phase, view.output_type);
         if let Some(error) = &view.error {
             phase = format!("{phase} ({error})").into();
         }
@@ -119,7 +135,7 @@ impl MainView {
                     .items_center()
                     .justify_between()
                     .child(div().child(SharedString::from(format!("DualSense {mac}"))))
-                    .child(button),
+                    .child(div().flex().gap_2().child(output_button).child(button)),
             )
             .child(div().text_color(theme.muted_foreground).child(phase))
             .child(div().font_family("monospace").child(input))

@@ -17,9 +17,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use heka_core::hiding::{DeviceInstancePath, Hiding};
-use heka_core::lifecycle::Change;
+use heka_core::lifecycle::{Change, Removal};
 use heka_core::mac::MacAddress;
 use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
+use heka_core::virtual_controller::OutputType;
 use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_paths};
 use heka_windows::hidhide;
 use heka_windows::vigem::VigemBus;
@@ -53,6 +54,7 @@ pub struct Snapshot {
 enum Command {
     Stop(MacAddress),
     Start(MacAddress),
+    SetOutputType(MacAddress, OutputType),
     Quit,
 }
 
@@ -97,6 +99,11 @@ impl Bridging {
 
     pub fn start_controller(&self, mac: MacAddress) {
         let _ = self.commands.send(Command::Start(mac));
+    }
+
+    /// Chooses the Controller's Output Type, replacing its Virtual Controller.
+    pub fn set_output_type(&self, mac: MacAddress, output_type: OutputType) {
+        let _ = self.commands.send(Command::SetOutputType(mac, output_type));
     }
 
     /// Removes every Virtual Controller, restores every Hidden Controller, and
@@ -151,9 +158,15 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(Command::Stop(mac)) => supervisor.stop(mac, now),
             Ok(Command::Start(mac)) => supervisor.start(mac, now),
+            Ok(Command::SetOutputType(mac, output_type)) => {
+                supervisor.set_output_type(mac, output_type, now)
+            }
             Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
-        if matches!(command, Ok(Command::Stop(_) | Command::Start(_))) {
+        if matches!(
+            command,
+            Ok(Command::Stop(_) | Command::Start(_) | Command::SetOutputType(..))
+        ) {
             settings_file::save(supervisor.settings());
         }
         hider.follow(&changes);
@@ -215,8 +228,15 @@ impl Hider {
     }
 
     fn follow(&mut self, changes: &[Change]) {
-        for change in changes {
+        for (index, change) in changes.iter().enumerate() {
             eprintln!("heka: {change:?}");
+            // A Controller whose Virtual Controller is replaced by one of another
+            // Output Type stays Hidden in between.
+            let replaced = |mac| {
+                changes[index + 1..]
+                    .iter()
+                    .any(|later| matches!(later, Change::Bridged { mac: m, .. } if *m == mac))
+            };
             match *change {
                 // A returning Controller is a new device to the system: Hide it again.
                 Change::Bridged { mac, .. } | Change::Returned { mac } => {
@@ -225,6 +245,10 @@ impl Hider {
                 }
                 // Stays Hidden while Held.
                 Change::Held { .. } => {}
+                Change::Removed {
+                    mac,
+                    why: Removal::OutputTypeChanged,
+                } if replaced(mac) => {}
                 Change::Removed { mac, .. } => {
                     self.pending.remove(&mac);
                     self.release(mac);
