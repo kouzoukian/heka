@@ -2,10 +2,16 @@
 //!
 //! This only moves reports: what they contain is decided in `heka-core`.
 
+use std::time::Duration;
+
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
 use heka_core::state::ControllerState;
 use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
 use heka_core::xbox::XboxReport;
-use vigem_rust::{Client, Ready, TargetHandle, X360Button, X360Report, Xbox360};
+use vigem_rust::{
+    Client, NotificationReceiver, Ready, RecvTimeoutError, TargetHandle, X360Button,
+    X360Notification, X360Report, Xbox360,
+};
 
 /// A connection to ViGEmBus. Every Virtual Controller it plugs is removed when
 /// the Virtual Controller is unplugged, or at the latest when this is dropped.
@@ -54,6 +60,38 @@ impl VirtualController for VigemXbox {
 
     fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
         self.target.unplug().map_err(VirtualError::new)
+    }
+
+    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
+        match self.target.register_notification() {
+            Ok(receiver) => Some(Box::new(VigemXboxFeedback(receiver))),
+            Err(error) => {
+                eprintln!("heka: no Feedback from the Virtual Controller: {error}");
+                None
+            }
+        }
+    }
+}
+
+/// Rumble a game sends to an Xbox Virtual Controller. The default subscription
+/// keeps a few notifications and drops the oldest, which suits rumble: only the
+/// latest motor speeds matter.
+struct VigemXboxFeedback(NotificationReceiver<X360Notification>);
+
+impl FeedbackSource for VigemXboxFeedback {
+    fn next(&mut self, timeout: Duration) -> FeedbackEvent {
+        match self.0.recv_timeout(timeout) {
+            Ok(notification) => FeedbackEvent::Feedback(Feedback {
+                rumble: Rumble {
+                    large: notification.large_motor,
+                    small: notification.small_motor,
+                },
+            }),
+            Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
+            // Disconnected, or a bus error, which vigem-rust documents as often
+            // terminal: either way no more Feedback can be trusted to come.
+            Err(_) => FeedbackEvent::Closed,
+        }
     }
 }
 
