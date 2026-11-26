@@ -3,5 +3,6 @@ pub mod clock;
 pub mod drivers;
 pub mod hid;
 pub mod hidhide;
+pub mod metrics;
 pub mod single_instance;
 pub mod vigem;

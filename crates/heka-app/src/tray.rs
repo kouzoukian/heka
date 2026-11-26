@@ -4,10 +4,12 @@ use std::time::Duration;
 use gpui::{App, AsyncApp};
 use heka_app::{log, text};
 use heka_core::autostart::{Autostart, RunEntry};
+use heka_windows::metrics;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const APP_ICON: u16 = 1;
 
 struct Items {
     open: MenuItem,
@@ -40,7 +42,7 @@ pub fn install<E: RunEntry + 'static>(
     ])
     .map_err(|error| error.to_string())?;
     let tray = TrayIconBuilder::new()
-        .with_icon(icon())
+        .with_icon(icon()?)
         .with_tooltip(text::APP_NAME)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -95,21 +97,7 @@ async fn run<E: RunEntry>(
     }
 }
 
-fn icon() -> Icon {
-    const SIZE: u32 = 32;
-    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let (dx, dy) = (x.abs_diff(SIZE / 2), y.abs_diff(SIZE / 2));
-            let inside = dx < 14 && dy < 14 && dx + dy < 24;
-            let bar = (10..22).contains(&x) && (14..18).contains(&y);
-            let pixel = match (inside, bar) {
-                (true, true) => [0xff, 0xff, 0xff, 0xff],
-                (true, false) => [0x4f, 0x8c, 0xff, 0xff],
-                (false, _) => [0, 0, 0, 0],
-            };
-            rgba.extend_from_slice(&pixel);
-        }
-    }
-    Icon::from_rgba(rgba, SIZE, SIZE).expect("the icon has SIZE * SIZE pixels")
+fn icon() -> Result<Icon, String> {
+    let side = metrics::small_icon_size();
+    Icon::from_resource(APP_ICON, Some((side, side))).map_err(|error| error.to_string())
 }

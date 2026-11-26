@@ -30,4 +30,13 @@ The first copy creates the auto-reset event `Local\heka.show-window` and waits o
 - Release builds open no console window; debug builds keep it for messages.
 - Closing the window leaves heka in the tray; only Quit ends it, removing every Virtual Controller and restoring every Hidden Controller first. If the tray icon cannot be added, for example before the taskbar runs, closing the window quits and the window is shown.
 - GPUI has no tray API. `tray-icon` creates a hidden window on the GPUI thread, so GPUI's message loop dispatches its messages (`examples/tray_spike.rs` proves it). Its events, and requests from a second copy, are drained every 100 ms. Left click opens the window; the menu is on the right button. The tray icon is gone before the app quits, so it never lingers.
-- The tray icon is a placeholder drawn in code, to avoid an image decoder, until #21.
+
+## Icon and version information
+
+`heka.exe` carries the icon as resource 1 and a `VERSIONINFO` block, compiled by `heka-app`'s build script with the Windows SDK's `rc.exe` (through `embed-resource`). The product name is heka; the version and the license line come from the workspace manifest, so a release needs no second place edited. Only the `heka` binary is given them, not the examples.
+
+- GPUI loads resource 1 as the window's icon (`load_icon` in `gpui-pre-windows` 0.3.14), which the taskbar shows too.
+- The tray loads the same resource at the size `GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem())` gives, so Windows picks a drawing made for the PC's scaling instead of shrinking the 32 px one. A change of scaling while heka runs is not followed.
+- `crates/heka-app/icon/draw.py` (Python with Pillow) draws `heka.ico`, and `heka.png` for the About view; all three are committed, so building needs no Python. The icon has a drawing for each small and large icon size from 100% to 200% scaling (16 to 64 px) and some larger ones, with the d-pad and the top of the body on whole pixels. Sizes below 256 px are stored as bitmaps and 256 px as PNG, the usual form of a Windows icon.
+
+The two metric calls take no pointers, which is what makes that `unsafe` block sound.

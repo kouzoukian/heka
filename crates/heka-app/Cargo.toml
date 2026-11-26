@@ -22,6 +22,9 @@ heka-windows.workspace = true
 hidapi.workspace = true
 tray-icon.workspace = true
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
 
