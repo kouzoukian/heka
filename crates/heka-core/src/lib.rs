@@ -4,7 +4,11 @@
 
 pub mod bridge;
 pub mod dualsense;
+pub mod lifecycle;
 pub mod link;
+pub mod mac;
+pub mod settings;
 pub mod state;
+pub mod supervisor;
 pub mod virtual_controller;
 pub mod xbox;

@@ -143,16 +143,29 @@ fn the_live_input_shows_the_latest_state_while_bridged() {
 }
 
 #[test]
-fn stopping_removes_the_virtual_controller() {
+fn stopping_hands_back_the_link_and_the_virtual_controller() {
     let (controller, record) = FakeController::new();
     let bridge = Bridge::start(FakeLink::new([]), controller, Arc::default()).unwrap();
 
-    assert!(matches!(bridge.stop(), BridgeEnd::Stopped));
+    let BridgeEnd::Stopped { link, controller } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+    assert_eq!(link.format(), ReportFormat::DualSenseUsb);
+    assert!(!record.lock().unwrap().unplugged);
+    controller.unplug().unwrap();
     assert!(record.lock().unwrap().unplugged);
 }
 
 #[test]
-fn losing_the_link_releases_everything_then_removes_the_virtual_controller() {
+fn dropping_a_bridge_removes_the_virtual_controller() {
+    let (controller, record) = FakeController::new();
+    let bridge = Bridge::start(FakeLink::new([]), controller, Arc::default()).unwrap();
+    drop(bridge);
+    assert!(record.lock().unwrap().unplugged);
+}
+
+#[test]
+fn losing_the_link_releases_everything_and_hands_back_the_virtual_controller() {
     let (controller, record) = FakeController::new();
     let live = Arc::new(LiveInput::default());
     let bridge = Bridge::start(
@@ -163,11 +176,31 @@ fn losing_the_link_releases_everything_then_removes_the_virtual_controller() {
     .unwrap();
 
     wait_until(|| bridge.is_finished());
-    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost));
-    let record = record.lock().unwrap();
-    assert_eq!(record.updates.last(), Some(&ControllerState::NEUTRAL));
-    assert!(record.unplugged);
+    let BridgeEnd::LinkLost { controller } = bridge.stop() else {
+        panic!("expected LinkLost");
+    };
+    {
+        let record = record.lock().unwrap();
+        assert_eq!(record.updates.last(), Some(&ControllerState::NEUTRAL));
+        assert!(!record.unplugged, "a Held Virtual Controller stays");
+    }
     assert_eq!(live.latest(), None);
+
+    // The same Virtual Controller carries on with a new Link.
+    let bridge = Bridge::start(
+        FakeLink::new([Step::Report(cross())]),
+        controller,
+        Arc::clone(&live),
+    )
+    .unwrap();
+    wait_until(|| live.latest().is_some());
+    drop(bridge);
+    let record = record.lock().unwrap();
+    assert_eq!(
+        record.updates.last().map(|s| s.buttons),
+        Some(Buttons::CROSS)
+    );
+    assert!(record.unplugged);
 }
 
 #[test]
@@ -193,7 +226,7 @@ fn reports_of_another_kind_are_skipped() {
 }
 
 #[test]
-fn a_failing_virtual_controller_ends_the_bridge_without_panicking() {
+fn a_failing_virtual_controller_is_removed_and_the_link_handed_back() {
     let (mut controller, record) = FakeController::new();
     controller.fail_updates = true;
     let bridge = Bridge::start(
@@ -206,7 +239,7 @@ fn a_failing_virtual_controller_ends_the_bridge_without_panicking() {
     wait_until(|| bridge.is_finished());
     assert!(matches!(
         bridge.stop(),
-        BridgeEnd::VirtualControllerFailed(_)
+        BridgeEnd::VirtualControllerFailed { .. }
     ));
     assert!(record.lock().unwrap().unplugged);
 }

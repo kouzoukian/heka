@@ -3,7 +3,12 @@
 //! The input thread reads the Link, parses each report, updates the Virtual Controller
 //! and publishes the state to [`LiveInput`] for the UI to sample. The UI is never in the
 //! input path.
+//!
+//! When the input thread ends it hands back what is still usable, so that the
+//! caller decides what happens next: a Held Virtual Controller is kept for the
+//! Controller's return, a Stopped Controller's Link is kept open.
 
+use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -32,18 +37,40 @@ impl LiveInput {
     }
 }
 
-/// Why a Bridge's input thread ended.
-#[derive(Debug)]
+/// Why a Bridge's input thread ended, with what it hands back.
 pub enum BridgeEnd {
-    /// [`Bridge::stop`] was called, or the Bridge was dropped.
-    Stopped,
-    /// The Controller lost its Link.
-    LinkLost,
-    /// The Virtual Controller refused an update.
-    VirtualControllerFailed(VirtualError),
+    /// [`Bridge::stop`] was called. Both ends are still live; the Virtual
+    /// Controller shows the last state sent.
+    Stopped {
+        link: Box<dyn LinkReader>,
+        controller: Box<dyn VirtualController>,
+    },
+    /// The Controller lost its Link. The Virtual Controller has been sent
+    /// everything released and sticks centred, and stays plugged in.
+    LinkLost {
+        controller: Box<dyn VirtualController>,
+    },
+    /// The Virtual Controller refused an update and has been removed.
+    VirtualControllerFailed {
+        link: Box<dyn LinkReader>,
+        error: VirtualError,
+    },
 }
 
-/// A running Bridge. Stopping or dropping it removes its Virtual Controller.
+impl fmt::Debug for BridgeEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stopped { .. } => f.write_str("Stopped"),
+            Self::LinkLost { .. } => f.write_str("LinkLost"),
+            Self::VirtualControllerFailed { error, .. } => {
+                write!(f, "VirtualControllerFailed({error})")
+            }
+        }
+    }
+}
+
+/// A running Bridge. Dropping it, rather than calling [`Bridge::stop`], also
+/// removes its Virtual Controller.
 pub struct Bridge {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<BridgeEnd>>,
@@ -51,8 +78,6 @@ pub struct Bridge {
 
 impl Bridge {
     /// Starts the input thread. Until it ends, it owns the Link and the Virtual Controller.
-    ///
-    /// When the Link is lost the Virtual Controller is released, then removed.
     pub fn start(
         link: Box<dyn LinkReader>,
         controller: Box<dyn VirtualController>,
@@ -74,26 +99,34 @@ impl Bridge {
         self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
-    /// Ends the input thread, waits for the Virtual Controller to be removed,
-    /// and says why the Bridge ended.
+    /// Ends the input thread if it is still running and says why it ended.
     pub fn stop(mut self) -> BridgeEnd {
         self.join()
+            .expect("a Bridge has its thread until stopped or dropped")
     }
 
-    fn join(&mut self) -> BridgeEnd {
+    fn join(&mut self) -> Option<BridgeEnd> {
         self.stop.store(true, Ordering::Relaxed);
         match self.thread.take().map(JoinHandle::join) {
-            Some(Ok(end)) => end,
+            Some(Ok(end)) => Some(end),
             Some(Err(panic)) => std::panic::resume_unwind(panic),
-            None => BridgeEnd::Stopped,
+            None => None,
         }
     }
 }
 
 impl Drop for Bridge {
     fn drop(&mut self) {
-        if self.thread.is_some() && !thread::panicking() {
-            self.join();
+        if self.thread.is_none() || thread::panicking() {
+            return;
+        }
+        // Nothing more can be done if removal fails; ViGEmBus also removes the
+        // Virtual Controller when heka's bus handle closes.
+        match self.join() {
+            Some(BridgeEnd::Stopped { controller, .. } | BridgeEnd::LinkLost { controller }) => {
+                let _ = controller.unplug();
+            }
+            Some(BridgeEnd::VirtualControllerFailed { .. }) | None => {}
         }
     }
 }
@@ -108,7 +141,7 @@ fn run(
     let mut buf = [0u8; READ_BUFFER_LEN];
     let end = loop {
         if stop.load(Ordering::Relaxed) {
-            break BridgeEnd::Stopped;
+            break BridgeEnd::Stopped { link, controller };
         }
         match link.read(&mut buf) {
             LinkRead::Report(len) => {
@@ -118,20 +151,19 @@ fn run(
                 };
                 live.set(Some(state));
                 if let Err(error) = controller.update(&state) {
-                    break BridgeEnd::VirtualControllerFailed(error);
+                    // Best effort: it already failed once.
+                    let _ = controller.unplug();
+                    break BridgeEnd::VirtualControllerFailed { link, error };
                 }
             }
             LinkRead::Timeout => {}
             LinkRead::Lost => {
-                // Best effort: the Virtual Controller is removed next anyway.
+                // Best effort: if the release fails, the next Bridge or removal still follows.
                 let _ = controller.update(&ControllerState::NEUTRAL);
-                break BridgeEnd::LinkLost;
+                break BridgeEnd::LinkLost { controller };
             }
         }
     };
     live.set(None);
-    // Nothing more can be done if removal fails; ViGEmBus also removes the
-    // Virtual Controller when heka's bus handle closes.
-    let _ = controller.unplug();
     end
 }
