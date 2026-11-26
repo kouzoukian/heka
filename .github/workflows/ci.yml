@@ -22,6 +22,8 @@ jobs:
         with:
           shared-key: heka
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Comments
+        run: cargo run -p heka-lint --locked
       - name: Build
         run: cargo build --workspace --locked
       - name: Clippy

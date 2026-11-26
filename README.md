@@ -208,7 +208,11 @@ builds compile shaders with the SDK's `fxc.exe`; set `GPUI_FXC_PATH` if it is no
 cargo run -p heka-app           # a debug build, with a console for messages
 cargo run -p heka-package       # the release zip, in target/dist
 cargo test --workspace
+cargo run -p heka-lint          # fails on a code comment
 ```
+
+The code carries no comments ([why](docs/adr/0003-no-code-comments.md)): decisions go in
+[docs/adr](docs/adr), owed work in an issue.
 
 `cargo run -p heka-app --example ui_preview` opens the window over made-up data, without
 a Controller or the drivers.
@@ -229,6 +233,7 @@ GitHub Release.
 | `heka-windows` | HID, ViGEmBus, HidHide and autostart access                                   |
 | `heka-app`     | The window ([GPUI](https://www.gpui.rs)) and the tray                         |
 | `heka-package` | The release zip and its third-party notices                                   |
+| `heka-lint`    | The check that bans code comments                                             |
 
 Windows and the drivers sit behind traits that `heka-core` defines, so its tests run with
 fakes in their place. [CONTEXT.md](CONTEXT.md) defines the terms used in the code, and
