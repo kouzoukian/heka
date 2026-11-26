@@ -1,0 +1,98 @@
+{
+  "name": "One",
+  "author": "Zed Industries",
+  "url": "https://github.com/zed-industries/zed/blob/a3ce8d5e88e35697b2ba1cf9cb3c6816089b8281/assets/themes/one/one.json",
+  "_license": "MIT, Copyright (c) 2014 GitHub Inc. The full notice is in LICENSE-ONE-DARK, next to this file.",
+  "_changes": "Zed's One Dark converted to gpui-component's theme keys. Colours only, without syntax highlighting. The base colours are the theme's terminal colours.",
+  "themes": [
+    {
+      "name": "One Dark",
+      "mode": "dark",
+      "radius": 4,
+      "radius.lg": 6,
+      "shadow": false,
+      "colors": {
+        "background": "#282c33",
+        "foreground": "#dce0e5",
+        "border": "#464b57",
+        "input.border": "#464b57",
+        "ring": "#47679e",
+        "caret": "#74ade8",
+        "selection.background": "#74ade83d",
+        "window.border": "#464b57",
+
+        "muted.background": "#2e343e",
+        "muted.foreground": "#a9afbc",
+        "accent.background": "#363c46",
+        "accent.foreground": "#dce0e5",
+
+        "group_box.background": "#2f343e",
+        "group_box.foreground": "#dce0e5",
+        "popover.background": "#2f343e",
+        "popover.foreground": "#dce0e5",
+
+        "button.background": "#2e343e",
+        "button.foreground": "#dce0e5",
+        "button.hover.background": "#363c46",
+        "button.active.background": "#454a56",
+
+        "secondary.background": "#2e343e",
+        "secondary.foreground": "#dce0e5",
+        "secondary.hover.background": "#363c46",
+        "secondary.active.background": "#454a56",
+
+        "primary.background": "#74ade8",
+        "primary.foreground": "#282c33",
+
+        "danger.background": "#d07277",
+        "danger.foreground": "#282c33",
+        "warning.background": "#dec184",
+        "warning.foreground": "#282c33",
+        "success.background": "#a1c181",
+        "success.foreground": "#282c33",
+        "info.background": "#74ade8",
+        "info.foreground": "#282c33",
+
+        "link": "#74ade8",
+        "drag.border": "#74ade8",
+        "drop_target.background": "#83899480",
+
+        "list.background": "#2f343e",
+        "list.hover.background": "#363c46",
+        "list.active.background": "#454a56",
+
+        "title_bar.background": "#3b414d",
+        "title_bar.border": "#464b57",
+        "status_bar.background": "#3b414d",
+        "status_bar.border": "#464b57",
+
+        "sidebar.background": "#2f343e",
+        "sidebar.foreground": "#dce0e5",
+        "sidebar.border": "#363c46",
+
+        "tab_bar.background": "#2f343e",
+        "tab.background": "#2f343e",
+        "tab.foreground": "#a9afbc",
+        "tab.active.background": "#282c33",
+        "tab.active.foreground": "#dce0e5",
+
+        "scrollbar.background": "#00000000",
+        "scrollbar.thumb.background": "#c8ccd44c",
+        "scrollbar.thumb.hover.background": "#c8ccd480",
+
+        "base.red": "#e06c75",
+        "base.red.light": "#ea858b",
+        "base.green": "#98c379",
+        "base.green.light": "#aad581",
+        "base.blue": "#61afef",
+        "base.blue.light": "#85c1ff",
+        "base.yellow": "#e5c07b",
+        "base.yellow.light": "#ffd885",
+        "base.magenta": "#c678dd",
+        "base.magenta.light": "#d398eb",
+        "base.cyan": "#56b6c2",
+        "base.cyan.light": "#6ed5de"
+      }
+    }
+  ]
+}

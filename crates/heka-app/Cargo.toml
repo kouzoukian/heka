@@ -15,7 +15,11 @@ path = "src/main.rs"
 [dependencies]
 gpui.workspace = true
 gpui-component.workspace = true
+gpui-kit-assets.workspace = true
 gpui_platform.workspace = true
 heka-core.workspace = true
 heka-windows.workspace = true
 hidapi.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
