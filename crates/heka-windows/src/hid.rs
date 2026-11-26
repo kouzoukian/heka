@@ -2,16 +2,19 @@
 //!
 //! Reading a Link never sends anything: output reports are only sent through a
 //! [`DualSenseUsbWriter`], which the Bridge's Feedback thread owns and uses only
-//! when a game sends Feedback.
+//! when a game sends Feedback. Opening reads two feature reports: pairing info
+//! for the MAC address and firmware info for the rumble mode.
 
 use std::ffi::{CStr, CString};
+use std::fmt;
 
 use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 
 use heka_core::dualsense::{self, RumbleMode};
 use heka_core::link::{
-    FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
+    FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportError, ReportFormat,
 };
+use heka_core::mac::MacAddress;
 
 /// HID usage page and usage of a gamepad collection (HID Usage Tables 1.4, Generic Desktop).
 const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
@@ -71,6 +74,38 @@ impl DualSenseUsbLink {
         }))
     }
 
+    /// Opens the DualSense at this HID path, reads its MAC address and firmware info.
+    ///
+    /// Like [`Self::open_first`], the device is opened a second time for Feedback.
+    pub fn open_path(api: &HidApi, path: &CStr) -> Result<(Self, MacAddress), OpenError> {
+        let product_id = api
+            .device_list()
+            .find(|info| info.path() == path)
+            .map_or(dualsense::PRODUCT_ID_DUALSENSE, DeviceInfo::product_id);
+        let device = api.open_path(path).map_err(OpenError::Hid)?;
+        let mac = read_mac(&device)?;
+        let firmware_info = read_firmware_info(&device);
+        let rumble_mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
+        let writer = match api.open_path(path) {
+            Ok(device) => Some(DualSenseUsbWriter {
+                device,
+                rumble_mode,
+            }),
+            Err(error) => {
+                eprintln!("heka: no Feedback for this DualSense: {error}");
+                None
+            }
+        };
+        let link = Self {
+            device,
+            path: path.to_owned(),
+            firmware_info,
+            rumble_mode,
+            writer,
+        };
+        Ok((link, mac))
+    }
+
     /// The `hidapi` path of this Link, for [`crate::hidhide::device_instance_path`].
     pub fn hid_path(&self) -> &CStr {
         &self.path
@@ -96,6 +131,43 @@ fn read_firmware_info(device: &HidDevice) -> Option<Vec<u8>> {
     buf.truncate(len);
     Some(buf)
 }
+
+/// Reads the pairing-info feature report. Reading a feature report changes nothing
+/// on the Controller.
+fn read_mac(device: &HidDevice) -> Result<MacAddress, OpenError> {
+    let mut report = [0u8; dualsense::PAIRING_INFO_LEN];
+    report[0] = dualsense::PAIRING_INFO_REPORT_ID;
+    let len = device
+        .get_feature_report(&mut report)
+        .map_err(OpenError::Hid)?;
+    dualsense::parse_pairing_info(&report[..len.min(report.len())]).map_err(OpenError::Mac)
+}
+
+/// HID paths of every DualSense gamepad collection on USB.
+pub fn dualsense_usb_paths(api: &HidApi) -> Vec<CString> {
+    dualsense_usb_devices(api)
+        .map(|info| info.path().to_owned())
+        .collect()
+}
+
+/// Why a DualSense could not be opened.
+#[derive(Debug)]
+pub enum OpenError {
+    Hid(HidError),
+    /// The pairing-info report did not hold a MAC address.
+    Mac(ReportError),
+}
+
+impl fmt::Display for OpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Hid(error) => write!(f, "{error}"),
+            Self::Mac(error) => write!(f, "cannot read the MAC address: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}
 
 impl LinkReader for DualSenseUsbLink {
     fn format(&self) -> ReportFormat {

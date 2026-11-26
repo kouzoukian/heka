@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use heka_core::bridge::{Bridge, BridgeEnd, LiveInput};
+use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink};
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
 use heka_core::link::{
@@ -244,16 +244,29 @@ fn the_live_input_shows_the_latest_state_while_bridged() {
 }
 
 #[test]
-fn stopping_removes_the_virtual_controller() {
+fn stopping_hands_back_the_link_and_the_virtual_controller() {
     let (controller, record) = FakeController::new();
     let bridge = Bridge::start(FakeLink::new([]), controller, Arc::default()).unwrap();
 
-    assert!(matches!(bridge.stop(), BridgeEnd::Stopped));
+    let BridgeEnd::Stopped { link, controller } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+    assert_eq!(link.format(), ReportFormat::DualSenseUsb);
+    assert!(!record.lock().unwrap().unplugged);
+    controller.unplug().unwrap();
     assert!(record.lock().unwrap().unplugged);
 }
 
 #[test]
-fn losing_the_link_releases_everything_then_removes_the_virtual_controller() {
+fn dropping_a_bridge_removes_the_virtual_controller() {
+    let (controller, record) = FakeController::new();
+    let bridge = Bridge::start(FakeLink::new([]), controller, Arc::default()).unwrap();
+    drop(bridge);
+    assert!(record.lock().unwrap().unplugged);
+}
+
+#[test]
+fn losing_the_link_releases_everything_and_hands_back_the_virtual_controller() {
     let (controller, record) = FakeController::new();
     let live = Arc::new(LiveInput::default());
     let bridge = Bridge::start(
@@ -264,11 +277,31 @@ fn losing_the_link_releases_everything_then_removes_the_virtual_controller() {
     .unwrap();
 
     wait_until(|| bridge.is_finished());
-    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost));
-    let record = record.lock().unwrap();
-    assert_eq!(record.updates.last(), Some(&ControllerState::NEUTRAL));
-    assert!(record.unplugged);
+    let BridgeEnd::LinkLost { controller } = bridge.stop() else {
+        panic!("expected LinkLost");
+    };
+    {
+        let record = record.lock().unwrap();
+        assert_eq!(record.updates.last(), Some(&ControllerState::NEUTRAL));
+        assert!(!record.unplugged, "a Held Virtual Controller stays");
+    }
     assert_eq!(live.latest(), None);
+
+    // The same Virtual Controller carries on with a new Link.
+    let bridge = Bridge::resume(
+        OpenLink::new(FakeLink::new([Step::Report(cross())])),
+        controller,
+        Arc::clone(&live),
+    )
+    .unwrap();
+    wait_until(|| live.latest().is_some());
+    drop(bridge);
+    let record = record.lock().unwrap();
+    assert_eq!(
+        record.updates.last().map(|s| s.buttons),
+        Some(Buttons::CROSS)
+    );
+    assert!(record.unplugged);
 }
 
 #[test]
@@ -294,7 +327,7 @@ fn reports_of_another_kind_are_skipped() {
 }
 
 #[test]
-fn a_failing_virtual_controller_ends_the_bridge_without_panicking() {
+fn a_failing_virtual_controller_is_removed_and_the_link_handed_back() {
     let (mut controller, record) = FakeController::new();
     controller.fail_updates = true;
     let bridge = Bridge::start(
@@ -307,7 +340,7 @@ fn a_failing_virtual_controller_ends_the_bridge_without_panicking() {
     wait_until(|| bridge.is_finished());
     assert!(matches!(
         bridge.stop(),
-        BridgeEnd::VirtualControllerFailed(_)
+        BridgeEnd::VirtualControllerFailed { .. }
     ));
     assert!(record.lock().unwrap().unplugged);
 }
@@ -389,7 +422,49 @@ fn losing_the_link_stops_the_rumble() {
         written.lock().unwrap().reports[1],
         output_report(Feedback::OFF)
     );
-    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost));
+    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost { .. }));
+}
+
+#[test]
+fn rumble_still_reaches_the_controller_after_a_hold() {
+    let (link, steps, _) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+    steps.send(Step::Lost).unwrap();
+    wait_until(|| bridge.is_finished());
+    let BridgeEnd::LinkLost { controller } = bridge.stop() else {
+        panic!("expected LinkLost");
+    };
+
+    // The Controller returns on a new Link; the game keeps the same Virtual Controller.
+    let (back, _steps, written) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(back), controller, Arc::default()).unwrap();
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(rumble(200, 64))
+    );
+    bridge.stop();
+}
+
+#[test]
+fn rumble_still_reaches_the_controller_after_a_stop_and_start() {
+    let (link, _steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+    let BridgeEnd::Stopped { link, controller } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+
+    let bridge = Bridge::resume(link, controller, Arc::default()).unwrap();
+    game.send(rumble(10, 20)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(rumble(10, 20))
+    );
+    bridge.stop();
 }
 
 #[test]

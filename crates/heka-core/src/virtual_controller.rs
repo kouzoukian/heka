@@ -10,7 +10,10 @@ use crate::feedback::FeedbackSource;
 use crate::state::ControllerState;
 
 /// The kind of Virtual Controller a Controller drives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputType {
     /// An Xbox 360 controller.
     #[default]

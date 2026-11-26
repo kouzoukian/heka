@@ -1,98 +1,108 @@
-//! Keeps one DualSense on USB Bridged to an Xbox Virtual Controller.
+//! Runs the Bridge lifecycle for every DualSense on USB.
 //!
-//! A small supervisor thread connects to ViGEmBus, waits for a DualSense, starts a
-//! Bridge, and starts a new one after the Controller is plugged back in. Ticket #6
-//! replaces this with the multi-Controller lifecycle.
+//! One supervisor thread owns the [`Supervisor`]: it connects to ViGEmBus, finds
+//! Controllers as they come and go, carries out the player's Stop and Start, and
+//! publishes a snapshot for the window. The window never waits on the thread.
 //!
-//! While Bridged the Controller is Hidden with HidHide; it is restored when the Bridge
-//! ends and on stop, and a start after a crash restores what the crashed run Hid.
+//! Hiding follows the lifecycle's changes: a Controller is Hidden with HidHide when
+//! it is Bridged and again when it returns from a Hold, stays Hidden while Held, and
+//! is restored whenever its Virtual Controller is removed. A start after a crash
+//! first restores what the crashed run Hid.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use heka_core::bridge::{Bridge, LiveInput};
 use heka_core::hiding::{DeviceInstancePath, Hiding};
-use heka_core::virtual_controller::{OutputType, VirtualBus};
-use heka_windows::hid::DualSenseUsbLink;
+use heka_core::lifecycle::Change;
+use heka_core::mac::MacAddress;
+use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
+use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_paths};
 use heka_windows::hidhide;
 use heka_windows::vigem::VigemBus;
 use hidapi::HidApi;
 
-/// How often the supervisor looks for a Controller or a dead Bridge.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+use crate::settings_file;
 
-/// What the supervisor is doing, for the window to show.
+/// How often the supervisor looks for Controllers, ended Bridges and timers.
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// What the supervisor is doing overall, for the window to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
     /// ViGEmBus could not be opened. Retried every poll.
     NoBus(String),
-    /// HID enumeration or opening the Controller failed. Retried every poll.
+    /// HID enumeration failed. Retried every poll.
     HidError(String),
-    /// ViGEmBus is open, no DualSense is on USB.
-    NoController,
-    Bridged,
+    Running,
+}
+
+/// What the window shows.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub status: Status,
+    pub controllers: Vec<ControllerView>,
+    /// Why a Controller is not Hidden when it should be.
+    pub hiding_note: Option<String>,
+}
+
+enum Command {
+    Stop(MacAddress),
+    Start(MacAddress),
+    Quit,
 }
 
 pub struct Bridging {
-    stop: Arc<AtomicBool>,
+    commands: Sender<Command>,
     thread: Mutex<Option<JoinHandle<()>>>,
-    live: Arc<LiveInput>,
-    status: Arc<Mutex<Status>>,
-    hiding_note: Arc<Mutex<Option<String>>>,
+    snapshot: Arc<Mutex<Snapshot>>,
 }
 
 impl Bridging {
     pub fn start() -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let live = Arc::new(LiveInput::default());
-        let status = Arc::new(Mutex::new(Status::Starting));
-        let hiding_note = Arc::new(Mutex::new(None));
+        let (commands, inbox) = mpsc::channel();
+        let snapshot = Arc::new(Mutex::new(Snapshot {
+            status: Status::Starting,
+            controllers: Vec::new(),
+            hiding_note: None,
+        }));
         let thread = thread::Builder::new()
             .name("heka-supervisor".into())
             .spawn({
-                let (stop, live, status, note) = (
-                    stop.clone(),
-                    live.clone(),
-                    status.clone(),
-                    hiding_note.clone(),
-                );
-                move || supervise(&stop, &live, &status, &note)
+                let snapshot = Arc::clone(&snapshot);
+                move || supervise(&inbox, &snapshot)
             })
             .expect("failed to start the supervisor thread");
         Self {
-            stop,
+            commands,
             thread: Mutex::new(Some(thread)),
-            live,
-            status,
-            hiding_note,
+            snapshot,
         }
     }
 
-    /// Why the Controller is not Hidden, when it should be.
-    pub fn hiding_note(&self) -> Option<String> {
-        self.hiding_note
+    pub fn snapshot(&self) -> Snapshot {
+        self.snapshot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
-    pub fn live(&self) -> &LiveInput {
-        &self.live
+    pub fn stop_controller(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::Stop(mac));
     }
 
-    pub fn status(&self) -> Status {
-        self.status
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    pub fn start_controller(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::Start(mac));
     }
 
-    /// Stops the Bridge and waits until its Virtual Controller is removed.
-    pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+    /// Removes every Virtual Controller, restores every Hidden Controller, and
+    /// waits until both are done.
+    pub fn quit(&self) {
+        let _ = self.commands.send(Command::Quit);
         let thread = self
             .thread
             .lock()
@@ -106,168 +116,218 @@ impl Bridging {
 
 impl Drop for Bridging {
     fn drop(&mut self) {
-        self.stop();
+        self.quit();
     }
 }
 
-fn supervise(
-    stop: &AtomicBool,
-    live: &Arc<LiveInput>,
-    status: &Mutex<Status>,
-    hiding_note: &Mutex<Option<String>>,
-) {
-    let set_status = |new: Status| *status.lock().unwrap_or_else(PoisonError::into_inner) = new;
-
-    // Undo whatever a killed run left Hidden before anything else.
-    let hiding = match hidhide::hiding() {
-        Ok(hiding) => Some(hiding),
-        Err(error) => {
-            *hiding_note.lock().unwrap_or_else(PoisonError::into_inner) =
-                Some(format!("Controllers cannot be Hidden: {error}"));
-            None
-        }
+fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
+    let mut hider = Hider::open();
+    let publish = |status: Status, controllers: Vec<ControllerView>, hider: &Hider| {
+        *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = Snapshot {
+            status,
+            controllers,
+            hiding_note: hider.note.clone(),
+        };
     };
-    let hiding = HidingStep {
-        hiding: hiding.as_ref(),
-        note: hiding_note,
-    };
-    if let Some(Err(error)) = hiding.hiding.map(Hiding::recover) {
-        hiding.set_note(Some(format!(
-            "Could not restore Controllers Hidden by an earlier run: {error}"
-        )));
-    }
 
     let bus = loop {
         match VigemBus::connect() {
             Ok(bus) => break bus,
-            Err(error) => set_status(Status::NoBus(error.to_string())),
+            Err(error) => publish(Status::NoBus(error.to_string()), Vec::new(), &hider),
         }
-        if !sleep_unless_stopped(stop) {
-            return;
+        match inbox.recv_timeout(POLL_INTERVAL) {
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => return,
+            // Nothing is listed yet, so there is nothing to stop or start.
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
         }
     };
 
-    let mut api: Option<HidApi> = None;
-    let mut bridge: Option<Bridge> = None;
-    let mut device = None;
-    let mut hidden = false;
-    while !stop.load(Ordering::Relaxed) {
-        if bridge.as_ref().is_none_or(Bridge::is_finished) {
-            if let Some(ended) = bridge.take() {
-                eprintln!("heka: Bridge ended: {:?}", ended.stop());
-                hiding.release();
-            }
-            match find_and_bridge(&mut api, &bus, live) {
-                Ok(Some((started, path))) => {
-                    bridge = Some(started);
-                    device = Some(path);
-                    hidden = false;
-                    set_status(Status::Bridged);
-                }
-                Ok(None) => set_status(Status::NoController),
-                Err(error) => set_status(Status::HidError(error)),
-            }
-        }
-        // Retried every poll, for example while HidHide's own client holds the driver.
-        if let (Some(_), Some(path), false) = (&bridge, &device, hidden) {
-            hidden = hiding.hide(path);
-        }
-        if !sleep_unless_stopped(stop) {
-            break;
-        }
-    }
-    if let Some(bridge) = bridge {
-        bridge.stop();
-    }
-    hiding.restore_all();
-    // Dropping the bus last removes anything still plugged in.
-    drop(bus);
-}
-
-type Bridged = (Bridge, std::io::Result<DeviceInstancePath>);
-
-fn find_and_bridge(
-    api: &mut Option<HidApi>,
-    bus: &VigemBus,
-    live: &Arc<LiveInput>,
-) -> Result<Option<Bridged>, String> {
-    let api = match api {
-        Some(api) => {
-            api.refresh_devices().map_err(|e| e.to_string())?;
-            api
-        }
-        None => api.insert(HidApi::new().map_err(|e| e.to_string())?),
-    };
-    let Some(link) = DualSenseUsbLink::open_first(api).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    let device = hidhide::device_instance_path(link.hid_path());
-    let controller = bus.plug(OutputType::Xbox).map_err(|e| e.to_string())?;
-    let bridge =
-        Bridge::start(Box::new(link), controller, Arc::clone(live)).map_err(|e| e.to_string())?;
-    Ok(Some((bridge, device)))
-}
-
-/// The one Controller this supervisor Bridges. Ticket #6 keys Controllers properly.
-const OWNER: &str = "dualsense-usb";
-
-/// Hides the Bridged Controller and says why it could not, for the window.
-struct HidingStep<'a> {
-    hiding: Option<&'a Hiding>,
-    note: &'a Mutex<Option<String>>,
-}
-
-impl HidingStep<'_> {
-    fn set_note(&self, note: Option<String>) {
-        *self.note.lock().unwrap_or_else(PoisonError::into_inner) = note;
-    }
-
-    /// True once the Controller is Hidden, so the caller can stop retrying.
-    fn hide(&self, device: &std::io::Result<DeviceInstancePath>) -> bool {
-        let Some(hiding) = self.hiding else {
-            return true;
+    let mut supervisor = Supervisor::new(Box::new(bus), settings_file::load());
+    let mut discovery = Discovery::default();
+    loop {
+        let command = inbox.recv_timeout(POLL_INTERVAL);
+        let now = Instant::now();
+        let changes = match command {
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(Command::Stop(mac)) => supervisor.stop(mac, now),
+            Ok(Command::Start(mac)) => supervisor.start(mac, now),
+            Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
-        let result = match device {
-            Ok(device) => hiding.hide(OWNER, device).map_err(|e| e.to_string()),
-            Err(error) => Err(format!(
-                "cannot identify the Controller for HidHide: {error}"
-            )),
+        if matches!(command, Ok(Command::Stop(_) | Command::Start(_))) {
+            settings_file::save(supervisor.settings());
+        }
+        hider.follow(&changes);
+
+        let status = match discovery.scan(&mut supervisor, &mut hider, now) {
+            Ok(()) => Status::Running,
+            Err(error) => Status::HidError(error),
+        };
+        hider.follow(&supervisor.poll(now));
+        hider.retry();
+        publish(status, supervisor.controllers(), &hider);
+    }
+    hider.follow(&supervisor.quit());
+    hider.restore_all();
+    publish(Status::Starting, Vec::new(), &hider);
+    // Dropping the Supervisor drops the bus last, which removes anything left.
+}
+
+/// Keeps Controllers Hidden as the lifecycle changes. Each Controller is a hiding
+/// owner keyed by its MAC address.
+struct Hider {
+    hiding: Option<Hiding>,
+    /// The HidHide device of each Controller's latest Link.
+    devices: HashMap<MacAddress, Result<DeviceInstancePath, String>>,
+    /// Controllers to Hide that are not Hidden yet, retried every poll, for
+    /// example while HidHide's own client holds the driver.
+    pending: HashSet<MacAddress>,
+    note: Option<String>,
+}
+
+impl Hider {
+    /// Opens HidHide and undoes whatever a killed run left Hidden.
+    fn open() -> Self {
+        let mut hider = Self {
+            hiding: None,
+            devices: HashMap::new(),
+            pending: HashSet::new(),
+            note: None,
+        };
+        match hidhide::hiding() {
+            Ok(hiding) => {
+                if let Err(error) = hiding.recover() {
+                    hider.note = Some(format!(
+                        "Could not restore Controllers Hidden by an earlier run: {error}"
+                    ));
+                }
+                hider.hiding = Some(hiding);
+            }
+            Err(error) => hider.note = Some(format!("Controllers cannot be Hidden: {error}")),
+        }
+        hider
+    }
+
+    /// Records the device behind a Link before the Supervisor hears of it.
+    fn link_seen(&mut self, mac: MacAddress, link: &DualSenseUsbLink) {
+        let device = hidhide::device_instance_path(link.hid_path())
+            .map_err(|error| format!("cannot identify the Controller for HidHide: {error}"));
+        self.devices.insert(mac, device);
+    }
+
+    fn follow(&mut self, changes: &[Change]) {
+        for change in changes {
+            eprintln!("heka: {change:?}");
+            match *change {
+                // A returning Controller is a new device to the system: Hide it again.
+                Change::Bridged { mac, .. } | Change::Returned { mac } => {
+                    self.pending.insert(mac);
+                    self.hide(mac);
+                }
+                // Stays Hidden while Held.
+                Change::Held { .. } => {}
+                Change::Removed { mac, .. } => {
+                    self.pending.remove(&mac);
+                    self.release(mac);
+                }
+            }
+        }
+    }
+
+    fn retry(&mut self) {
+        let pending: Vec<MacAddress> = self.pending.iter().copied().collect();
+        for mac in pending {
+            self.hide(mac);
+        }
+    }
+
+    fn hide(&mut self, mac: MacAddress) {
+        let Some(hiding) = &self.hiding else {
+            self.pending.remove(&mac);
+            return;
+        };
+        let result = match self.devices.get(&mac) {
+            Some(Ok(device)) => hiding
+                .hide(&mac.to_string(), device)
+                .map_err(|e| e.to_string()),
+            Some(Err(error)) => Err(error.clone()),
+            None => Err("no Link to Hide".into()),
         };
         match result {
             Ok(()) => {
-                self.set_note(None);
-                true
+                self.pending.remove(&mac);
+                if self.pending.is_empty() {
+                    self.note = None;
+                }
             }
             Err(error) => {
-                self.set_note(Some(format!(
-                    "{error}. Games may see the Controller twice."
-                )));
-                false
+                self.note = Some(format!("{error}. Games may see the Controller twice."));
             }
         }
     }
 
-    fn release(&self) {
-        if let Some(Err(error)) = self.hiding.map(|hiding| hiding.release(OWNER)) {
-            self.set_note(Some(format!("Could not restore the Controller: {error}")));
+    fn release(&mut self, mac: MacAddress) {
+        if let Some(Err(error)) = self.hiding.as_ref().map(|h| h.release(&mac.to_string())) {
+            self.note = Some(format!("Could not restore the Controller: {error}"));
         }
     }
 
-    fn restore_all(&self) {
-        if let Some(Err(error)) = self.hiding.map(Hiding::restore_all) {
+    fn restore_all(&mut self) {
+        if let Some(Err(error)) = self.hiding.as_ref().map(Hiding::restore_all) {
             eprintln!("heka: could not restore HidHide: {error}");
         }
     }
 }
 
-/// Sleeps one poll interval in short steps. False if a stop was requested.
-fn sleep_unless_stopped(stop: &AtomicBool) -> bool {
-    let until = Instant::now() + POLL_INTERVAL;
-    while Instant::now() < until {
-        if stop.load(Ordering::Relaxed) {
-            return false;
+/// Finds DualSense Links by HID path and reports arrivals and departures.
+#[derive(Default)]
+struct Discovery {
+    api: Option<HidApi>,
+    known: HashMap<CString, LinkId>,
+}
+
+impl Discovery {
+    fn scan(
+        &mut self,
+        supervisor: &mut Supervisor,
+        hider: &mut Hider,
+        now: Instant,
+    ) -> Result<(), String> {
+        let api = match &mut self.api {
+            Some(api) => {
+                api.refresh_devices().map_err(|e| e.to_string())?;
+                api
+            }
+            None => self.api.insert(HidApi::new().map_err(|e| e.to_string())?),
+        };
+        let present = dualsense_usb_paths(api);
+
+        let gone: Vec<CString> = self
+            .known
+            .keys()
+            .filter(|path| !present.contains(path))
+            .cloned()
+            .collect();
+        for path in gone {
+            if let Some(id) = self.known.remove(&path) {
+                hider.follow(&supervisor.link_gone(id, now));
+            }
         }
-        thread::sleep(Duration::from_millis(20));
+
+        for path in present {
+            if self.known.contains_key(&path) {
+                continue;
+            }
+            // Retried next scan on failure, for example while another app holds it.
+            match DualSenseUsbLink::open_path(api, &path) {
+                Ok((link, mac)) => {
+                    hider.link_seen(mac, &link);
+                    let (id, changes) = supervisor.link_arrived(mac, Box::new(link), now);
+                    self.known.insert(path, id);
+                    hider.follow(&changes);
+                }
+                Err(error) => eprintln!("heka: cannot open a DualSense: {error}"),
+            }
+        }
+        Ok(())
     }
-    !stop.load(Ordering::Relaxed)
 }

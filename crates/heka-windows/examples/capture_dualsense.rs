@@ -14,7 +14,7 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use heka_core::link::{LinkRead, LinkReader};
-use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_devices};
+use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_devices, dualsense_usb_paths};
 use hidapi::HidApi;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +42,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{} usable DualSense USB gamepad collection(s)",
         dualsense_usb_devices(&api).count()
     );
+    for path in dualsense_usb_paths(&api) {
+        match DualSenseUsbLink::open_path(&api, &path) {
+            Ok((_, mac)) => eprintln!("MAC address {mac}"),
+            Err(error) => eprintln!("cannot open {path:?}: {error}"),
+        }
+    }
 
     let Some(mut link) = DualSenseUsbLink::open_first(&api)? else {
         return Err("no DualSense on USB".into());

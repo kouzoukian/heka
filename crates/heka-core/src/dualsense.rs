@@ -7,6 +7,7 @@
 
 use crate::feedback::Feedback;
 use crate::link::ReportError;
+use crate::mac::MacAddress;
 use crate::state::{Buttons, ControllerState, Stick};
 
 /// Sony's USB vendor ID.
@@ -74,6 +75,31 @@ fn hat_to_dpad(hat: u8) -> Buttons {
         7 => Buttons::DPAD_UP | Buttons::DPAD_LEFT,
         _ => Buttons::NONE,
     }
+}
+
+/// Feature report holding the Controller's MAC address (`DS_FEATURE_REPORT_PAIRING_INFO`).
+/// Reading it sends nothing to the Controller but the request.
+pub const PAIRING_INFO_REPORT_ID: u8 = 0x09;
+/// Length of the pairing-info feature report over USB, report ID included
+/// (`DS_FEATURE_REPORT_PAIRING_INFO_SIZE`). Over Bluetooth it also carries a CRC.
+pub const PAIRING_INFO_LEN: usize = 20;
+/// Offset of the 6 MAC bytes: `dualsense_get_mac_address` copies them from `&buf[1]`,
+/// least significant byte first (`mac_address` is "stored in little endian order").
+const PAIRING_INFO_MAC: usize = 1;
+
+/// Reads the MAC address from a pairing-info feature report, report ID byte included.
+pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
+    if report.len() < PAIRING_INFO_MAC + 6 {
+        return Err(ReportError::TooShort { len: report.len() });
+    }
+    if report[0] != PAIRING_INFO_REPORT_ID {
+        return Err(ReportError::UnexpectedId { id: report[0] });
+    }
+    let mut mac = [0u8; 6];
+    mac.copy_from_slice(&report[PAIRING_INFO_MAC..PAIRING_INFO_MAC + 6]);
+    // The label order is the reverse of the little-endian bytes (the kernel prints it with `%pMR`).
+    mac.reverse();
+    Ok(MacAddress(mac))
 }
 
 /// Reads a DualSense USB input report, report ID byte included.
