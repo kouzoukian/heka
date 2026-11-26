@@ -43,7 +43,11 @@ fn derived_reports_show_each_button() {
     ];
     for (change, expected) in cases {
         let state = parse_usb_input_report(&common::derived(&[change])).unwrap();
-        assert_eq!(state.buttons, expected, "byte {} = {:#04x}", change.0, change.1);
+        assert_eq!(
+            state.buttons, expected,
+            "byte {} = {:#04x}",
+            change.0, change.1
+        );
     }
 }
 

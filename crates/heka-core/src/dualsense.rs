@@ -22,8 +22,7 @@ pub const USB_INPUT_REPORT_LEN: usize = 64;
 
 /// True for a product ID that heka reads as a DualSense.
 pub fn is_dualsense(vendor_id: u16, product_id: u16) -> bool {
-    vendor_id == VENDOR_ID
-        && matches!(product_id, PRODUCT_ID_DUALSENSE | PRODUCT_ID_DUALSENSE_EDGE)
+    vendor_id == VENDOR_ID && matches!(product_id, PRODUCT_ID_DUALSENSE | PRODUCT_ID_DUALSENSE_EDGE)
 }
 
 // Byte offsets in the USB report (struct field offset + 1 for the report ID).

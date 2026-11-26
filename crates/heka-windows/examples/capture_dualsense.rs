@@ -23,9 +23,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let api = HidApi::new()?;
-    for info in api.device_list().filter(|info| {
-        heka_core::dualsense::is_dualsense(info.vendor_id(), info.product_id())
-    }) {
+    for info in api
+        .device_list()
+        .filter(|info| heka_core::dualsense::is_dualsense(info.vendor_id(), info.product_id()))
+    {
         eprintln!(
             "found {:04x}:{:04x} bus={:?} interface={} usage_page={:#06x} usage={:#06x}",
             info.vendor_id(),

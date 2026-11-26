@@ -40,22 +40,22 @@ fn captured_baseline_keeps_the_resting_stick_direction() {
 #[test]
 fn derived_reports_map_each_button_to_its_xbox_button() {
     let cases = [
-        ((8, 0x28), 0x1000), // Cross -> A
-        ((8, 0x48), 0x2000), // Circle -> B
-        ((8, 0x18), 0x4000), // Square -> X
-        ((8, 0x88), 0x8000), // Triangle -> Y
-        ((9, 0x01), 0x0100), // L1 -> left shoulder
-        ((9, 0x02), 0x0200), // R1 -> right shoulder
-        ((9, 0x40), 0x0040), // L3 -> left thumb
-        ((9, 0x80), 0x0080), // R3 -> right thumb
-        ((9, 0x10), 0x0020), // Create -> Back (View)
-        ((9, 0x20), 0x0010), // Options -> Start (Menu)
+        ((8, 0x28), 0x1000),  // Cross -> A
+        ((8, 0x48), 0x2000),  // Circle -> B
+        ((8, 0x18), 0x4000),  // Square -> X
+        ((8, 0x88), 0x8000),  // Triangle -> Y
+        ((9, 0x01), 0x0100),  // L1 -> left shoulder
+        ((9, 0x02), 0x0200),  // R1 -> right shoulder
+        ((9, 0x40), 0x0040),  // L3 -> left thumb
+        ((9, 0x80), 0x0080),  // R3 -> right thumb
+        ((9, 0x10), 0x0020),  // Create -> Back (View)
+        ((9, 0x20), 0x0010),  // Options -> Start (Menu)
         ((10, 0x01), 0x0400), // PS -> Guide
-        ((8, 0x00), 0x0001), // hat up -> d-pad up
-        ((8, 0x04), 0x0002), // hat down -> d-pad down
-        ((8, 0x06), 0x0004), // hat left -> d-pad left
-        ((8, 0x02), 0x0008), // hat right -> d-pad right
-        ((8, 0x01), 0x0009), // hat up-right -> d-pad up + right
+        ((8, 0x00), 0x0001),  // hat up -> d-pad up
+        ((8, 0x04), 0x0002),  // hat down -> d-pad down
+        ((8, 0x06), 0x0004),  // hat left -> d-pad left
+        ((8, 0x02), 0x0008),  // hat right -> d-pad right
+        ((8, 0x01), 0x0009),  // hat up-right -> d-pad up + right
     ];
     for (change, expected) in cases {
         assert_eq!(
@@ -84,7 +84,12 @@ fn derived_triggers_pass_their_travel_through() {
 #[test]
 fn derived_stick_extremes_reach_the_xbox_extremes_with_up_positive() {
     // Left stick fully left and up, right stick fully right and down.
-    let xbox = xbox(&common::derived(&[(1, 0x00), (2, 0x00), (3, 0xFF), (4, 0xFF)]));
+    let xbox = xbox(&common::derived(&[
+        (1, 0x00),
+        (2, 0x00),
+        (3, 0xFF),
+        (4, 0xFF),
+    ]));
     assert_eq!(xbox.thumb_lx, -32768);
     assert_eq!(xbox.thumb_ly, 32767);
     assert_eq!(xbox.thumb_rx, 32767);
@@ -93,7 +98,12 @@ fn derived_stick_extremes_reach_the_xbox_extremes_with_up_positive() {
 
 #[test]
 fn derived_centred_sticks_are_exactly_centred() {
-    let xbox = xbox(&common::derived(&[(1, 0x80), (2, 0x80), (3, 0x80), (4, 0x80)]));
+    let xbox = xbox(&common::derived(&[
+        (1, 0x80),
+        (2, 0x80),
+        (3, 0x80),
+        (4, 0x80),
+    ]));
     assert_eq!(
         [xbox.thumb_lx, xbox.thumb_ly, xbox.thumb_rx, xbox.thumb_ry],
         [0; 4]

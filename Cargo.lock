@@ -2534,6 +2534,9 @@ dependencies = [
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
+ "heka-core",
+ "heka-windows",
+ "hidapi",
 ]
 
 [[package]]
