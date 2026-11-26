@@ -29,7 +29,7 @@ pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx:
             .h(ROW)
             .px(INSET)
             .border_b_1()
-            .border_color(theme.sidebar)
+            .border_color(theme.border)
             .text_size(SMALL_TEXT)
             .text_color(faint(theme))
             .child(text::NO_CONTROLLERS)
@@ -87,10 +87,10 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         .gap(GAP)
         .h(ROW)
         .px(INSET)
-        // The pane's rows end in a divider. The same line here, unseen, makes the
-        // highlight as high as theirs and puts the words of both on one level.
+        // The same divider as under the pane's rows, so that each line runs the
+        // whole width of the window.
         .border_b_1()
-        .border_color(theme.sidebar)
+        .border_color(theme.border)
         .cursor_pointer()
         .map(|this| {
             if selected {
