@@ -1,11 +1,3 @@
-//! The tray icon: reopens the window, holds the Start with Windows setting, and
-//! quits.
-//!
-//! GPUI has no tray API. `tray-icon` creates a hidden window on this thread, so
-//! GPUI's message loop dispatches its messages (proved by
-//! `examples/tray_spike.rs`). Its events arrive on channels that a GPUI task
-//! drains a few times a second, together with requests from a second copy of heka.
-
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
@@ -23,11 +15,6 @@ struct Items {
     quit: MenuItem,
 }
 
-/// Adds the tray icon. `show` opens or focuses the window; it runs on a click on
-/// the icon, on its Open item, and on each message from `show_requests`.
-///
-/// Fails when the icon cannot be added, for example while the taskbar is not
-/// running yet; the caller must then keep the window reachable another way.
 pub fn install<E: RunEntry + 'static>(
     cx: &mut App,
     mut autostart: Autostart<E>,
@@ -56,15 +43,12 @@ pub fn install<E: RunEntry + 'static>(
         .with_icon(icon())
         .with_tooltip(text::APP_NAME)
         .with_menu(Box::new(menu))
-        // A left click opens the window; the menu is on the right button.
         .with_menu_on_left_click(false)
         .build()
         .map_err(|error| error.to_string())?;
 
     cx.spawn(async move |cx: &mut AsyncApp| {
         run(cx, tray, &items, &mut autostart, &show_requests, &show).await;
-        // The tray icon is gone by now, so it never lingers after heka ends.
-        // Quitting runs `on_app_quit`, which ends every Bridge.
         cx.update(|cx| cx.quit());
     })
     .detach();
@@ -111,15 +95,12 @@ async fn run<E: RunEntry>(
     }
 }
 
-/// A 32 by 32 icon drawn here: a rounded square in heka's accent colour with a
-/// white bar, so no image decoder is needed.
 fn icon() -> Icon {
     const SIZE: u32 = 32;
     let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
     for y in 0..SIZE {
         for x in 0..SIZE {
             let (dx, dy) = (x.abs_diff(SIZE / 2), y.abs_diff(SIZE / 2));
-            // A square with its corners cut, 2 px in from the edge.
             let inside = dx < 14 && dy < 14 && dx + dy < 24;
             let bar = (10..22).contains(&x) && (14..18).contains(&y);
             let pixel = match (inside, bar) {

@@ -1,5 +1,3 @@
-//! THIRD-PARTY-NOTICES.txt, built from the license files crates ship.
-
 use std::fs;
 use std::path::Path;
 
@@ -15,7 +13,6 @@ fn write(dir: &Path, file: &str, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// A crate unpacked under `root` that ships `files`.
 fn unpacked(root: &TempDir, name: &str, license: &str, files: &[(&str, &str)]) -> Crate {
     let dir = root.path().join(name);
     fs::create_dir_all(&dir).unwrap();
@@ -65,7 +62,6 @@ fn includes_the_licenses_of_code_vendored_inside_a_crate_but_not_of_its_tests() 
         &[
             ("LICENSE.txt", "Binding terms."),
             ("etc/hidapi/LICENSE-bsd.txt", "Vendored BSD terms."),
-            // heka takes HIDAPI under its BSD-style license, not the GPL.
             ("etc/hidapi/LICENSE-gpl3.txt", "GNU terms."),
             ("tests/fonts/LICENSE.txt", "Test font terms."),
             ("html5lib-tests/LICENSE", "Test suite terms."),

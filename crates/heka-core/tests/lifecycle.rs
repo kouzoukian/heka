@@ -1,6 +1,3 @@
-//! Link and timer events in, Bridge state changes out. Time is a fake clock:
-//! every event carries the `Instant` it happens at.
-
 use std::time::{Duration, Instant};
 
 use heka_core::lifecycle::{
@@ -55,7 +52,6 @@ fn four_controllers_bridge_and_a_fifth_is_listed_but_not_bridged() {
     assert_eq!(lifecycle.phase(mac(5)), Some(Phase::Waiting));
     assert_eq!(phases(&lifecycle).len(), 5);
 
-    // Stopping one frees a slot for the fifth.
     assert_eq!(
         lifecycle.stop(mac(2), t0),
         [removed(2, Removal::Stopped), bridged(5)]
@@ -82,7 +78,6 @@ fn stopping_and_starting_a_controller() {
     assert_eq!(lifecycle.stop(mac(1), t0), [removed(1, Removal::Stopped)]);
     assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Stopped));
     assert!(lifecycle.settings().controller(mac(1)).stopped);
-    // Stopping twice changes nothing.
     assert_eq!(lifecycle.stop(mac(1), t0), []);
 
     assert_eq!(lifecycle.start(mac(1), t0), [bridged(1)]);
@@ -156,7 +151,6 @@ fn a_held_controller_that_returns_in_time_resumes() {
         [Change::Returned { mac: mac(1) }]
     );
     assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
-    // The old deadline no longer applies.
     assert_eq!(lifecycle.tick(t0 + secs(60.0)), []);
     assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
 }
@@ -186,7 +180,6 @@ fn a_held_controller_keeps_its_slot() {
     assert_eq!(lifecycle.link_arrived(mac(5), t0), []);
     assert_eq!(lifecycle.phase(mac(5)), Some(Phase::Waiting));
 
-    // Once the hold expires, the waiting Controller takes the slot.
     assert_eq!(
         lifecycle.tick(t0 + HOLD_TIME),
         [removed(1, Removal::Expired), bridged(5)]
@@ -273,7 +266,6 @@ fn a_controller_on_two_links_is_listed_once_and_held_only_when_both_are_lost() {
         [Change::Held { mac: mac(1) }]
     );
 
-    // Either Link coming back ends the Hold; a second one changes nothing more.
     assert_eq!(
         lifecycle.link_arrived(mac(1), t0 + secs(1.0)),
         [Change::Returned { mac: mac(1) }]
@@ -296,8 +288,6 @@ fn a_stopped_controller_on_two_links_stays_listed_until_both_are_lost() {
     assert_eq!(lifecycle.link_lost(mac(1), t0), []);
     assert_eq!(lifecycle.phase(mac(1)), None);
 }
-
-// ---- Output Type ----------------------------------------------------------
 
 fn bridged_ps4(n: u8) -> Change {
     Change::Bridged {
@@ -354,7 +344,6 @@ fn a_held_controller_that_changes_output_type_loses_its_virtual_controller() {
         [removed(1, Removal::OutputTypeChanged)]
     );
     assert_eq!(lifecycle.phase(mac(1)), None);
-    // It comes back as a new Controller with the new Output Type.
     assert_eq!(
         lifecycle.link_arrived(mac(1), t0 + secs(1.0)),
         [bridged_ps4(1)]

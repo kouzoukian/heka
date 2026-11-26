@@ -1,5 +1,3 @@
-//! DualSense USB input report in, Controller state out.
-
 mod common;
 
 use heka_core::calibration::Calibration;
@@ -20,12 +18,6 @@ fn captured_idle_reports_show_nothing_pressed() {
         assert_eq!(state.right_trigger, 0);
     }
 }
-
-// DERIVED reports below. Offsets are from `struct dualsense_input_report` in Linux
-// `hid-playstation.c`, plus one for the report ID: byte 8 is buttons[0] (hat in the
-// low nibble, 8 = released; Square, Cross, Circle, Triangle in bits 4..7), byte 9 is
-// buttons[1] (L1, R1, L2, R2, Create, Options, L3, R3 in bits 0..7), byte 10 is
-// buttons[2] (PS, touchpad, mic mute in bits 0..2).
 
 #[test]
 fn derived_reports_show_each_button() {
@@ -122,19 +114,12 @@ fn reports_that_are_not_dualsense_usb_input_are_refused() {
 #[test]
 fn captured_baseline_shows_the_resting_sticks() {
     let state = parse(&common::captured_baseline()).unwrap();
-    // The first captured line starts `01 7e 7d 7f 7c`.
     assert_eq!(state.left_stick, Stick { x: 0x7e, y: 0x7d });
     assert_eq!(state.right_stick, Stick { x: 0x7f, y: 0x7c });
 }
 
-// Battery. `status[0]` of `struct dualsense_input_report` is at struct offset 52,
-// byte 53 of the USB report: capacity in the low nibble (each unit 10%, reported
-// as `min(capacity * 10 + 5, 100)`), charging state in the high nibble (0
-// discharging, 1 charging, 2 full) (`dualsense_parse_report`).
-
 #[test]
 fn the_captured_dualsense_on_usb_reports_a_full_battery() {
-    // The captured byte 53 is 0x29: charging state 2, full.
     let state = parse(&common::captured_baseline()).unwrap();
     assert_eq!(
         state.battery,

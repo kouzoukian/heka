@@ -1,16 +1,3 @@
-//! Proves that a `tray-icon` tray works inside GPUI's event loop on Windows.
-//!
-//! Touches no HID, ViGEmBus, HidHide or registry code. It runs by itself and ends
-//! within a few seconds:
-//!
-//! 1. opens a window with `QuitMode::Explicit` and adds a tray icon with a menu,
-//! 2. closes the window and checks the app is still running,
-//! 3. posts the tray's own left-click message to the tray icon's hidden window,
-//!    which GPUI's message loop dispatches to `tray-icon`,
-//! 4. reopens the window when the click event arrives, then quits.
-//!
-//! `cargo run -p heka-app --example tray_spike`
-
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -33,13 +20,9 @@ fn open_window(cx: &mut App) {
         .expect("window");
 }
 
-/// `tray-icon` 0.25.1 `src/platform_impl/windows/mod.rs`: the class of its hidden
-/// window and the callback message it registers with `Shell_NotifyIconW`.
 const TRAY_CLASS: &str = "tray_icon_app";
 const WM_USER_TRAYICON: u32 = 6002;
 
-/// Finds the tray's hidden window among this thread's windows and posts it the
-/// message the shell sends on a left button release.
 fn post_tray_left_click() -> bool {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;

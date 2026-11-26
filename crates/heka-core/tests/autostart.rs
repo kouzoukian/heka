@@ -1,6 +1,3 @@
-//! Start with Windows is a setting, off by default; a copy started that way opens
-//! in the tray.
-
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
@@ -8,7 +5,6 @@ use std::rc::Rc;
 
 use heka_core::autostart::{Autostart, RunEntry};
 
-/// The Run entry as a value in memory, with every write recorded.
 #[derive(Clone, Default)]
 struct FakeRunEntry {
     value: Rc<RefCell<Option<String>>>,
@@ -94,7 +90,6 @@ fn turning_it_off_removes_the_entry() {
 
 #[test]
 fn a_moved_copy_points_the_entry_at_itself() {
-    // heka ships as a portable zip, so the player may move or replace it.
     let entry = FakeRunEntry::holding(r#""D:\old\heka.exe" --tray"#);
     let mut autostart = autostart(&entry);
 

@@ -1,5 +1,3 @@
-//! Which Controller's pane shows.
-
 use heka_app::ui::model::{ControllerEntry, EntryState, Selection};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
@@ -9,7 +7,6 @@ fn mac(last: u8) -> MacAddress {
     MacAddress([0x02, 0, 0, 0, 0, last])
 }
 
-/// The entries of the Controllers whose MAC addresses end in `macs`, in that order.
 fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
     macs.iter()
         .map(|&last| ControllerEntry {
@@ -30,7 +27,6 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
         .collect()
 }
 
-/// The selection after following each list of Controllers in turn.
 fn after(selection: &mut Selection, lists: &[&[u8]]) -> Option<MacAddress> {
     let mut shown = None;
     for list in lists {
@@ -77,7 +73,6 @@ fn when_the_selected_controller_leaves_the_one_in_its_place_is_selected() {
     selection.choose(mac(2), &controllers(&[1, 2, 3]));
 
     assert_eq!(after(&mut selection, &[&[1, 3]]), Some(mac(3)));
-    // The last one left: the new last one.
     assert_eq!(after(&mut selection, &[&[1]]), Some(mac(1)));
 }
 

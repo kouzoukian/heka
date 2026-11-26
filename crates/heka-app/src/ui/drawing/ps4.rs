@@ -1,5 +1,3 @@
-//! The PS4 Output Type, drawn as a DualShock 4.
-
 use gpui::{Hsla, transparent_black};
 use heka_core::state::Buttons;
 
@@ -9,7 +7,6 @@ use crate::ui::pad::PadModel;
 
 const TOUCHPAD: (f32, f32, f32, f32) = (126., 56., 108., 54.);
 const FINGER: f32 = 12.;
-/// Share and Options: left, top, width and height.
 const SHARE: (f32, f32, f32, f32) = (113.5, 56., 8., 17.);
 const OPTIONS: (f32, f32, f32, f32) = (238.5, 56., 8., 17.);
 const PS: Xy = (180., 146.);
@@ -21,7 +18,6 @@ const RIGHT_STICK: Xy = (228., 144.);
 
 pub fn paint(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
-    // Its lower edge is the middle of the bumper's upper one, 2 above it.
     let left_trigger = Shape::new(
         (58.3, 31.1),
         &[
@@ -37,7 +33,6 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
         pad.right_trigger,
         pad.pressed(Buttons::R2),
     );
-    // Its lower edge follows the body's upper one.
     let left_bumper = Shape::new(
         (52., 41.4),
         &[
@@ -67,7 +62,6 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
     painter.fill(&body, palette.body);
     painter.stroke(&body, 1.2, palette.outline);
 
-    // The light bar above the touchpad.
     painter.rect(
         (156., 50.5, 48., 2.5),
         1.25,
@@ -89,7 +83,6 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
     dpad(painter, pad);
     face_buttons(painter, pad);
 
-    // The speaker's holes.
     for (row, count) in [(119., 5), (125., 4)] {
         for hole in 0..count {
             let x = 180. + (hole as f32 - (count - 1) as f32 / 2.) * 6.;
@@ -120,7 +113,6 @@ pub fn labels(pad: &PadModel, palette: &Palette) -> Vec<Label> {
     ]
 }
 
-/// The touchpad, outlined when clicked, with a dot under each finger.
 fn touchpad(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
     let (left, top, width, height) = TOUCHPAD;
@@ -132,7 +124,6 @@ fn touchpad(painter: &mut Painter, pad: &PadModel) {
     painter.rect(TOUCHPAD, 7., fill, (1., edge));
     for finger in pad.touch.into_iter().flatten() {
         let (x, y) = finger.share();
-        // Kept inside the pad: the dot's travel is the pad less its own size.
         let centre = (
             left + 1. + FINGER / 2. + x * (width - FINGER - 2.),
             top + 1. + FINGER / 2. + y * (height - FINGER - 2.),
@@ -146,10 +137,8 @@ fn touchpad(painter: &mut Painter, pad: &PadModel) {
     }
 }
 
-/// Four separate keys, each pointing at the middle.
 fn dpad(painter: &mut Painter, pad: &PadModel) {
     painter.well(DPAD, 31.);
-    // The up key around the d-pad's middle; the others are it turned.
     let key = Shape::polygon(&[
         (-8., -23.),
         (-5., -26.),
@@ -163,7 +152,6 @@ fn dpad(painter: &mut Painter, pad: &PadModel) {
     painter.dpad(DPAD, &key, pad.buttons);
 }
 
-/// The four round buttons with their symbols, each in its own colour.
 fn face_buttons(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
     painter.well(FACE, 33.);

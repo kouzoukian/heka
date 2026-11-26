@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// An empty directory that is removed again.
 pub struct TempDir(PathBuf);
 
 impl TempDir {

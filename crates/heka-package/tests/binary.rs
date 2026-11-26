@@ -1,12 +1,8 @@
-//! What heka.exe must be like to run on a PC that only has Windows and the drivers.
-
 use heka_package::binary::check;
 
 const GUI: u16 = 2;
 const CONSOLE: u16 = 3;
 
-/// A 64-bit executable with one section holding its import tables, laid out as
-/// Microsoft's "PE Format" describes.
 fn executable(subsystem: u16, imports: &[&str], delay_imports: &[&str]) -> Vec<u8> {
     const PE: usize = 0x40;
     const OPTIONAL: usize = PE + 24;
@@ -26,8 +22,6 @@ fn executable(subsystem: u16, imports: &[&str], delay_imports: &[&str]) -> Vec<u
         let rva = RVA + data.len() as u32;
         data.extend_from_slice(name.as_bytes());
         data.push(0);
-        // The name's address: byte 12 of an import descriptor, byte 4 of a
-        // delay-load descriptor.
         let at = match index.checked_sub(imports.len()) {
             None => index * 20 + 12,
             Some(delayed) => delay_table + delayed * 32 + 4,
@@ -39,21 +33,21 @@ fn executable(subsystem: u16, imports: &[&str], delay_imports: &[&str]) -> Vec<u
     put(&mut image, 0, b"MZ");
     put(&mut image, 0x3c, &(PE as u32).to_le_bytes());
     put(&mut image, PE, b"PE\0\0");
-    put(&mut image, PE + 6, &1u16.to_le_bytes()); // NumberOfSections
+    put(&mut image, PE + 6, &1u16.to_le_bytes());
     put(&mut image, PE + 20, &(OPTIONAL_LEN as u16).to_le_bytes());
-    put(&mut image, OPTIONAL, &0x20bu16.to_le_bytes()); // PE32+
+    put(&mut image, OPTIONAL, &0x20bu16.to_le_bytes());
     put(&mut image, OPTIONAL + 68, &subsystem.to_le_bytes());
-    put(&mut image, OPTIONAL + 108, &16u32.to_le_bytes()); // NumberOfRvaAndSizes
+    put(&mut image, OPTIONAL + 108, &16u32.to_le_bytes());
     let directory = OPTIONAL + 112;
-    put(&mut image, directory + 8, &RVA.to_le_bytes()); // import table
+    put(&mut image, directory + 8, &RVA.to_le_bytes());
     if !delay_imports.is_empty() {
         let rva = RVA + delay_table as u32;
         put(&mut image, directory + 13 * 8, &rva.to_le_bytes());
     }
     let len = (data.len() as u32).to_le_bytes();
-    put(&mut image, SECTION + 8, &len); // VirtualSize
+    put(&mut image, SECTION + 8, &len);
     put(&mut image, SECTION + 12, &RVA.to_le_bytes());
-    put(&mut image, SECTION + 16, &len); // SizeOfRawData
+    put(&mut image, SECTION + 16, &len);
     put(&mut image, SECTION + 20, &(RAW as u32).to_le_bytes());
     image.extend(data);
     image

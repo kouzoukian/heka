@@ -1,26 +1,18 @@
-//! Telling a DualShock 4 from other devices, and one Controller from another.
-
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::link::{ControllerModel, ReportError, controller_model};
 use heka_core::mac::{InvalidMacAddress, MacAddress};
 
 #[test]
 fn both_dualshock_4_revisions_and_both_dualsenses_are_controllers() {
-    // `USB_DEVICE_ID_SONY_PS4_CONTROLLER`, `_2` and `USB_DEVICE_ID_SONY_PS5_*` in
-    // Linux `drivers/hid/hid-ids.h`.
     let model = |product| controller_model(0x054C, product);
     assert_eq!(model(0x05C4), Some(ControllerModel::DualShock4));
     assert_eq!(model(0x09CC), Some(ControllerModel::DualShock4));
     assert_eq!(model(0x0CE6), Some(ControllerModel::DualSense));
     assert_eq!(model(0x0DF2), Some(ControllerModel::DualSense));
-    // The Sony wireless USB adaptor is out of scope, as is anything not Sony's.
     assert_eq!(model(0x0BA0), None);
     assert_eq!(controller_model(0x045E, 0x05C4), None);
 }
 
-/// DERIVED: a pairing-info feature report (0x12, 16 bytes) for this address, which
-/// follows the report ID least significant byte first
-/// (`dualshock4_get_mac_address`; SDL `ReadWiredSerial` prints bytes 6 down to 1).
 fn pairing_info(mac: [u8; 6]) -> [u8; 16] {
     let mut report = [0u8; 16];
     report[0] = 0x12;
@@ -52,8 +44,6 @@ fn a_pairing_info_report_with_another_id_or_cut_short_is_refused() {
 
 #[test]
 fn the_bluetooth_serial_number_names_the_same_controller_as_usb() {
-    // Over Bluetooth the HID serial number is the address as 12 hex digits in
-    // printed order (SDL `HIDAPI_DriverPS4_InitDevice`).
     assert_eq!(parse_bluetooth_serial("a4ae11020304"), Ok(MAC));
     assert_eq!(parse_bluetooth_serial("A4AE11020304"), Ok(MAC));
 }
@@ -80,9 +70,6 @@ fn a_serial_number_that_is_not_an_address_is_refused() {
 
 #[test]
 fn a_vigem_bus_virtual_dualshock_4_is_told_apart_by_its_pairing_info() {
-    // The report ViGEmBus answers with (`sys/Ds4Pdo.cpp`, `HID_REPORT_MAC_ADDRESSES_ID`):
-    // its template with the virtual pad's address, under the vendor prefix C0:13:37,
-    // written byte-reversed from byte 1.
     let report = [
         0x12, 0x56, 0x34, 0x12, 0x37, 0x13, 0xC0, 0x08, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00,

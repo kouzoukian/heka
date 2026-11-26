@@ -1,5 +1,3 @@
-//! Where the settings live: `%APPDATA%\heka\settings.json`.
-
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
@@ -11,7 +9,6 @@ fn path() -> Option<PathBuf> {
     Some(PathBuf::from(appdata).join("heka").join("settings.json"))
 }
 
-/// The saved settings. A missing, unreadable or corrupt file gives the defaults.
 pub fn load() -> Settings {
     let Some(path) = path() else {
         return Settings::default();
@@ -26,7 +23,6 @@ pub fn load() -> Settings {
     }
 }
 
-/// Writes the settings through a temporary file so a crash never leaves half a file.
 pub fn save(settings: &Settings) {
     let Some(path) = path() else {
         eprintln!("heka: APPDATA is not set; settings are not saved");

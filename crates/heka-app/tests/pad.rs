@@ -1,5 +1,3 @@
-//! What the live drawing shows, from a Controller state.
-
 use heka_app::ui::pad::{PadModel, TouchDot, stick_offset, trigger_fill};
 use heka_core::state::{Buttons, ControllerState, Finger, Motion, Stick};
 
@@ -74,7 +72,6 @@ fn a_trigger_fills_from_empty_to_full() {
 
 #[test]
 fn a_finger_is_placed_as_a_share_of_the_touchpad_and_kept_on_it() {
-    // A touchpad whose last units are 1919 by 1079.
     let at = |x, y| TouchDot::from_units(x, y, 1919, 1079).share();
 
     assert_eq!(at(0, 0), (0.0, 0.0));

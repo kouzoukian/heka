@@ -1,5 +1,2 @@
-# Links the Microsoft C runtime into heka.exe, so that it runs on a PC without the
-# Visual C++ Redistributable. A RUSTFLAGS environment variable would replace this;
-# heka-package checks the binary before it goes into the release zip.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]

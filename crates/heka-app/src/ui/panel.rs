@@ -1,5 +1,3 @@
-//! The panel on the left: one row per Controller, as in Zed's project panel.
-
 use std::rc::Rc;
 
 use gpui::{
@@ -17,7 +15,6 @@ use crate::ui::model::{ControllerEntry, EntryState, Screen};
 
 pub const WIDTH: f32 = 240.;
 
-/// What a click on a row does.
 pub type Choose = Rc<dyn Fn(MacAddress, &mut App)>;
 
 pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx: &App) -> Div {
@@ -54,7 +51,6 @@ pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx:
                 .border_color(theme.border)
                 .child(text::CONTROLLERS),
         )
-        // The rows start right under the header, level with the pane's.
         .child(
             div()
                 .id("controllers")
@@ -68,7 +64,6 @@ pub fn panel(screen: &Screen, selected: Option<MacAddress>, choose: &Choose, cx:
         )
 }
 
-/// A Controller's state in colour, its name and its Active Link.
 fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -> Stateful<Div> {
     let mac = entry.mac;
     let end = match entry.state {
@@ -87,8 +82,6 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         .gap(GAP)
         .h(ROW)
         .px(INSET)
-        // The same divider as under the pane's rows, so that each line runs the
-        // whole width of the window.
         .border_b_1()
         .border_color(theme.border)
         .cursor_pointer()
@@ -101,7 +94,6 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         })
         .child(icon(IconName::Gamepad2).text_color(entry_color(entry, theme)))
         .map(|this| match &entry.nickname {
-            // The player's name tells it apart without its address.
             Some(nickname) => this.child(
                 div()
                     .flex_1()
@@ -123,8 +115,6 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
         .on_click(move |_, _, cx| choose(mac, cx))
 }
 
-/// The colour that stands for how a Controller is doing: its state's, or the
-/// colour of errors if its Bridge failed.
 pub fn entry_color(entry: &ControllerEntry, theme: &Theme) -> Hsla {
     if entry.error.is_some() {
         return theme.danger;
@@ -137,7 +127,6 @@ pub fn entry_color(entry: &ControllerEntry, theme: &Theme) -> Hsla {
     }
 }
 
-/// Text that matters less than the rest.
 pub fn faint(theme: &Theme) -> Hsla {
     theme.muted_foreground.opacity(0.7)
 }

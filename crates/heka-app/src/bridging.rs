@@ -1,19 +1,3 @@
-//! Runs the Bridge lifecycle for every Controller on USB or Bluetooth.
-//!
-//! One supervisor thread owns the [`Supervisor`]: it checks for the drivers, finds
-//! Controllers as they come and go, carries out the player's Stop and Start, and
-//! publishes a snapshot for the window. The window never waits on the thread.
-//!
-//! Hiding follows the lifecycle's changes: a Controller is Hidden with HidHide when
-//! it is Bridged and again when it returns from a Hold, stays Hidden while Held, and
-//! is restored whenever its Virtual Controller is removed. Every Link of a Hidden
-//! Controller is Hidden, including one that arrives later. A Controller the player
-//! lets games see is never Hidden, and is restored as soon as they say so.
-//!
-//! A start after a crash first restores what the crashed run Hid. Before looking for
-//! Controllers heka adds itself to HidHide's allowed applications, so it also finds
-//! a Controller another tool hid; it stays allowed until it quits.
-
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -36,26 +20,20 @@ use hidapi::HidApi;
 
 use crate::settings_file;
 
-/// How often the supervisor looks for Controllers, ended Bridges and timers.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// What the supervisor is doing overall, for the window to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
-    /// HID enumeration failed. Retried every poll.
     HidError(String),
     Running,
 }
 
-/// What the window shows.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub status: Status,
-    /// What the last driver check found, once there has been one.
     pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
-    /// Why a Controller is not Hidden when it should be.
     pub hiding_note: Option<String>,
 }
 
@@ -113,12 +91,10 @@ impl Bridging {
         let _ = self.commands.send(Command::Start(mac));
     }
 
-    /// Chooses the Controller's Output Type, replacing its Virtual Controller.
     pub fn set_output_type(&self, mac: MacAddress, output_type: OutputType) {
         let _ = self.commands.send(Command::SetOutputType(mac, output_type));
     }
 
-    /// Names the Controller; a blank name takes the name away.
     pub fn set_nickname(&self, mac: MacAddress, name: String) {
         let _ = self.commands.send(Command::SetNickname(mac, name));
     }
@@ -129,13 +105,10 @@ impl Bridging {
             .send(Command::SetPreferences(mac, preferences));
     }
 
-    /// Looks for the drivers again, for example after the player installed one.
     pub fn check_drivers(&self) {
         let _ = self.commands.send(Command::CheckDrivers);
     }
 
-    /// Removes every Virtual Controller, restores every Hidden Controller, and
-    /// waits until both are done.
     pub fn quit(&self) {
         let _ = self.commands.send(Command::Quit);
         let thread = self
@@ -159,8 +132,6 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let settings = settings_file::load();
     let mut hider = Hider::open(settings.never_hidden().collect());
     let publish = |status: Status, setup: &Setup, controllers, hider: &Hider| {
-        // Without HidHide every hiding failure follows from that, and the setup
-        // screen already says so.
         let hiding_note = if setup.is_missing(Driver::HidHide) {
             None
         } else {
@@ -184,9 +155,6 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
-        // Names and preferences arrive in bursts, as the player types or drags a
-        // colour. Those are only applied: looking for Controllers and saving keep
-        // their usual pace.
         let burst = matches!(
             command,
             Ok(Command::SetNickname(..) | Command::SetPreferences(..))
@@ -247,31 +215,19 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     hider.follow(&supervisor.quit());
     hider.restore_all();
     publish(Status::Starting, &detected, Vec::new(), &hider);
-    // Dropping the Supervisor drops the bus last, which removes anything left.
 }
 
-/// Keeps Controllers Hidden as the lifecycle changes. Each Controller is a hiding
-/// owner keyed by its MAC address.
 struct Hider {
     hiding: Option<Hiding>,
-    /// The HidHide device of each of a Controller's Links, by HID path.
     devices: HashMap<MacAddress, HashMap<CString, Result<DeviceInstancePath, String>>>,
-    /// Controllers that should be Hidden: Bridged or Held.
     wanted: HashSet<MacAddress>,
-    /// Controllers the player lets games see, never Hidden.
     seen: HashSet<MacAddress>,
-    /// Controllers to Hide that are not Hidden yet, retried every poll, for
-    /// example while HidHide's own client holds the driver.
     pending: HashSet<MacAddress>,
-    /// heka is not in HidHide's allowed applications yet, so it cannot find a
-    /// Controller another tool hid. Retried every poll; Bridging goes on meanwhile.
     allow_pending: bool,
     note: Option<String>,
 }
 
 impl Hider {
-    /// Opens HidHide, undoes whatever a killed run left Hidden, and allows heka so
-    /// that the first look for Controllers also finds ones other tools hid.
     fn open(seen: HashSet<MacAddress>) -> Self {
         let mut hider = Self {
             hiding: None,
@@ -312,8 +268,6 @@ impl Hider {
         }
     }
 
-    /// Records the device behind a Link before the Supervisor hears of it, and
-    /// Hides it if its Controller is already Hidden.
     fn link_seen(&mut self, mac: MacAddress, link: &ControllerLink) {
         let device = hidhide::device_instance_path(link.hid_path())
             .map_err(|error| text::cannot_identify_for_hiding(&error.to_string()));
@@ -327,7 +281,6 @@ impl Hider {
         }
     }
 
-    /// Forgets the device behind a Link that went away.
     fn link_gone(&mut self, mac: MacAddress, path: &CString) {
         if let Some(devices) = self.devices.get_mut(&mac) {
             devices.remove(path);
@@ -337,21 +290,17 @@ impl Hider {
     fn follow(&mut self, changes: &[Change]) {
         for (index, change) in changes.iter().enumerate() {
             eprintln!("heka: {change:?}");
-            // A Controller whose Virtual Controller is replaced by one of another
-            // Output Type stays Hidden in between.
             let replaced = |mac| {
                 changes[index + 1..]
                     .iter()
                     .any(|later| matches!(later, Change::Bridged { mac: m, .. } if *m == mac))
             };
             match *change {
-                // A returning Controller is a new device to the system: Hide it again.
                 Change::Bridged { mac, .. } | Change::Returned { mac } => {
                     self.wanted.insert(mac);
                     self.pending.insert(mac);
                     self.hide(mac);
                 }
-                // Stays Hidden while Held.
                 Change::Held { .. } => {}
                 Change::Removed {
                     mac,
@@ -376,8 +325,6 @@ impl Hider {
         }
     }
 
-    /// The player chooses whether this Controller is Hidden while it is Bridged
-    /// or Held.
     fn set_hide(&mut self, mac: MacAddress, hide: bool) {
         if hide {
             if self.seen.remove(&mac) && self.wanted.contains(&mac) {
@@ -385,7 +332,6 @@ impl Hider {
                 self.hide(mac);
             }
         } else if self.seen.insert(mac) {
-            // A failure to Hide it no longer matters.
             if self.pending.remove(&mac) && self.pending.is_empty() && !self.allow_pending {
                 self.note = None;
             }
@@ -404,8 +350,6 @@ impl Hider {
         }
         let devices = self.devices.get(&mac).filter(|devices| !devices.is_empty());
         let result = match devices {
-            // Every Link is tried, so that one that cannot be Hidden does not
-            // keep the others visible.
             Some(devices) => devices
                 .values()
                 .map(|device| match device {
@@ -443,12 +387,10 @@ impl Hider {
     }
 }
 
-/// Finds Links by HID path and reports arrivals and departures.
 #[derive(Default)]
 struct Discovery {
     api: Option<HidApi>,
     known: HashMap<CString, (LinkId, MacAddress)>,
-    /// Virtual Controllers present, heka's own among them, not to be opened again.
     virtual_controllers: HashSet<CString>,
 }
 
@@ -487,7 +429,6 @@ impl Discovery {
             if self.known.contains_key(&path) || self.virtual_controllers.contains(&path) {
                 continue;
             }
-            // Retried next scan on failure, for example while another app holds it.
             match ControllerLink::open_path(api, &path) {
                 Ok((link, mac)) => {
                     hider.link_seen(mac, &link);

@@ -1,41 +1,27 @@
-//! THIRD-PARTY-NOTICES.txt: the license texts of everything in heka.exe.
-
 use std::fs;
 use std::path::Path;
 
 use crate::Error;
 use crate::crates::Crate;
 
-/// A notice that comes from no crate's files.
 pub struct Section {
     pub title: String,
     pub text: String,
 }
 
-/// The standard texts, taken from heka's own license files.
 const APACHE: &str = include_str!("../../../LICENSE-APACHE");
 const MIT: &str = include_str!("../../../LICENSE-MIT");
 
-/// What a license file's name starts with, in lower case.
 const LICENSE_NAMES: [&str; 4] = ["license", "licence", "copying", "unlicense"];
-/// Files that carry notices without being a license themselves.
 const NOTICE_NAMES: [&str; 2] = ["copyright", "notice"];
-/// Extensions of source and asset files that are named like a license file.
 const NOT_TEXT: [&str; 6] = ["rs", "svg", "png", "json", "py", "toml"];
-/// Directories of a crate whose contents are never built into a binary.
 const NOT_BUILT: [&str; 5] = ["tests", "test", "benches", "examples", "scripts"];
-/// Licenses a crate offers that heka does not take it under: HIDAPI is used under
-/// its BSD-style license.
 const NOT_TAKEN: [(&str, &str); 1] = [("hidapi", "LICENSE-gpl3.txt")];
 
 const RULE: &str =
     "\n================================================================================\n";
 
-/// The notices for `crates`, then `extra`. Every license file a crate ships is
-/// printed, once however many crates share it. A crate that ships none gets the
-/// standard Apache-2.0 or MIT text if it offers one of them; otherwise this fails.
 pub fn notices(crates: &[Crate], extra: &[Section]) -> Result<String, Error> {
-    // Each distinct text, with the files it came from.
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
     let mut add = |from: String, text: &str| {
         let text = clean(text);
@@ -56,7 +42,6 @@ pub fn notices(crates: &[Crate], extra: &[Section]) -> Result<String, Error> {
         license_files(&package.dir, "", &mut files)?;
         files.retain(|file| !NOT_TAKEN.contains(&(name.as_str(), file_name(file))));
         files.sort();
-        // Only a license at the top of the crate covers the crate itself.
         if !files
             .iter()
             .any(|file| !file.contains('/') && starts_with_any(file, &LICENSE_NAMES))
@@ -109,9 +94,6 @@ fn starts_with_any(name: &str, starts: &[&str]) -> bool {
     starts.iter().any(|start| name.starts_with(start))
 }
 
-/// Adds the license and notice files under `dir`, as `/`-separated paths from the
-/// top of the crate. Everything in a directory of licenses counts, whatever its
-/// name.
 fn license_files(dir: &Path, prefix: &str, found: &mut Vec<String>) -> Result<(), Error> {
     let entries =
         fs::read_dir(dir).map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
@@ -135,7 +117,6 @@ fn license_files(dir: &Path, prefix: &str, found: &mut Vec<String>) -> Result<()
     Ok(())
 }
 
-/// Whether `prefix` is inside a directory such as `LICENSES/` or `.licenses/`.
 fn is_license_directory(prefix: &str) -> bool {
     prefix.split('/').any(|dir| {
         let dir = dir.trim_start_matches('.');
@@ -143,11 +124,9 @@ fn is_license_directory(prefix: &str) -> bool {
     })
 }
 
-/// The standard text for a crate that offers a choice including Apache-2.0 or MIT.
 fn standard_text(package: &Crate) -> Result<(&'static str, String), Error> {
     let Crate { name, version, .. } = package;
     let license = package.license.as_deref().unwrap_or_default();
-    // "A OR B", or the older "A/B". Anything with AND needs both texts.
     let offers = |wanted: &str| {
         !license.contains(" AND ")
             && license

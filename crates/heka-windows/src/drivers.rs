@@ -1,6 +1,3 @@
-//! Finding the installed drivers, for [`heka_core::setup`]. It opens them and
-//! reads, and never installs, downloads or configures anything.
-
 use std::error::Error;
 
 use heka_core::hiding::HidHideStatus;
@@ -11,12 +8,10 @@ use vigem_rust::{BusError, ClientError};
 use crate::hidhide::HidHideDriver;
 use crate::vigem::VigemBus;
 
-/// The drivers on this PC.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InstalledDrivers;
 
 impl Drivers for InstalledDrivers {
-    /// Each call looks for ViGEmBus afresh, so one installed while heka runs is found.
     fn open_vigem_bus(&self) -> Result<Box<dyn VirtualBus>, BusUnavailable> {
         match VigemBus::connect() {
             Ok(bus) => Ok(Box::new(bus)),
@@ -29,8 +24,6 @@ impl Drivers for InstalledDrivers {
     }
 }
 
-/// `vigem-rust` reports a driver that is missing or not running as
-/// `BusError::BusNotFound` (`Client::connect` in its `client.rs`).
 fn why_unavailable(error: &VirtualError) -> BusUnavailable {
     match error.source().and_then(|e| e.downcast_ref::<ClientError>()) {
         Some(ClientError::Bus(BusError::BusNotFound { .. })) => BusUnavailable::NotInstalled,

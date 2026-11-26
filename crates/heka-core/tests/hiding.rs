@@ -1,5 +1,3 @@
-//! Hiding Controllers through a fake HidHide and an in-memory journal.
-
 use std::sync::{Arc, Mutex};
 
 use heka_core::hiding::{
@@ -19,7 +17,6 @@ fn path(text: &str) -> DeviceInstancePath {
     DeviceInstancePath::new(text)
 }
 
-/// One write the fake driver received, with the journal as it was saved at that moment.
 #[derive(Debug, Clone)]
 struct Write {
     what: String,
@@ -95,7 +92,6 @@ impl JournalStore for MemoryJournal {
     }
 }
 
-/// The development PC: cloaking on, DS4Windows and x360ce allowed, another pad hidden.
 fn dev_pc() -> HidHideConfig {
     HidHideConfig {
         active: true,
@@ -184,7 +180,6 @@ fn ending_the_bridge_turns_cloaking_back_off_when_heka_turned_it_on() {
 
 #[test]
 fn entries_that_were_there_before_heka_are_never_removed() {
-    // The player already hid this Controller and allowed heka, in another letter case.
     let before = HidHideConfig {
         hidden_devices: vec![OTHER_PAD.into(), USB_LINK.to_lowercase()],
         allowed_apps: vec![DS4WINDOWS.into(), HEKA.to_uppercase()],
@@ -205,7 +200,6 @@ fn each_controller_is_restored_when_its_own_bridge_ends() {
     let world = world(HidHideConfig::default());
     let hiding = hiding(&world);
 
-    // pad-1 has a USB and a Bluetooth Link; pad-2 is another Controller.
     hiding.hide("pad-1", &path(USB_LINK)).unwrap();
     hiding.hide("pad-1", &path(BT_LINK)).unwrap();
     hiding.hide("pad-2", &path(OTHER_PAD)).unwrap();
@@ -231,7 +225,6 @@ fn a_held_controller_stays_hidden_and_its_returning_link_changes_nothing() {
     hiding.hide("pad-1", &path(USB_LINK)).unwrap();
     let writes_while_bridged = world.lock().unwrap().writes.len();
 
-    // Held: the supervisor does not release. The Link returns and is passed again.
     hiding.hide("pad-1", &path(USB_LINK)).unwrap();
 
     assert_eq!(world.lock().unwrap().writes.len(), writes_while_bridged);
@@ -254,7 +247,6 @@ fn the_next_start_restores_what_a_killed_heka_left_hidden() {
 
 #[test]
 fn a_kill_between_journalling_and_changing_is_recovered_without_harm() {
-    // The journal says heka added things, but the kill came before HidHide was changed.
     let world = world(dev_pc());
     world.lock().unwrap().journal = Journal {
         cloak_was_off: false,
@@ -284,7 +276,6 @@ fn quitting_restores_every_controller() {
 
 #[test]
 fn with_an_inverted_application_list_heka_is_not_listed() {
-    // Inverted, the list names applications that are denied: listing heka would blind it.
     let before = HidHideConfig {
         inverse: true,
         ..dev_pc()
@@ -314,7 +305,6 @@ fn a_busy_hidhide_is_reported_and_hiding_works_once_it_is_free() {
     );
     assert_eq!(config(&world), dev_pc());
 
-    // The supervisor tries again later, for example on its next poll.
     world.lock().unwrap().fail_with = None;
     hiding.hide("pad-1", &path(USB_LINK)).unwrap();
     hiding.release("pad-1").unwrap();
@@ -385,7 +375,6 @@ fn detection_reads_hidhide_and_changes_nothing() {
     assert!(world.lock().unwrap().writes.is_empty());
 }
 
-/// The maintainer's PC: DS4Windows left the DualSense hidden and is the only allowed app.
 fn hidden_by_ds4windows() -> HidHideConfig {
     HidHideConfig {
         active: true,
@@ -417,7 +406,6 @@ fn heka_stays_allowed_after_the_last_bridge_ends_and_is_removed_on_quit() {
     let hiding = hiding(&world);
     hiding.allow_heka().unwrap();
 
-    // The Controller DS4Windows hid can now be opened and Bridged.
     hiding.hide("pad-1", &path(USB_LINK)).unwrap();
     hiding.release("pad-1").unwrap();
     assert_eq!(config(&world).allowed_apps, [DS4WINDOWS, HEKA]);
@@ -496,7 +484,6 @@ fn the_next_start_removes_heka_from_the_allowed_apps_after_a_kill() {
     next.recover().unwrap();
     assert_eq!(config(&world), hidden_by_ds4windows());
 
-    // The next run allows itself again and cleans up on quit as usual.
     next.allow_heka().unwrap();
     assert_eq!(config(&world).allowed_apps, [DS4WINDOWS, HEKA]);
     next.restore_all().unwrap();
@@ -522,8 +509,6 @@ fn a_busy_hidhide_at_start_is_reported_and_allowing_succeeds_on_retry() {
 
 #[test]
 fn heka_allowed_while_hidhide_fails_mid_change_is_still_removed_on_quit() {
-    // The journal is saved, then the write fails: the entry stays journalled and the
-    // quit finds nothing to remove.
     let world = world(hidden_by_ds4windows());
     let hiding = hiding(&world);
     hiding.allow_heka().unwrap();

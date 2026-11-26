@@ -1,11 +1,3 @@
-//! The strips above the selected Controller's properties: heka's notices and the
-//! setup screen, which says which drivers are missing, what that costs and where
-//! to get them. It only links to the official installers: heka never downloads or
-//! runs one.
-//!
-//! Each strip is a whole number of rows high whatever it says, so that what is
-//! below it stays level with the panel's rows.
-
 use std::rc::Rc;
 
 use gpui::{
@@ -23,8 +15,6 @@ use crate::text::setup as text;
 use crate::ui::metrics::{CONTROL, GAP, INSET, LINE, ROW, SMALL_TEXT, icon};
 use crate::ui::model::{Command, Level, Notice, SendCommand};
 
-/// A strip across the pane, `rows` rows high, with room for two lines of text in
-/// each.
 pub fn strip(id: impl Into<SharedString>, rows: u8, theme: &Theme) -> Stateful<Div> {
     div()
         .id(id.into())
@@ -41,7 +31,6 @@ pub fn strip(id: impl Into<SharedString>, rows: u8, theme: &Theme) -> Stateful<D
         .line_height(LINE)
 }
 
-/// The text of a strip: up to two lines, cut short beyond them.
 pub fn clamped(words: SharedString) -> Div {
     div()
         .flex_1()
@@ -51,7 +40,6 @@ pub fn clamped(words: SharedString) -> Div {
         .child(words)
 }
 
-/// One of heka's notices, the `place`th. A tooltip holds what does not fit.
 pub fn notice_banner(place: usize, notice: &Notice, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let (name, color) = match notice.level {
@@ -65,8 +53,6 @@ pub fn notice_banner(place: usize, notice: &Notice, cx: &App) -> Stateful<Div> {
         .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 
-/// The banners for the missing drivers and the button that looks for them again,
-/// or nothing when no driver is missing.
 pub fn setup_banners(missing: &[Missing], send: &SendCommand, cx: &App) -> Option<Div> {
     if missing.is_empty() {
         return None;
@@ -88,8 +74,6 @@ pub fn setup_banners(missing: &[Missing], send: &SendCommand, cx: &App) -> Optio
                             .h(CONTROL)
                             .px(GAP)
                             .accessibility_label(text::CHECK_AGAIN)
-                            // Children, not `.icon` and `.label`, which would
-                            // take the button's own sizes.
                             .child(
                                 div()
                                     .flex()
@@ -105,7 +89,6 @@ pub fn setup_banners(missing: &[Missing], send: &SendCommand, cx: &App) -> Optio
     )
 }
 
-/// Two rows: what is missing with the link to its installer, then what that costs.
 fn driver_banner(missing: &Missing, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let url = missing.driver.installer_url();

@@ -1,6 +1,3 @@
-//! The Xbox Output Type, drawn as an Xbox pad. Its buttons are lettered and placed
-//! as the Virtual Controller maps them ([`heka_core::xbox`]).
-
 use gpui::{Hsla, transparent_black};
 use heka_core::state::Buttons;
 
@@ -17,7 +14,6 @@ const RIGHT_STICK: Xy = (228., 146.);
 const FACE: Xy = (272., 92.);
 const FACE_SPREAD: f32 = 20.;
 
-/// The face buttons: the Controller button, where it sits and its letter.
 const FACE_BUTTONS: [(Buttons, Xy, &str); 4] = [
     (Buttons::TRIANGLE, (0., -1.), text::Y),
     (Buttons::CIRCLE, (1., 0.), text::B),
@@ -27,8 +23,6 @@ const FACE_BUTTONS: [(Buttons, Xy, &str); 4] = [
 
 pub fn paint(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
-    // Its lower edge is the middle of the bumper's upper one, 2 above it, so
-    // that it leans as the shoulder does.
     let left_trigger = Shape::new(
         (66., 27.1),
         &[
@@ -44,7 +38,6 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
         pad.right_trigger,
         pad.pressed(Buttons::R2),
     );
-    // Its lower edge follows the body's upper one.
     let left_bumper = Shape::new(
         (54., 46.),
         &[
@@ -75,7 +68,6 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
 
     guide(painter, pad.pressed(Buttons::PS));
     view_and_menu(painter, pad);
-    // The share button, which a Virtual Controller does not have.
     painter.rect(
         (172., 108., 16., 8.),
         4.,
@@ -126,7 +118,6 @@ pub fn labels(pad: &PadModel, palette: &Palette) -> Vec<Label> {
     labels
 }
 
-/// The colour of the Xbox button that `button` drives.
 fn face_color(button: Buttons, palette: &Palette) -> Hsla {
     match button {
         Buttons::TRIANGLE => palette.yellow,
@@ -136,7 +127,6 @@ fn face_color(button: Buttons, palette: &Palette) -> Hsla {
     }
 }
 
-/// The round button with the cross-shaped mark.
 fn guide(painter: &mut Painter, pressed: bool) {
     let palette = painter.palette;
     painter.button(GUIDE, 12., pressed, palette.pressed);
@@ -150,7 +140,6 @@ fn guide(painter: &mut Painter, pressed: bool) {
     painter.line((x + 6., y - 6.), (x - 6., y + 6.), 2., ink);
 }
 
-/// The two small buttons: View with two windows on it, Menu with three lines.
 fn view_and_menu(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
     for (centre, button) in [(VIEW, Buttons::CREATE), (MENU, Buttons::OPTIONS)] {
@@ -170,10 +159,8 @@ fn view_and_menu(painter: &mut Painter, pad: &PadModel) {
     }
 }
 
-/// A cross of four arms that meet in the middle.
 fn dpad(painter: &mut Painter, pad: &PadModel) {
     painter.well(DPAD, 27.);
-    // The up arm around the d-pad's middle; the others are it turned.
     let arm = Shape::polygon(&[
         (0., 0.),
         (-7., -7.),

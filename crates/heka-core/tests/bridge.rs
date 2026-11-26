@@ -1,5 +1,3 @@
-//! Link reads in, Virtual Controller updates and Bridge endings out.
-
 mod common;
 
 use std::collections::VecDeque;
@@ -20,8 +18,6 @@ use heka_core::preferences::{LivePreferences, Preferences, RumbleStrength};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::virtual_controller::{OutputType, VirtualController, VirtualError};
 
-/// One scripted read. After the script runs out the Link stays up and silent,
-/// apart from steps sent later through [`FakeLink::live`].
 enum Step {
     Report(Vec<u8>),
     Lost,
@@ -42,7 +38,6 @@ impl FakeLink {
         })
     }
 
-    /// A silent Link that reads the steps sent to it, and can carry Feedback.
     fn live() -> (Box<Self>, Sender<Step>, Arc<Mutex<Written>>) {
         let (steps, later) = mpsc::channel();
         let (writer, written) = FakeWriter::new();
@@ -86,17 +81,14 @@ impl LinkReader for FakeLink {
     }
 }
 
-/// The output reports a [`FakeWriter`] was asked to send.
 #[derive(Default)]
 struct Written {
     reports: Vec<Vec<u8>>,
-    /// Writes that have started, including one still blocked.
     started: usize,
 }
 
 struct FakeWriter {
     written: Arc<Mutex<Written>>,
-    /// When set, every write waits for a message, or for the sender to be dropped.
     gate: Option<Receiver<()>>,
 }
 
@@ -149,7 +141,6 @@ impl FakeController {
         (controller, record)
     }
 
-    /// A Virtual Controller that passes on the Feedback a game sends through the sender.
     fn with_feedback() -> (Box<Self>, Arc<Mutex<Record>>, Sender<Feedback>) {
         let (mut controller, record) = Self::new();
         let (game, feedback) = mpsc::channel();
@@ -204,7 +195,6 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 fn cross() -> Vec<u8> {
-    // DERIVED: captured baseline with Cross pressed (buttons[0] bit 5).
     common::derived(&[(8, 0x28)])
 }
 
@@ -294,7 +284,6 @@ fn losing_the_link_releases_everything_and_hands_back_the_virtual_controller() {
     }
     assert_eq!(live.latest(), None);
 
-    // The same Virtual Controller carries on with a new Link.
     let bridge = Bridge::resume(
         OpenLink::new(FakeLink::new([Step::Report(cross())])),
         controller,
@@ -316,7 +305,6 @@ fn reports_of_another_kind_are_skipped() {
     let (controller, record) = FakeController::new();
     let bridge = Bridge::start(
         FakeLink::new([
-            // DERIVED: a report with another ID, then a truncated report.
             Step::Report(common::derived(&[(0, 0x31)])),
             Step::Report(cross()[..10].to_vec()),
             Step::Report(cross()),
@@ -351,9 +339,6 @@ fn a_failing_virtual_controller_is_removed_and_the_link_handed_back() {
     ));
     assert!(record.lock().unwrap().unplugged);
 }
-
-// Feedback. The writer reports CompatibleV2, so the expected bytes are the v2
-// USB output report that `dualsense_feedback.rs` checks byte by byte.
 
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
@@ -444,7 +429,6 @@ fn rumble_still_reaches_the_controller_after_a_hold() {
         panic!("expected LinkLost");
     };
 
-    // The Controller returns on a new Link; the game keeps the same Virtual Controller.
     let (back, _steps, written) = FakeLink::live();
     let bridge = Bridge::resume(OpenLink::new(back), controller, Arc::default()).unwrap();
     game.send(rumble(200, 64)).unwrap();
@@ -481,7 +465,6 @@ fn a_bridge_that_never_rumbled_sends_the_controller_nothing() {
     let (controller, record, game) = FakeController::with_feedback();
     let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
 
-    // A game that only ever asks for stopped motors.
     game.send(Feedback::OFF).unwrap();
     steps.send(Step::Report(cross())).unwrap();
     wait_until(|| record.lock().unwrap().updates.len() == 1);
@@ -537,7 +520,6 @@ fn a_feedback_write_that_hangs_does_not_delay_input() {
 
     game.send(rumble(200, 64)).unwrap();
     wait_until(|| written.lock().unwrap().started == 1);
-    // The write is now stuck. Input keeps flowing.
     steps.send(Step::Report(cross())).unwrap();
     wait_until(|| record.lock().unwrap().updates.len() == 1);
     assert!(written.lock().unwrap().reports.is_empty());
@@ -565,7 +547,6 @@ fn a_bridge_moved_to_another_link_shows_the_games_last_feedback_there() {
         panic!("expected Stopped");
     };
 
-    // The same Virtual Controller now reads another Link of the Controller.
     let (other, _steps, on_other) = FakeLink::live();
     let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
     wait_until(|| !on_other.lock().unwrap().reports.is_empty());
@@ -573,22 +554,17 @@ fn a_bridge_moved_to_another_link_shows_the_games_last_feedback_there() {
     bridge.stop();
 }
 
-// Preferences shape the Feedback on its way to the Controller.
-
 const PINK: Lightbar = Lightbar {
     red: 255,
     green: 0,
     blue: 128,
 };
 
-/// A running Bridge following preferences the test changes, with what the game
-/// and the Controller at its ends see.
 struct Following {
     bridge: Bridge,
     preferences: Arc<LivePreferences>,
     written: Arc<Mutex<Written>>,
     game: Sender<Feedback>,
-    /// Keeps the Link scripted.
     _steps: Sender<Step>,
 }
 
@@ -734,7 +710,6 @@ fn a_bridge_keeps_following_its_preferences_when_it_moves_to_another_link() {
         rumble: RumbleStrength::percent(25),
         ..Preferences::default()
     });
-    // Time for the Feedback thread to see the change before the game speaks.
     std::thread::sleep(Duration::from_millis(200));
     game.send(rumble(200, 100)).unwrap();
     wait_until(|| !written.lock().unwrap().reports.is_empty());

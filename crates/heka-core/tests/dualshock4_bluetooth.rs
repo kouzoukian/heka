@@ -1,9 +1,3 @@
-//! DualShock 4 Bluetooth input and calibration reports in, Controller state out.
-//!
-//! No DualShock 4 is available, so every report is DERIVED from the layout in
-//! Linux `hid-playstation.c` (see `common::ds4_bluetooth_from_usb`). Offsets are
-//! into the report with its report ID byte.
-
 mod common;
 
 use heka_core::calibration::Calibration;
@@ -19,7 +13,6 @@ fn parse(report: &[u8]) -> Result<ControllerState, ReportError> {
 
 #[test]
 fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
-    // Sticks, Cross, L1, PS, triggers, timestamp, motion, battery and one finger.
     let usb = common::ds4_usb(&[
         (1, 1),
         (2, 2),
@@ -53,7 +46,6 @@ fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
 
 #[test]
 fn a_fourth_touch_report_can_be_the_newest() {
-    // Touch reports start at byte 36, 9 bytes each: the fourth's first finger is at 64.
     let mut report = common::ds4_bluetooth_from_usb(&common::ds4_usb(&[]));
     report[35] = 4;
     report[64..68].copy_from_slice(&[9, 100, 0, 0]);
@@ -68,7 +60,6 @@ fn a_fourth_touch_report_can_be_the_newest() {
 
 #[test]
 fn a_report_padded_to_the_longest_report_the_link_takes_is_read() {
-    // Windows hands every input report over at the length of the longest one.
     let mut report = common::ds4_bluetooth_from_usb(&common::ds4_usb(&[(5, 0x28)]));
     report.resize(128, 0);
     assert_eq!(parse(&report).unwrap().buttons, Buttons::CROSS);
@@ -83,8 +74,6 @@ fn a_bluetooth_report_with_a_wrong_crc_is_refused() {
 
 #[test]
 fn the_simple_bluetooth_report_and_short_reads_are_refused() {
-    // Until a calibration feature report is read, the DualShock 4 sends the short
-    // report 0x01 over Bluetooth (`DS4_INPUT_REPORT_BT_MINIMAL`).
     let full = common::ds4_bluetooth_from_usb(&common::ds4_usb(&[]));
     let mut simple = full.clone();
     simple[0] = 0x01;
@@ -92,16 +81,10 @@ fn the_simple_bluetooth_report_and_short_reads_are_refused() {
     assert_eq!(parse(&full[..10]), Err(ReportError::TooShort { len: 10 }));
 }
 
-/// DERIVED: a Bluetooth calibration feature report (0x05, 41 bytes). Unlike over
-/// USB, the three gyro plus values come before the three minus values
-/// (`dualshock4_get_calibration_data`), and a CRC32 seeded with 0xA3 ends it.
 fn calibration_report() -> Vec<u8> {
     let fields: [i16; 17] = [
-        0, 0, 0, // gyro biases: pitch, yaw, roll
-        1000, 2000, 4000, // gyro plus: pitch, yaw, roll
-        -1000, -2000, -4000, // gyro minus: pitch, yaw, roll
-        500, 500, // gyro speed plus and minus
-        8100, -8100, 8292, -8092, 4096, -4096, // accelerometer x, y, z plus and minus
+        0, 0, 0, 1000, 2000, 4000, -1000, -2000, -4000, 500, 500, 8100, -8100, 8292, -8092, 4096,
+        -4096,
     ];
     let mut report = vec![0x05];
     report.extend(fields.iter().flat_map(|field| field.to_le_bytes()));

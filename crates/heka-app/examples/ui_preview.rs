@@ -1,15 +1,3 @@
-//! heka's window over made-up data, to look at the interface without Controllers.
-//!
-//! It touches no HID device, ViGEmBus or HidHide.
-//!
-//! `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--first N] [--settings]
-//! [--seconds N]`
-//!
-//! `--empty` shows the window with no Controller, `--missing` adds the setup
-//! screen for both drivers, `--first N` lists the Nth Controller first, so that it
-//! is the one selected, `--settings` opens on its settings, and `--seconds N` closes
-//! the window by itself. It prints how often the window samples its backend.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -26,14 +14,12 @@ use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::virtual_controller::OutputType;
 
-/// How often the sampling rate is printed.
 const REPORT_EVERY: Duration = Duration::from_secs(2);
 
 struct Fake {
     started: Instant,
     controllers: RefCell<Vec<ControllerEntry>>,
     missing: RefCell<Vec<Missing>>,
-    /// Samples since the last report, and when that was.
     samples: RefCell<(u32, Instant)>,
 }
 
@@ -92,7 +78,6 @@ impl Fake {
         controllers[1].nickname = Some("Sofa".into());
         controllers[3].error = Some("made-up error for the preview".into());
         if missing {
-            // Without ViGEmBus nothing is Bridged, but input still shows.
             for entry in &mut controllers {
                 entry.state = EntryState::NotBridged;
                 entry.active_link = entry.active_link.or(Some(LinkKind::Usb));
@@ -177,7 +162,6 @@ impl Backend for Fake {
             | Command::SetNickname(mac, _)
             | Command::SetPreferences(mac, _) => *mac,
             Command::CheckDrivers => {
-                // As if the player had installed both.
                 self.missing.borrow_mut().clear();
                 for entry in controllers.iter_mut() {
                     entry.bus_missing = false;
@@ -207,7 +191,6 @@ impl Backend for Fake {
     }
 }
 
-/// Sticks circling, triggers pulling, one button after another and two fingers.
 fn moving_pad(t: f32) -> PadModel {
     let axis = |value: f32| (128. + 127. * value).clamp(0., 255.) as u8;
     let travel = |value: f32| (127.5 + 127.5 * value.sin()) as u8;

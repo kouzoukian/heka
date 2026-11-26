@@ -1,11 +1,6 @@
-//! Controller state: what a Controller's inputs are at one moment, whatever its model or Link.
-
 use std::fmt;
 use std::ops::{BitOr, BitOrAssign};
 
-/// A set of pressed buttons. The d-pad is four buttons so diagonals are two.
-///
-/// Names follow the DualSense. On a DualShock 4, Share is [`Buttons::CREATE`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Buttons(u32);
 
@@ -17,9 +12,7 @@ impl Buttons {
     pub const TRIANGLE: Self = Self(1 << 3);
     pub const L1: Self = Self(1 << 4);
     pub const R1: Self = Self(1 << 5);
-    /// The L2 trigger's digital click. Its travel is [`ControllerState::left_trigger`].
     pub const L2: Self = Self(1 << 6);
-    /// The R2 trigger's digital click. Its travel is [`ControllerState::right_trigger`].
     pub const R2: Self = Self(1 << 7);
     pub const L3: Self = Self(1 << 8);
     pub const R3: Self = Self(1 << 9);
@@ -33,7 +26,6 @@ impl Buttons {
     pub const DPAD_LEFT: Self = Self(1 << 17);
     pub const DPAD_RIGHT: Self = Self(1 << 18);
 
-    /// Every button with a display name, in the order a live input view lists them.
     pub const NAMED: [(Self, &'static str); 19] = [
         (Self::CROSS, "Cross"),
         (Self::CIRCLE, "Circle"),
@@ -56,12 +48,10 @@ impl Buttons {
         (Self::MUTE, "Mute"),
     ];
 
-    /// True if every button in `other` is pressed.
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
-    /// Presses `other` too when `pressed` is true.
     pub fn set(&mut self, other: Self, pressed: bool) {
         if pressed {
             self.0 |= other.0;
@@ -94,8 +84,6 @@ impl fmt::Debug for Buttons {
     }
 }
 
-/// One analog stick. Each axis runs `0..=255`: `0` is fully left or fully up,
-/// `255` fully right or fully down, and [`Stick::CENTER`] is centred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stick {
     pub x: u8,
@@ -106,85 +94,57 @@ impl Stick {
     pub const CENTER: Self = Self { x: 0x80, y: 0x80 };
 }
 
-/// Whether a Controller's battery is charging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Charge {
     Discharging,
     Charging,
     Full,
-    /// Plugged in but not charging, for example because it is too hot or too cold.
     NotCharging,
-    /// The Controller reports a charging error or a state heka does not know.
     Unknown,
 }
 
-/// A Controller's battery as it last reported it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Battery {
-    /// `0..=100`. Controllers report it in steps of 10%.
     pub percent: u8,
     pub charge: Charge,
 }
 
-/// Touchpad heights (`DS_TOUCHPAD_HEIGHT` and `DS4_TOUCHPAD_HEIGHT` in Linux
-/// `hid-playstation.c`). Both touchpads are 1920 wide.
 pub(crate) const DUALSENSE_TOUCHPAD_HEIGHT: u16 = 1080;
 pub(crate) const DUALSHOCK4_TOUCHPAD_HEIGHT: u16 = 942;
 
-/// A touchpad y moved from a pad `from` high to a pad `to` high, rounded. Going
-/// from the shorter pad to the taller one and back gives the same y.
 pub(crate) fn rescale_touch_y(y: u16, from: u16, to: u16) -> u16 {
     let (from, to) = (u32::from(from) - 1, u32::from(to) - 1);
     let y = u32::from(y).min(from);
     ((y * to + from / 2) / from) as u16
 }
 
-/// One finger on the touchpad, in DualSense touchpad units: `x` runs `0..=1919`
-/// left to right and `y` runs `0..=1079` top to bottom (`DS_TOUCHPAD_WIDTH` and
-/// `DS_TOUCHPAD_HEIGHT` in Linux `hid-playstation.c`). A DualShock 4's shorter pad
-/// is scaled to these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Finger {
-    /// The Controller's contact number, `0..=127`. It stays the same while the
-    /// finger stays down.
     pub id: u8,
     pub x: u16,
     pub y: u16,
 }
 
-/// Motion sensors, calibrated, in the units Linux `hid-playstation.c` normalises
-/// both DualShock 4 and DualSense to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Motion {
-    /// Angular rate around x (pitch), y (yaw) and z (roll), in 1/1024 degree per second.
     pub gyro: [i32; 3],
-    /// Acceleration along x, y and z, in 1/8192 g.
     pub accel: [i32; 3],
-    /// When the sensors were sampled, in ticks of 1/3 µs (the DualSense's own
-    /// sensor clock), wrapping. A DualShock 4's 16-bit clock counts 16 of these
-    /// per tick, so its timestamps wrap at 2^20.
     pub timestamp: u32,
 }
 
-/// Everything a Controller reports that heka passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ControllerState {
     pub buttons: Buttons,
     pub left_stick: Stick,
     pub right_stick: Stick,
-    /// L2 travel, `0` released to `255` fully pressed.
     pub left_trigger: u8,
-    /// R2 travel, `0` released to `255` fully pressed.
     pub right_trigger: u8,
-    /// `None` when the report carries no battery level.
     pub battery: Option<Battery>,
-    /// Up to two fingers on the touchpad, in the Controller's order.
     pub touch: [Option<Finger>; 2],
     pub motion: Motion,
 }
 
 impl ControllerState {
-    /// Everything released, both sticks centred, no finger down and no motion.
     pub const NEUTRAL: Self = Self {
         buttons: Buttons::NONE,
         left_stick: Stick::CENTER,

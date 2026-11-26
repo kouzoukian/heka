@@ -1,10 +1,3 @@
-//! DualSense and DualSense Edge input and output reports.
-//!
-//! Layout source: Linux `drivers/hid/hid-playstation.c` (`struct dualsense_input_report`,
-//! the `DS_BUTTONS*` bit definitions and `ps_gamepad_hat_mapping`). Offsets below are
-//! into the USB report as read from HID, so they are one more than the struct offsets
-//! because byte 0 is the report ID (the kernel reads the struct from `&data[1]`).
-
 use crate::calibration::{self, CALIBRATION_BLOCK_LEN, Calibration};
 use crate::crc;
 use crate::feedback::{Feedback, PlayerLights};
@@ -12,40 +5,30 @@ use crate::link::ReportError;
 use crate::mac::MacAddress;
 use crate::state::{Battery, Buttons, Charge, ControllerState, Finger, Motion, Stick};
 
-/// Sony's USB vendor ID.
 pub const VENDOR_ID: u16 = 0x054C;
-/// DualSense product ID.
 pub const PRODUCT_ID_DUALSENSE: u16 = 0x0CE6;
-/// DualSense Edge product ID (`hid-playstation.c`: "DualSense Edge (product 0x0df2)").
 pub const PRODUCT_ID_DUALSENSE_EDGE: u16 = 0x0DF2;
 
-/// Report ID of the USB input report (`DS_INPUT_REPORT_USB`).
 pub const USB_INPUT_REPORT_ID: u8 = 0x01;
-/// Length of the USB input report including its report ID (`DS_INPUT_REPORT_USB_SIZE`).
 pub const USB_INPUT_REPORT_LEN: usize = 64;
 
-/// True for a product ID that heka reads as a DualSense.
 pub fn is_dualsense(vendor_id: u16, product_id: u16) -> bool {
     vendor_id == VENDOR_ID && matches!(product_id, PRODUCT_ID_DUALSENSE | PRODUCT_ID_DUALSENSE_EDGE)
 }
 
-// Byte offsets in the USB report (struct field offset + 1 for the report ID).
-const LEFT_X: usize = 1; // x
-const LEFT_Y: usize = 2; // y
-const RIGHT_X: usize = 3; // rx
-const RIGHT_Y: usize = 4; // ry
-const LEFT_TRIGGER: usize = 5; // z
-const RIGHT_TRIGGER: usize = 6; // rz
-// Byte 7 is seq_number.
-const BUTTONS_0: usize = 8; // buttons[0]
-const BUTTONS_1: usize = 9; // buttons[1]
-const BUTTONS_2: usize = 10; // buttons[2]
-const STATUS_0: usize = 53; // status[0]
+const LEFT_X: usize = 1;
+const LEFT_Y: usize = 2;
+const RIGHT_X: usize = 3;
+const RIGHT_Y: usize = 4;
+const LEFT_TRIGGER: usize = 5;
+const RIGHT_TRIGGER: usize = 6;
+const BUTTONS_0: usize = 8;
+const BUTTONS_1: usize = 9;
+const BUTTONS_2: usize = 10;
+const STATUS_0: usize = 53;
 
-/// `DS_BUTTONS0_HAT_SWITCH`: the low nibble of buttons[0].
 const HAT_MASK: u8 = 0x0F;
 
-/// Bit masks from the `DS_BUTTONS0_*`, `DS_BUTTONS1_*` and `DS_BUTTONS2_*` definitions.
 const BUTTON_BITS: [(usize, u8, Buttons); 15] = [
     (BUTTONS_0, 1 << 4, Buttons::SQUARE),
     (BUTTONS_0, 1 << 5, Buttons::CROSS),
@@ -64,8 +47,6 @@ const BUTTON_BITS: [(usize, u8, Buttons); 15] = [
     (BUTTONS_2, 1 << 2, Buttons::MUTE),
 ];
 
-/// Every button of the three button bytes, d-pad included. A DualShock 4 packs
-/// them the same way (the kernel reads both with the `DS_BUTTONS*` definitions).
 pub(crate) fn buttons(bytes: &[u8]) -> Buttons {
     let mut buttons = hat_to_dpad(bytes[0] & HAT_MASK);
     for (byte, mask, button) in BUTTON_BITS {
@@ -74,8 +55,6 @@ pub(crate) fn buttons(bytes: &[u8]) -> Buttons {
     buttons
 }
 
-/// The d-pad for a hat value, clockwise from 0 = up (`ps_gamepad_hat_mapping`).
-/// Any value past 7 means released.
 fn hat_to_dpad(hat: u8) -> Buttons {
     match hat {
         0 => Buttons::DPAD_UP,
@@ -90,23 +69,14 @@ fn hat_to_dpad(hat: u8) -> Buttons {
     }
 }
 
-/// Feature report holding the Controller's MAC address (`DS_FEATURE_REPORT_PAIRING_INFO`).
-/// Reading it sends nothing to the Controller but the request.
 pub const PAIRING_INFO_REPORT_ID: u8 = 0x09;
-/// Length of the pairing-info feature report over USB, report ID included
-/// (`DS_FEATURE_REPORT_PAIRING_INFO_SIZE`). Over Bluetooth it also carries a CRC.
 pub const PAIRING_INFO_LEN: usize = 20;
-/// Offset of the 6 MAC bytes: `dualsense_get_mac_address` copies them from `&buf[1]`,
-/// least significant byte first (`mac_address` is "stored in little endian order").
 const PAIRING_INFO_MAC: usize = 1;
 
-/// Reads the MAC address from a pairing-info feature report, report ID byte included.
 pub fn parse_pairing_info(report: &[u8]) -> Result<MacAddress, ReportError> {
     mac_after_report_id(report, PAIRING_INFO_REPORT_ID)
 }
 
-/// The MAC address of a pairing-info feature report with report ID `id`, where a
-/// DualSense and a DualShock 4 both put it.
 pub(crate) fn mac_after_report_id(report: &[u8], id: u8) -> Result<MacAddress, ReportError> {
     if report.len() < PAIRING_INFO_MAC + 6 {
         return Err(ReportError::TooShort { len: report.len() });
@@ -116,39 +86,29 @@ pub(crate) fn mac_after_report_id(report: &[u8], id: u8) -> Result<MacAddress, R
     }
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&report[PAIRING_INFO_MAC..PAIRING_INFO_MAC + 6]);
-    // The label order is the reverse of the little-endian bytes (the kernel prints it with `%pMR`).
     mac.reverse();
     Ok(MacAddress(mac))
 }
 
-/// Feature report holding the motion sensors' factory calibration
-/// (`DS_FEATURE_REPORT_CALIBRATION`). Reading it sends nothing to the Controller
-/// but the request.
 pub const CALIBRATION_REPORT_ID: u8 = 0x05;
-/// Its length including the report ID (`DS_FEATURE_REPORT_CALIBRATION_SIZE`).
 pub const CALIBRATION_REPORT_LEN: usize = 41;
 
-/// Reads the calibration feature report, report ID byte included. Axes whose
-/// data is unusable get the kernel's full-scale fallback.
 pub fn parse_calibration(report: &[u8]) -> Result<Calibration, ReportError> {
     calibration::check_report(report, CALIBRATION_REPORT_ID, CALIBRATION_BLOCK_LEN)?;
     Ok(Calibration::from_paired_block(report))
 }
 
-const GYRO: usize = 16; // gyro[3], le16 each
-const ACCEL: usize = 22; // accel[3], le16 each
-const SENSOR_TIMESTAMP: usize = 28; // sensor_timestamp, le32
-const TOUCH_POINTS: usize = 33; // points[2], 4 bytes each
+const GYRO: usize = 16;
+const ACCEL: usize = 22;
+const SENSOR_TIMESTAMP: usize = 28;
+const TOUCH_POINTS: usize = 33;
 
-/// `DS_TOUCH_POINT_INACTIVE`: set in a touch point's contact byte when no finger is down.
 const TOUCH_INACTIVE: u8 = 1 << 7;
 
 fn le16(report: &[u8], offset: usize) -> i16 {
     i16::from_le_bytes([report[offset], report[offset + 1]])
 }
 
-/// One touch point: contact, x_lo, x_hi (low nibble) | y_lo (high nibble), y_hi
-/// (`struct dualsense_touch_point`, `DS_TOUCH_POINT_X`, `DS_TOUCH_POINT_Y`).
 pub(crate) fn touch_point(point: &[u8]) -> Option<Finger> {
     if point[0] & TOUCH_INACTIVE != 0 {
         return None;
@@ -160,8 +120,6 @@ pub(crate) fn touch_point(point: &[u8]) -> Option<Finger> {
     })
 }
 
-/// Reads a DualSense USB input report, report ID byte included, applying the
-/// Controller's motion calibration.
 pub fn parse_usb_input_report(
     report: &[u8],
     calibration: &Calibration,
@@ -203,19 +161,10 @@ pub fn parse_usb_input_report(
     })
 }
 
-/// Report ID of the full Bluetooth input report (`DS_INPUT_REPORT_BT`).
 pub const BT_INPUT_REPORT_ID: u8 = 0x31;
-/// Its length including the report ID and CRC (`DS_INPUT_REPORT_BT_SIZE`).
 pub const BT_INPUT_REPORT_LEN: usize = 78;
-/// Where `struct dualsense_input_report` starts: `dualsense_parse_report` reads it
-/// from `&data[2]` over Bluetooth and from `&data[1]` over USB.
 const BT_INPUT_COMMON: usize = 2;
 
-/// Reads a DualSense full Bluetooth input report, report ID byte and CRC included.
-///
-/// The input itself is laid out as in the USB report, so it is read by
-/// [`parse_usb_input_report`] from a USB-shaped copy: whatever that reads, a
-/// Bluetooth Link reads too.
 pub fn parse_bluetooth_input_report(
     report: &[u8],
     calibration: &Calibration,
@@ -236,12 +185,10 @@ pub fn parse_bluetooth_input_report(
     parse_usb_input_report(&usb, calibration)
 }
 
-/// Reads `status[0]` as `dualsense_parse_report` does.
 fn battery(status: u8) -> Battery {
-    let capacity = status & 0x0F; // DS_STATUS0_BATTERY_CAPACITY
+    let capacity = status & 0x0F;
     let level = (capacity * 10 + 5).min(100);
     match status >> 4 {
-        // DS_STATUS0_CHARGING
         0x0 => Battery {
             percent: level,
             charge: Charge::Discharging,
@@ -254,12 +201,10 @@ fn battery(status: u8) -> Battery {
             percent: 100,
             charge: Charge::Full,
         },
-        // Voltage or temperature out of range, or a temperature error.
         0xA | 0xB => Battery {
             percent: 0,
             charge: Charge::NotCharging,
         },
-        // 0xF is a charging error.
         _ => Battery {
             percent: 0,
             charge: Charge::Unknown,
@@ -267,34 +212,25 @@ fn battery(status: u8) -> Battery {
     }
 }
 
-// Output report. Layout source: Linux `hid-playstation.c` (`struct
-// dualsense_output_report_usb`, `struct dualsense_output_report_common`, the
-// `DS_OUTPUT_VALID_FLAG*` bits and `dualsense_output_worker`). Offsets are into the
-// USB report: the common block starts at byte 1, after the report ID.
-
-/// Report ID of the USB output report (`DS_OUTPUT_REPORT_USB`).
 pub const USB_OUTPUT_REPORT_ID: u8 = 0x02;
-/// Length of the USB output report including its report ID (`DS_OUTPUT_REPORT_USB_SIZE`).
 pub const USB_OUTPUT_REPORT_LEN: usize = 63;
 
-const OUT_VALID_FLAG0: usize = 1; // common.valid_flag0
-const OUT_MOTOR_RIGHT: usize = 3; // common.motor_right
-const OUT_MOTOR_LEFT: usize = 4; // common.motor_left
-const OUT_VALID_FLAG1: usize = 2; // common.valid_flag1
-const OUT_VALID_FLAG2: usize = 39; // common.valid_flag2
-const OUT_PLAYER_LEDS: usize = 44; // common.player_leds
-const OUT_LIGHTBAR_RED: usize = 45; // common.lightbar_red
-const OUT_LIGHTBAR_GREEN: usize = 46; // common.lightbar_green
-const OUT_LIGHTBAR_BLUE: usize = 47; // common.lightbar_blue
+const OUT_VALID_FLAG0: usize = 1;
+const OUT_MOTOR_RIGHT: usize = 3;
+const OUT_MOTOR_LEFT: usize = 4;
+const OUT_VALID_FLAG1: usize = 2;
+const OUT_VALID_FLAG2: usize = 39;
+const OUT_PLAYER_LEDS: usize = 44;
+const OUT_LIGHTBAR_RED: usize = 45;
+const OUT_LIGHTBAR_GREEN: usize = 46;
+const OUT_LIGHTBAR_BLUE: usize = 47;
 
-const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0; // DS_OUTPUT_VALID_FLAG0_COMPATIBLE_VIBRATION
-const FLAG0_HAPTICS_SELECT: u8 = 1 << 1; // DS_OUTPUT_VALID_FLAG0_HAPTICS_SELECT
-const FLAG1_LIGHTBAR_CONTROL_ENABLE: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG1_LIGHTBAR_CONTROL_ENABLE
-const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG2_COMPATIBLE_VIBRATION2
-const FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE: u8 = 1 << 4; // DS_OUTPUT_VALID_FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE
+const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0;
+const FLAG0_HAPTICS_SELECT: u8 = 1 << 1;
+const FLAG1_LIGHTBAR_CONTROL_ENABLE: u8 = 1 << 2;
+const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2;
+const FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE: u8 = 1 << 4;
 
-/// Which of the five player lights show, one bit each from bit 0 on the left
-/// (`player_ids` in `dualsense_set_player_leds`).
 fn player_leds(lights: PlayerLights) -> u8 {
     match lights {
         PlayerLights::Off => 0,
@@ -305,33 +241,17 @@ fn player_leds(lights: PlayerLights) -> u8 {
     }
 }
 
-/// How a DualSense imitates classic two-motor rumble with its haptic actuators.
-///
-/// The kernel notes that newer firmware made `CompatibleV2` the default on
-/// PlayStation and other platforms because it feels like classic rumble, and that
-/// both devices still accept `Compatible`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RumbleMode {
-    /// The original rumble emulation, accepted by every firmware.
     Compatible,
-    /// The revised emulation: DualSense update version 2.21 and later, every DualSense Edge.
     CompatibleV2,
 }
 
-/// Report ID of the firmware info feature report (`DS_FEATURE_REPORT_FIRMWARE_INFO`).
 pub const FIRMWARE_INFO_REPORT_ID: u8 = 0x20;
-/// Its length including the report ID (`DS_FEATURE_REPORT_FIRMWARE_INFO_SIZE`).
 pub const FIRMWARE_INFO_REPORT_LEN: usize = 64;
-/// Offset of the little-endian update version (`dualsense_get_firmware_info`).
 const UPDATE_VERSION: usize = 44;
-/// Update version 2.21, the first with v2 rumble (`DS_FEATURE_VERSION(2, 21)`).
 const UPDATE_VERSION_V2_RUMBLE: u16 = 0x0215;
 
-/// The rumble mode for a DualSense, from its product ID and its firmware info
-/// feature report (report ID byte included), as `dualsense_create` decides it.
-///
-/// A DualSense whose firmware info cannot be read gets `Compatible`, which every
-/// firmware accepts.
 pub fn rumble_mode(product_id: u16, firmware_info: Option<&[u8]>) -> RumbleMode {
     if product_id == PRODUCT_ID_DUALSENSE_EDGE {
         return RumbleMode::CompatibleV2;
@@ -345,14 +265,6 @@ pub fn rumble_mode(product_id: u16, firmware_info: Option<&[u8]>) -> RumbleMode 
     }
 }
 
-/// Builds the USB output report that sets the rumble motors and, when the
-/// Feedback has them, the lightbar colour and the player lights. Nothing else on
-/// the Controller changes.
-///
-/// The large (Xbox left) motor drives the DualSense left motor, as the kernel maps
-/// a force-feedback effect's strong magnitude to `motor_left`. Over USB the
-/// lightbar takes a colour without the setup step Bluetooth needs (the kernel's
-/// `dualsense_reset_leds` comment).
 pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTPUT_REPORT_LEN] {
     let mut report = [0u8; USB_OUTPUT_REPORT_LEN];
     report[0] = USB_OUTPUT_REPORT_ID;
@@ -376,26 +288,15 @@ pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTP
     report
 }
 
-/// Report ID of the Bluetooth output report (`DS_OUTPUT_REPORT_BT`).
 pub const BT_OUTPUT_REPORT_ID: u8 = 0x31;
-/// Its length including the report ID and CRC (`DS_OUTPUT_REPORT_BT_SIZE`).
 pub const BT_OUTPUT_REPORT_LEN: usize = 78;
-/// The tag byte `dualsense_init_output_report` always sets (`DS_OUTPUT_TAG`).
 const BT_OUTPUT_TAG: u8 = 0x10;
-const OUT_BT_SEQ_TAG: usize = 1; // seq_tag: sequence number in bits 4..8 (`DS_OUTPUT_SEQ_NO`)
-const OUT_BT_TAG: usize = 2; // tag
-/// Where `struct dualsense_output_report_common` starts: after the report ID and two header bytes.
+const OUT_BT_SEQ_TAG: usize = 1;
+const OUT_BT_TAG: usize = 2;
 const OUT_BT_COMMON: usize = 3;
-/// `sizeof(struct dualsense_output_report_common)`.
 const OUT_COMMON_LEN: usize = 47;
-/// How many sequence numbers a Bluetooth output report cycles through.
 pub const BT_OUTPUT_SEQUENCE_LEN: u8 = 16;
 
-/// Builds the Bluetooth output report that shows this Feedback, with sequence
-/// number `seq` (`0..16`) and its CRC.
-///
-/// The common block is the one [`usb_output_report`] builds, so whatever that
-/// sets on the Controller a Bluetooth Link sets too.
 pub fn bluetooth_output_report(
     feedback: &Feedback,
     mode: RumbleMode,
@@ -404,13 +305,10 @@ pub fn bluetooth_output_report(
     bluetooth_from_usb(&usb_output_report(feedback, mode), seq)
 }
 
-const OUT_LIGHTBAR_SETUP: usize = 42; // common.lightbar_setup
-const FLAG2_LIGHTBAR_SETUP_CONTROL_ENABLE: u8 = 1 << 1; // DS_OUTPUT_VALID_FLAG2_LIGHTBAR_SETUP_CONTROL_ENABLE
-const LIGHTBAR_SETUP_LIGHT_OUT: u8 = 1 << 1; // DS_OUTPUT_LIGHTBAR_SETUP_LIGHT_OUT
+const OUT_LIGHTBAR_SETUP: usize = 42;
+const FLAG2_LIGHTBAR_SETUP_CONTROL_ENABLE: u8 = 1 << 1;
+const LIGHTBAR_SETUP_LIGHT_OUT: u8 = 1 << 1;
 
-/// Builds the Bluetooth report that takes the lightbar over from the DualSense,
-/// fading out the colour it shows on its own, so that it accepts colours after
-/// this (`dualsense_reset_leds`). Nothing else changes.
 pub fn bluetooth_lightbar_setup_report(seq: u8) -> [u8; BT_OUTPUT_REPORT_LEN] {
     let mut usb = [0u8; USB_OUTPUT_REPORT_LEN];
     usb[0] = USB_OUTPUT_REPORT_ID;
@@ -419,7 +317,6 @@ pub fn bluetooth_lightbar_setup_report(seq: u8) -> [u8; BT_OUTPUT_REPORT_LEN] {
     bluetooth_from_usb(&usb, seq)
 }
 
-/// The Bluetooth report carrying a USB report's common block, with its header and CRC.
 fn bluetooth_from_usb(usb: &[u8; USB_OUTPUT_REPORT_LEN], seq: u8) -> [u8; BT_OUTPUT_REPORT_LEN] {
     let mut report = [0u8; BT_OUTPUT_REPORT_LEN];
     report[0] = BT_OUTPUT_REPORT_ID;
