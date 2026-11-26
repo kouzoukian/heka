@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use heka_core::calibration::Calibration;
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
 use heka_core::link::{LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
@@ -45,7 +46,7 @@ struct FakeLink(LinkHandle);
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb
+        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -72,6 +73,7 @@ impl LinkReader for FakeLink {
 /// What one Virtual Controller was shown.
 #[derive(Default)]
 struct Shown {
+    output_type: OutputType,
     updates: Vec<ControllerState>,
     unplugged: bool,
 }
@@ -108,13 +110,16 @@ impl FakeBus {
 }
 
 impl VirtualBus for FakeBus {
-    fn plug(&self, _: OutputType) -> Result<Box<dyn VirtualController>, VirtualError> {
+    fn plug(&self, output_type: OutputType) -> Result<Box<dyn VirtualController>, VirtualError> {
         let mut record = self.0.lock().unwrap();
         if record.refuse_plugs > 0 {
             record.refuse_plugs -= 1;
             return Err(VirtualError::new("no free slot"));
         }
-        let shown = Arc::new(Mutex::new(Shown::default()));
+        let shown = Arc::new(Mutex::new(Shown {
+            output_type,
+            ..Shown::default()
+        }));
         record.plugged.push(Arc::clone(&shown));
         Ok(Box::new(FakeController(shown)))
     }
@@ -124,7 +129,7 @@ struct FakeController(Arc<Mutex<Shown>>);
 
 impl VirtualController for FakeController {
     fn output_type(&self) -> OutputType {
-        OutputType::Xbox
+        self.0.lock().unwrap().output_type
     }
 
     fn update(&mut self, state: &ControllerState) -> Result<(), VirtualError> {
@@ -367,5 +372,54 @@ fn quitting_removes_every_virtual_controller() {
     let changes = supervisor.quit();
     assert_eq!(changes.len(), 2);
     assert!(bus.unplugged(0) && bus.unplugged(1));
+    assert!(supervisor.controllers().is_empty());
+}
+
+#[test]
+fn changing_the_output_type_bridges_the_same_link_to_a_new_virtual_controller() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    let changes = supervisor.set_output_type(mac(1), OutputType::Ps4, t0);
+    assert_eq!(
+        changes,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Ps4
+            },
+        ]
+    );
+    assert!(bus.unplugged(0));
+    assert_eq!(bus.plugged(), 2);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+    assert_eq!(supervisor.controllers()[0].output_type, OutputType::Ps4);
+    assert_eq!(
+        supervisor.settings().controller(mac(1)).output_type,
+        OutputType::Ps4
+    );
+
+    link.send(cross());
+    wait_until(|| bus.last_state(1).is_some());
+    assert_eq!(bus.last_state(1).unwrap().buttons, Buttons::CROSS);
+}
+
+#[test]
+fn heka_never_bridges_its_own_ps4_virtual_controller() {
+    // ViGEmBus gives every virtual DualShock 4 a MAC address under its own
+    // vendor prefix C0:13:37 (`GenerateRandomMacAddress` in `sys/Ds4Pdo.cpp`).
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let ours = MacAddress([0xC0, 0x13, 0x37, 0x12, 0x34, 0x56]);
+
+    let (_, changes) = supervisor.link_arrived(ours, LinkHandle::default().reader(), t0);
+    assert_eq!(changes, []);
+    assert_eq!(bus.plugged(), 0);
     assert!(supervisor.controllers().is_empty());
 }
