@@ -10,6 +10,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use gpui::{App, AsyncApp};
+use heka_app::text;
 use heka_core::autostart::{Autostart, RunEntry};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -34,14 +35,14 @@ pub fn install<E: RunEntry + 'static>(
     show: impl Fn(&mut App) + 'static,
 ) -> Result<(), String> {
     let items = Items {
-        open: MenuItem::new("Open heka", true, None),
+        open: MenuItem::new(text::TRAY_OPEN, true, None),
         start_with_windows: CheckMenuItem::new(
-            "Start with Windows",
+            text::START_WITH_WINDOWS,
             true,
             autostart.is_enabled(),
             None,
         ),
-        quit: MenuItem::new("Quit", true, None),
+        quit: MenuItem::new(text::QUIT, true, None),
     };
     let menu = Menu::new();
     menu.append_items(&[
@@ -53,7 +54,7 @@ pub fn install<E: RunEntry + 'static>(
     .map_err(|error| error.to_string())?;
     let tray = TrayIconBuilder::new()
         .with_icon(icon())
-        .with_tooltip("heka")
+        .with_tooltip(text::APP_NAME)
         .with_menu(Box::new(menu))
         // A left click opens the window; the menu is on the right button.
         .with_menu_on_left_click(false)
