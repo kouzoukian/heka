@@ -1,0 +1,18 @@
+[package]
+name = "heka-app"
+description = "Lets games treat a PlayStation controller as an Xbox or PS4 controller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "heka"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui_platform.workspace = true
