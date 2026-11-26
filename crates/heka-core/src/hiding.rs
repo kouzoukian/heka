@@ -8,7 +8,9 @@
 //!
 //! [`Hiding`] is the seam a Bridge supervisor calls: [`Hiding::hide`] when a Link of a
 //! Bridged or Held Controller is seen, [`Hiding::release`] when that Controller's Bridge
-//! ends, [`Hiding::restore_all`] on stop or quit, and [`Hiding::recover`] once at start.
+//! ends, [`Hiding::restore_all`] on stop or quit, and [`Hiding::recover`] then
+//! [`Hiding::allow_heka`] at start, before looking for Controllers: a Controller another
+//! tool hid cannot even be found by heka until heka is allowed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -269,6 +271,9 @@ struct Inner {
     app: String,
     /// The Links each owner wants Hidden, by owner key.
     wanted: BTreeMap<String, BTreeSet<String>>,
+    /// heka wants to stay allowed until [`Hiding::restore_all`], whether or not
+    /// anything is Hidden, so it can see Controllers that other tools hid.
+    stay_allowed: bool,
 }
 
 impl Hiding {
@@ -281,8 +286,20 @@ impl Hiding {
                 journal: Journal::default(),
                 app,
                 wanted: BTreeMap::new(),
+                stay_allowed: false,
             }),
         }
+    }
+
+    /// Adds heka to HidHide's allowed applications, so that it can find and open a
+    /// Controller another tool left hidden. Call at start, after [`Hiding::recover`]
+    /// and before looking for Controllers; on failure, call again later. heka stays
+    /// allowed until [`Hiding::restore_all`], which removes it only if heka added it.
+    pub fn allow_heka(&self) -> Result<(), HidingError> {
+        let mut inner = self.lock();
+        inner.stay_allowed = true;
+        let config = inner.hidhide.read()?;
+        inner.allow(&config)
     }
 
     /// Hides one Link of a Controller. `owner` is any stable key for the Controller;
@@ -311,6 +328,7 @@ impl Hiding {
     pub fn restore_all(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner.wanted.clear();
+        inner.stay_allowed = false;
         inner.undo()
     }
 
@@ -332,15 +350,8 @@ impl Inner {
     fn hide(&mut self, device: &DeviceInstancePath) -> Result<(), HidingError> {
         let config = self.hidhide.read()?;
 
-        // heka is allowed first, so it never loses sight of a Controller it Hides. With an
-        // inverted list, listing heka would deny it instead, so heka stays off the list.
-        if !config.inverse && !contains(&config.allowed_apps, &self.app) {
-            self.journal.allowed_app = Some(self.app.clone());
-            self.save()?;
-            let mut apps = config.allowed_apps.clone();
-            apps.push(self.app.clone());
-            self.hidhide.set_allowed_apps(&apps)?;
-        }
+        // heka is allowed first, so it never loses sight of a Controller it Hides.
+        self.allow(&config)?;
 
         // A device that is already hidden belongs to the player or another tool: it is
         // not journalled, so heka never removes it.
@@ -362,6 +373,20 @@ impl Inner {
         Ok(())
     }
 
+    /// Adds heka to the allowed applications unless it is already there. With an
+    /// inverted list, listing heka would deny it instead, so heka stays off the list.
+    fn allow(&mut self, config: &HidHideConfig) -> Result<(), HidingError> {
+        if config.inverse || contains(&config.allowed_apps, &self.app) {
+            return Ok(());
+        }
+        self.journal.allowed_app = Some(self.app.clone());
+        self.save()?;
+        let mut apps = config.allowed_apps.clone();
+        apps.push(self.app.clone());
+        self.hidhide.set_allowed_apps(&apps)?;
+        Ok(())
+    }
+
     /// Undoes every journalled change no owner still needs, in the reverse order of
     /// [`Inner::hide`]. Each change is made before it leaves the journal, so a crash in
     /// between leaves an entry whose undo finds nothing left to do.
@@ -376,7 +401,7 @@ impl Inner {
             .cloned()
             .collect();
         let undo_cloak = nothing_wanted && self.journal.cloak_was_off;
-        let undo_app = if nothing_wanted {
+        let undo_app = if nothing_wanted && !self.stay_allowed {
             self.journal.allowed_app.clone()
         } else {
             None

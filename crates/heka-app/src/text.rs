@@ -158,6 +158,10 @@ pub fn not_hidden(error: &str) -> String {
     format!("{error}. Games may see the Controller twice.")
 }
 
+pub fn not_allowed(error: &str) -> String {
+    format!("Controllers hidden by other tools cannot be found yet: {error}")
+}
+
 pub fn cannot_restore(error: &str) -> String {
     format!("Could not restore the Controller: {error}")
 }
