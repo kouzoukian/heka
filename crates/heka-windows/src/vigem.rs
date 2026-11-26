@@ -68,14 +68,12 @@ impl VirtualController for VigemPs4 {
         self.target.unplug().map_err(VirtualError::new)
     }
 
-    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
-        match self.target.register_notification() {
-            Ok(receiver) => Some(Box::new(VigemPs4Feedback(receiver))),
-            Err(error) => {
-                eprintln!("heka: no Feedback from the Virtual Controller: {error}");
-                None
-            }
-        }
+    fn feedback(&mut self) -> Result<Option<Box<dyn FeedbackSource>>, VirtualError> {
+        let receiver = self
+            .target
+            .register_notification()
+            .map_err(VirtualError::new)?;
+        Ok(Some(Box::new(VigemPs4Feedback(receiver))))
     }
 }
 
@@ -121,14 +119,12 @@ impl VirtualController for VigemXbox {
         self.target.unplug().map_err(VirtualError::new)
     }
 
-    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
-        match self.target.register_notification() {
-            Ok(receiver) => Some(Box::new(VigemXboxFeedback(receiver))),
-            Err(error) => {
-                eprintln!("heka: no Feedback from the Virtual Controller: {error}");
-                None
-            }
-        }
+    fn feedback(&mut self) -> Result<Option<Box<dyn FeedbackSource>>, VirtualError> {
+        let receiver = self
+            .target
+            .register_notification()
+            .map_err(VirtualError::new)?;
+        Ok(Some(Box::new(VigemXboxFeedback(receiver))))
     }
 }
 

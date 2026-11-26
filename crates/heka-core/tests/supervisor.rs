@@ -204,8 +204,8 @@ impl VirtualController for FakeController {
         Ok(())
     }
 
-    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
-        Some(Box::new(QuietGame))
+    fn feedback(&mut self) -> Result<Option<Box<dyn FeedbackSource>>, VirtualError> {
+        Ok(Some(Box::new(QuietGame)))
     }
 }
 

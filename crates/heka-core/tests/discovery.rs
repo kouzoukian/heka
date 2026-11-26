@@ -9,7 +9,7 @@ use heka_core::discovery::{
     STEADY_LINK_TIME, Unopened,
 };
 use heka_core::lifecycle::{Change, Phase};
-use heka_core::link::{ControllerModel, LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{ControllerModel, LinkKind, LinkProblem, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
 use heka_core::state::ControllerState;
@@ -80,6 +80,7 @@ impl Finder for Ports {
                 Ok(FoundLink {
                     mac: MAC,
                     reader: Box::new(FakeLink(lost)),
+                    problems: vec![no_calibration()],
                 })
             }
             Port::Refuses(error) => Err(OpenFailure::Refused(refusal(error))),
@@ -93,6 +94,10 @@ fn refusal(error: &str) -> Unopened {
         model: ControllerModel::DualSense,
         error: OpenError::Hid(error.into()),
     }
+}
+
+fn no_calibration() -> LinkProblem {
+    LinkProblem::CalibrationUnread(None)
 }
 
 #[derive(Clone, Default)]
@@ -162,7 +167,10 @@ fn a_dropped_link_that_is_still_present_is_opened_again_and_resumes() {
             },
             Found::Seen {
                 mac: MAC,
-                path: USB
+                path: USB,
+                model: ControllerModel::DualSense,
+                link: LinkKind::Usb,
+                problems: vec![no_calibration()],
             },
             Found::Changes(vec![Change::Returned { mac: MAC }]),
         ]

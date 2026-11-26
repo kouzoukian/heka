@@ -2,6 +2,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
+use heka_app::{log, text};
 use heka_core::settings::Settings;
 
 fn path() -> Option<PathBuf> {
@@ -17,7 +18,7 @@ pub fn load() -> Settings {
         Ok(text) => Settings::load(Some(&text)),
         Err(error) if error.kind() == ErrorKind::NotFound => Settings::load(None),
         Err(error) => {
-            eprintln!("heka: cannot read {}: {error}", path.display());
+            log::line(&text::log::cannot_read_settings(&path, &error.to_string()));
             Settings::load(None)
         }
     }
@@ -25,7 +26,7 @@ pub fn load() -> Settings {
 
 pub fn save(settings: &Settings) {
     let Some(path) = path() else {
-        eprintln!("heka: APPDATA is not set; settings are not saved");
+        log::line(text::log::NO_APPDATA);
         return;
     };
     let temporary = path.with_extension("json.tmp");
@@ -35,6 +36,6 @@ pub fn save(settings: &Settings) {
         .and_then(|()| fs::write(&temporary, settings.to_json()))
         .and_then(|()| fs::rename(&temporary, &path));
     if let Err(error) = result {
-        eprintln!("heka: cannot save {}: {error}", path.display());
+        log::line(&text::log::cannot_save_settings(&path, &error.to_string()));
     }
 }

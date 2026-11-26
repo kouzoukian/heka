@@ -47,6 +47,7 @@ impl OpenLink {
 pub struct Plugged {
     controller: Box<dyn VirtualController>,
     feedback: Option<Box<dyn FeedbackSource>>,
+    no_feedback: Option<String>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
     failures: Arc<VirtualFailures>,
@@ -54,10 +55,14 @@ pub struct Plugged {
 
 impl Plugged {
     pub fn new(mut controller: Box<dyn VirtualController>) -> Self {
-        let feedback = controller.feedback();
+        let (feedback, no_feedback) = match controller.feedback() {
+            Ok(feedback) => (feedback, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
         Self {
             controller,
             feedback,
+            no_feedback,
             asked: Feedback::OFF,
             preferences: Arc::default(),
             failures: Arc::default(),
@@ -69,6 +74,9 @@ impl Plugged {
     }
 
     pub fn report_to(&mut self, failures: Arc<VirtualFailures>) {
+        if let Some(error) = self.no_feedback.take() {
+            failures.record(VirtualFailure::NoFeedback(error));
+        }
         self.failures = failures;
     }
 
@@ -197,6 +205,7 @@ impl Bridge {
         let Plugged {
             controller,
             feedback: source,
+            no_feedback: _,
             asked,
             preferences,
             failures,
@@ -299,6 +308,7 @@ impl Bridge {
         Plugged {
             controller,
             feedback,
+            no_feedback: None,
             asked,
             preferences: Arc::clone(&self.preferences),
             failures: Arc::clone(&self.failures),

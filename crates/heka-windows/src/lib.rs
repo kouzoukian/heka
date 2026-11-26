@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod clock;
 pub mod drivers;
 pub mod hid;
 pub mod hidhide;

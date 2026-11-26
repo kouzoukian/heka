@@ -48,6 +48,16 @@ pub enum HidingUnavailable {
     NoImageName(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HidingChange {
+    Allowed(String),
+    Hidden(DeviceInstancePath),
+    CloakOn,
+    CloakOff,
+    Restored(DeviceInstancePath),
+    Disallowed(String),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HidHideConfig {
     pub active: bool,
@@ -226,6 +236,7 @@ struct Inner {
     wanted: BTreeMap<String, BTreeSet<String>>,
     stay_allowed: bool,
     journal_unread: bool,
+    changes: Vec<HidingChange>,
 }
 
 impl Hiding {
@@ -239,6 +250,7 @@ impl Hiding {
                 wanted: BTreeMap::new(),
                 stay_allowed: false,
                 journal_unread: false,
+                changes: Vec::new(),
             }),
         }
     }
@@ -288,6 +300,10 @@ impl Hiding {
         Ok(self.lock().hidhide.read()?.inverse)
     }
 
+    pub fn take_changes(&self) -> Vec<HidingChange> {
+        std::mem::take(&mut self.lock().changes)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -317,12 +333,14 @@ impl Inner {
             let mut devices = config.hidden_devices.clone();
             devices.push(device.as_str().to_owned());
             self.hidhide.set_hidden_devices(&devices)?;
+            self.changes.push(HidingChange::Hidden(device.clone()));
         }
 
         if !config.active {
             self.journal.cloak_was_off = true;
             self.save()?;
             self.hidhide.set_active(true)?;
+            self.changes.push(HidingChange::CloakOn);
         }
         Ok(())
     }
@@ -336,6 +354,7 @@ impl Inner {
         let mut apps = config.allowed_apps.clone();
         apps.push(self.app.clone());
         self.hidhide.set_allowed_apps(&apps)?;
+        self.changes.push(HidingChange::Allowed(self.app.clone()));
         Ok(())
     }
 
@@ -365,6 +384,7 @@ impl Inner {
         if undo_cloak {
             if config.active {
                 self.hidhide.set_active(false)?;
+                self.changes.push(HidingChange::CloakOff);
             }
             self.journal.cloak_was_off = false;
             self.save()?;
@@ -379,6 +399,13 @@ impl Inner {
                 .collect();
             if devices.len() != config.hidden_devices.len() {
                 self.hidhide.set_hidden_devices(&devices)?;
+                let restored = config
+                    .hidden_devices
+                    .iter()
+                    .filter(|device| contains(&release, device))
+                    .map(|device| DeviceInstancePath::new(device.as_str()))
+                    .map(HidingChange::Restored);
+                self.changes.extend(restored);
             }
             self.journal
                 .hidden_devices
@@ -395,6 +422,7 @@ impl Inner {
                 .collect();
             if apps.len() != config.allowed_apps.len() {
                 self.hidhide.set_allowed_apps(&apps)?;
+                self.changes.push(HidingChange::Disallowed(app));
             }
             self.journal.allowed_app = None;
             self.save()?;

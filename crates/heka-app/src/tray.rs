@@ -2,7 +2,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use gpui::{App, AsyncApp};
-use heka_app::text;
+use heka_app::{log, text};
 use heka_core::autostart::{Autostart, RunEntry};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -84,7 +84,7 @@ async fn run<E: RunEntry>(
             } else if event.id == items.start_with_windows.id() {
                 let enable = !autostart.is_enabled();
                 if let Err(error) = autostart.set_enabled(enable) {
-                    eprintln!("heka: cannot change Start with Windows: {error}");
+                    log::line(&text::log::cannot_change_autostart(&error.to_string()));
                 }
                 items.start_with_windows.set_checked(autostart.is_enabled());
             }

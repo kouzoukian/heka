@@ -25,8 +25,8 @@ pub trait VirtualController: Send {
 
     fn unplug(self: Box<Self>) -> Result<(), VirtualError>;
 
-    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
-        None
+    fn feedback(&mut self) -> Result<Option<Box<dyn FeedbackSource>>, VirtualError> {
+        Ok(None)
     }
 }
 
@@ -53,6 +53,7 @@ impl std::error::Error for VirtualError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualFailure {
+    NoFeedback(String),
     NotReleased(String),
     NotUnplugged(String),
 }

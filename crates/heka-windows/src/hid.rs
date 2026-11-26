@@ -5,8 +5,8 @@ use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 use heka_core::calibration::Calibration;
 use heka_core::discovery;
 use heka_core::link::{
-    ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
-    ReportError, ReportFormat, controller_model,
+    ControllerModel, FeedbackFormat, LinkKind, LinkProblem, LinkRead, LinkReader, LinkWriteError,
+    LinkWriter, ReportError, ReportFormat, controller_model,
 };
 use heka_core::mac::MacAddress;
 use heka_core::{dualsense, dualshock4};
@@ -50,7 +50,10 @@ pub struct ControllerLink {
 }
 
 impl ControllerLink {
-    pub fn open_path(api: &HidApi, path: &CStr) -> Result<(Self, MacAddress), OpenError> {
+    pub fn open_path(
+        api: &HidApi,
+        path: &CStr,
+    ) -> Result<(Self, MacAddress, Vec<LinkProblem>), OpenError> {
         let not_a_controller = || OpenError::Refused(discovery::OpenError::NotAController);
         let info = api
             .device_list()
@@ -71,9 +74,12 @@ impl ControllerLink {
         if mac.is_virtual_controller() {
             return Err(OpenError::VirtualController);
         }
+        let mut problems = Vec::new();
         let (format, feedback) = match model {
-            ControllerModel::DualSense => dualsense_formats(&device, info.product_id(), kind),
-            ControllerModel::DualShock4 => dualshock4_formats(&device, kind)?,
+            ControllerModel::DualSense => {
+                dualsense_formats(&device, info.product_id(), kind, &mut problems)
+            }
+            ControllerModel::DualShock4 => dualshock4_formats(&device, kind, &mut problems)?,
         };
         let writer = match api.open_path(path) {
             Ok(device) => Some(ControllerWriter {
@@ -81,7 +87,7 @@ impl ControllerLink {
                 format: feedback,
             }),
             Err(error) => {
-                eprintln!("heka: no Feedback for this Controller: {error}");
+                problems.push(LinkProblem::NoFeedback(error.to_string()));
                 None
             }
         };
@@ -91,7 +97,7 @@ impl ControllerLink {
             format,
             writer,
         };
-        Ok((link, mac))
+        Ok((link, mac, problems))
     }
 
     pub fn hid_path(&self) -> &CStr {
@@ -103,9 +109,10 @@ fn dualsense_formats(
     device: &HidDevice,
     product_id: u16,
     kind: LinkKind,
+    problems: &mut Vec<LinkProblem>,
 ) -> (ReportFormat, FeedbackFormat) {
     let firmware_info = read_firmware_info(device);
-    let calibration = read_dualsense_calibration(device);
+    let calibration = read_dualsense_calibration(device, problems);
     let mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
     match kind {
         LinkKind::Usb => (
@@ -122,14 +129,17 @@ fn dualsense_formats(
 fn dualshock4_formats(
     device: &HidDevice,
     kind: LinkKind,
+    problems: &mut Vec<LinkProblem>,
 ) -> Result<(ReportFormat, FeedbackFormat), OpenError> {
     let read = |id| feature_report(device, id, DUALSHOCK4_FEATURE_BUFFER_LEN);
     Ok(match kind {
         LinkKind::Usb => {
             let calibration = match read(dualshock4::USB_CALIBRATION_REPORT_ID) {
-                Ok(report) => usable_calibration(dualshock4::parse_usb_calibration(&report)),
+                Ok(report) => {
+                    usable_calibration(dualshock4::parse_usb_calibration(&report), problems)
+                }
                 Err(error) => {
-                    eprintln!("heka: no motion calibration for this Controller: {error}");
+                    problems.push(LinkProblem::CalibrationUnread(Some(error.to_string())));
                     Calibration::UNCALIBRATED
                 }
             };
@@ -140,7 +150,8 @@ fn dualshock4_formats(
         }
         LinkKind::Bluetooth => {
             let report = read(dualshock4::BT_CALIBRATION_REPORT_ID).map_err(hid_error)?;
-            let calibration = usable_calibration(dualshock4::parse_bluetooth_calibration(&report));
+            let calibration =
+                usable_calibration(dualshock4::parse_bluetooth_calibration(&report), problems);
             (
                 ReportFormat::DualShock4Bluetooth(calibration),
                 FeedbackFormat::DualShock4Bluetooth,
@@ -175,19 +186,22 @@ pub fn read_calibration_report(device: &HidDevice) -> Option<Vec<u8>> {
     .ok()
 }
 
-fn read_dualsense_calibration(device: &HidDevice) -> Calibration {
+fn read_dualsense_calibration(device: &HidDevice, problems: &mut Vec<LinkProblem>) -> Calibration {
     match read_calibration_report(device) {
-        Some(report) => usable_calibration(dualsense::parse_calibration(&report)),
+        Some(report) => usable_calibration(dualsense::parse_calibration(&report), problems),
         None => {
-            eprintln!("heka: no motion calibration for this Controller");
+            problems.push(LinkProblem::CalibrationUnread(None));
             Calibration::UNCALIBRATED
         }
     }
 }
 
-fn usable_calibration(parsed: Result<Calibration, ReportError>) -> Calibration {
+fn usable_calibration(
+    parsed: Result<Calibration, ReportError>,
+    problems: &mut Vec<LinkProblem>,
+) -> Calibration {
     parsed.unwrap_or_else(|error| {
-        eprintln!("heka: no motion calibration for this Controller: {error:?}");
+        problems.push(LinkProblem::CalibrationInvalid(error));
         Calibration::UNCALIBRATED
     })
 }

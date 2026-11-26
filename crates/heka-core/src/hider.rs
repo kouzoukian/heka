@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
-use crate::hiding::{DeviceInstancePath, Hiding, HidingError, HidingUnavailable, IdentifyError};
+use crate::hiding::{
+    DeviceInstancePath, Hiding, HidingChange, HidingError, HidingUnavailable, IdentifyError,
+};
 use crate::lifecycle::{Change, Removal};
 use crate::mac::MacAddress;
 
@@ -158,6 +160,13 @@ impl<K: Ord> Hider<K> {
             self.hide(mac);
         }
         self.look_for_inverse(now);
+    }
+
+    pub fn take_changes(&mut self) -> Vec<HidingChange> {
+        self.hiding
+            .as_ref()
+            .map(Hiding::take_changes)
+            .unwrap_or_default()
     }
 
     pub fn restore_all(&mut self) -> Result<(), HidingError> {

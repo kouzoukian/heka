@@ -7,6 +7,7 @@ use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
 use heka_core::state::{Battery, Charge};
 use heka_core::supervisor::BridgeError;
+use heka_core::virtual_controller::OutputType;
 
 pub const APP_NAME: &str = "heka";
 
@@ -343,6 +344,13 @@ pub fn open_error(error: &OpenError) -> String {
     }
 }
 
+pub fn output_type(output_type: OutputType) -> &'static str {
+    match output_type {
+        OutputType::Xbox => XBOX,
+        OutputType::Ps4 => PS4,
+    }
+}
+
 fn sentence(words: &str) -> String {
     format!("{}.", words.trim_end_matches('.'))
 }
@@ -368,4 +376,158 @@ pub fn not_unplugged(error: &str) -> String {
 
 pub fn cannot_draw(error: &str) -> String {
     format!("cannot draw a Controller: {error}")
+}
+
+pub mod log {
+    use std::path::Path;
+
+    use heka_core::hiding::{HidingChange, HidingError};
+    use heka_core::lifecycle::{Change, Removal};
+    use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
+    use heka_core::mac::MacAddress;
+    use heka_core::setup::{Driver, Setup};
+    use heka_core::supervisor::BridgeError;
+
+    pub const QUITTING: &str = "heka is quitting";
+    pub const LOOKING_AGAIN: &str = "Looking for Controllers again";
+    pub const TRIMMED: &str = "Older entries were left out to keep the log small.";
+    pub const NO_APPDATA: &str = "APPDATA is not set; settings are not saved";
+
+    pub fn started(version: &str, in_tray: bool) -> String {
+        if in_tray {
+            format!("heka {version} started in the tray")
+        } else {
+            format!("heka {version} started")
+        }
+    }
+
+    pub fn panicked(thread: Option<&str>, panic: &str) -> String {
+        let thread = thread.unwrap_or("without a name");
+        format!("Panic on thread {thread}: {panic}")
+    }
+
+    pub fn repeated(message: &str, left_out: u32) -> String {
+        format!("{message} (left out {left_out} repeats)")
+    }
+
+    pub fn cannot_write(error: &str) -> String {
+        format!("cannot write the log: {error}")
+    }
+
+    pub fn drivers(setup: &Setup) -> Vec<String> {
+        let missing = setup.missing();
+        [Driver::ViGEmBus, Driver::HidHide]
+            .into_iter()
+            .map(|driver| match missing.iter().find(|m| m.driver == driver) {
+                Some(missing) => super::setup::heading(missing),
+                None => format!("{} found", super::setup::name(driver)),
+            })
+            .collect()
+    }
+
+    pub fn change(change: &Change) -> String {
+        match *change {
+            Change::Bridged { mac, output_type } => {
+                let output_type = super::output_type(output_type);
+                format!("{mac}: Bridged to a Virtual Controller ({output_type})")
+            }
+            Change::Held { mac } => format!("{mac}: Held, every Link is lost"),
+            Change::Returned { mac } => format!("{mac}: returned while Held"),
+            Change::Removed { mac, why } => {
+                let why = match why {
+                    Removal::Stopped => "Stopped",
+                    Removal::Expired => "the Held time is over",
+                    Removal::Failed => "the Bridge failed",
+                    Removal::OutputTypeChanged => "the Output Type changed",
+                    Removal::Quit => "heka is quitting",
+                };
+                format!("{mac}: Virtual Controller removed, {why}")
+            }
+        }
+    }
+
+    pub fn link_found(mac: MacAddress, model: ControllerModel, link: LinkKind) -> String {
+        let model = super::controller(model);
+        let link = super::link(Some(link));
+        format!("{mac}: {model} found over {link}")
+    }
+
+    pub fn link_gone(mac: MacAddress) -> String {
+        format!("{mac}: a Link is gone")
+    }
+
+    pub fn link_problem(mac: MacAddress, problem: &LinkProblem) -> String {
+        let problem = match problem {
+            LinkProblem::NoFeedback(error) => {
+                format!("no Feedback for this Controller: {error}")
+            }
+            LinkProblem::CalibrationUnread(None) => {
+                "no motion calibration for this Controller".into()
+            }
+            LinkProblem::CalibrationUnread(Some(error)) => {
+                format!("no motion calibration for this Controller: {error}")
+            }
+            LinkProblem::CalibrationInvalid(error) => format!(
+                "no motion calibration for this Controller: {}",
+                super::report_error(*error)
+            ),
+        };
+        format!("{mac}: {problem}")
+    }
+
+    pub fn bridge_error(mac: MacAddress, error: &BridgeError) -> String {
+        format!(
+            "{mac}: {}",
+            super::bridge_failed(&super::bridge_error(error))
+        )
+    }
+
+    pub fn hiding_change(change: &HidingChange) -> String {
+        match change {
+            HidingChange::Allowed(app) => format!("HidHide: allowed {app}"),
+            HidingChange::Hidden(device) => format!("HidHide: Hid {device}"),
+            HidingChange::CloakOn => "HidHide: turned hiding on".into(),
+            HidingChange::CloakOff => "HidHide: turned hiding off".into(),
+            HidingChange::Restored(device) => format!("HidHide: restored {device}"),
+            HidingChange::Disallowed(app) => {
+                format!("HidHide: removed {app} from the allowed applications")
+            }
+        }
+    }
+
+    pub fn no_longer(warning: &str) -> String {
+        format!("No longer: {warning}")
+    }
+
+    pub fn cannot_restore_on_quit(error: &HidingError) -> String {
+        format!("could not restore HidHide: {}", super::hiding_error(error))
+    }
+
+    pub fn no_virtual_feedback(error: &str) -> String {
+        format!("no Feedback from the Virtual Controller: {error}")
+    }
+
+    pub fn cannot_read_settings(path: &Path, error: &str) -> String {
+        format!("cannot read {}: {error}", path.display())
+    }
+
+    pub fn cannot_save_settings(path: &Path, error: &str) -> String {
+        format!("cannot save {}: {error}", path.display())
+    }
+
+    pub fn cannot_check_for_running_copy(error: &str) -> String {
+        format!("cannot check for a running copy: {error}")
+    }
+
+    pub fn cannot_add_tray_icon(error: &str) -> String {
+        format!("cannot add the tray icon: {error}")
+    }
+
+    pub fn cannot_update_autostart(error: &str) -> String {
+        format!("cannot update Start with Windows: {error}")
+    }
+
+    pub fn cannot_change_autostart(error: &str) -> String {
+        format!("cannot change Start with Windows: {error}")
+    }
 }

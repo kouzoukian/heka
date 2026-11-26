@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::hider::{HideError, Hider, HidingWarning, INVERSE_CHECK_INTERVAL};
 use heka_core::hiding::{
-    DeviceInstancePath, HidHide, HidHideConfig, HidHideError, Hiding, HidingError,
+    DeviceInstancePath, HidHide, HidHideConfig, HidHideError, Hiding, HidingChange, HidingError,
     HidingUnavailable, Journal, JournalError, JournalStore,
 };
 use heka_core::lifecycle::{Change, Removal};
@@ -328,4 +328,49 @@ fn without_hidhide_the_reason_is_the_only_warning() {
         )]
     );
     assert!(hider.restore_all().is_ok());
+}
+
+#[test]
+fn each_change_made_to_hidhide_is_handed_over_once() {
+    let t0 = Instant::now();
+    let world = Shared::default();
+    let mut hider = hidden_first(&world);
+
+    assert_eq!(
+        hider.take_changes(),
+        [
+            HidingChange::Allowed(HEKA.into()),
+            HidingChange::Hidden(DeviceInstancePath::new(FIRST)),
+            HidingChange::CloakOn,
+        ]
+    );
+    hider.follow(&[bridged(1)]);
+    hider.poll(t0);
+    assert_eq!(hider.take_changes(), []);
+
+    hider.follow(&[removed(1)]);
+    assert_eq!(
+        hider.take_changes(),
+        [
+            HidingChange::CloakOff,
+            HidingChange::Restored(DeviceInstancePath::new(FIRST)),
+        ]
+    );
+    hider.restore_all().unwrap();
+    assert_eq!(
+        hider.take_changes(),
+        [HidingChange::Disallowed(HEKA.into())]
+    );
+}
+
+#[test]
+fn a_change_that_hidhide_refuses_is_not_reported_as_made() {
+    let world = Shared::default();
+    let mut hider = hidden_first(&world);
+    hider.take_changes();
+    world.lock().unwrap().busy = true;
+
+    hider.follow(&[removed(1)]);
+
+    assert_eq!(hider.take_changes(), []);
 }

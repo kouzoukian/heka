@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use heka_app::report::Reporter;
 use heka_app::{log, text};
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::hider::{Hider, HidingWarning};
@@ -22,6 +23,7 @@ use hidapi::HidApi;
 use crate::settings_file;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const LOG_FLUSH: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -122,6 +124,7 @@ impl Bridging {
         if let Some(thread) = thread {
             let _ = thread.join();
         }
+        log::flush(LOG_FLUSH);
     }
 }
 
@@ -136,7 +139,9 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
     let mut supervisor = Supervisor::without_bus(settings);
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
+    log_all(text::log::drivers(&detected));
     follow(&mut hider, &changes);
+    let mut reporter = Reporter::default();
     let mut discovery = Discovery::default();
     let mut api = None;
     let mut status = Status::Starting;
@@ -178,6 +183,7 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
                 detected = found;
+                log_all(text::log::drivers(&detected));
                 changes
             }
             Err(RecvTimeoutError::Timeout) => Vec::new(),
@@ -203,55 +209,86 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             looked = Some(now);
         }
         report_failures(&mut supervisor, &mut not_unplugged);
+        log_hiding_changes(&mut hider);
         let hiding = if detected.is_missing(Driver::HidHide) {
             Vec::new()
         } else {
             hider.warnings()
         };
+        let controllers = supervisor.controllers();
+        log_all(reporter.controllers(&controllers));
+        log_all(reporter.hiding(&hiding));
+        match &status {
+            Status::HidError(error) => log_all(reporter.hid_error(Some(error))),
+            Status::Running => log_all(reporter.hid_error(None)),
+            Status::Starting => {}
+        }
         publish(
             snapshot,
             Snapshot {
                 status: status.clone(),
                 setup: Some(detected.clone()),
-                controllers: supervisor.controllers(),
+                controllers,
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),
             },
         );
     }
+    log::line(text::log::QUITTING);
     if unsaved {
         settings_file::save(supervisor.settings());
     }
     follow(&mut hider, &supervisor.quit());
     report_failures(&mut supervisor, &mut not_unplugged);
     if let Err(error) = hider.restore_all() {
-        log::line(&format!(
-            "could not restore HidHide: {}",
-            text::hiding_error(&error)
-        ));
+        log::line(&text::log::cannot_restore_on_quit(&error));
     }
+    log_hiding_changes(&mut hider);
 }
 
 fn publish(snapshot: &Mutex<Snapshot>, latest: Snapshot) {
     *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = latest;
 }
 
-fn follow(hider: &mut Hider<CString>, changes: &[Change]) {
-    for change in changes {
-        log::line(&format!("{change:?}"));
+fn log_all(messages: impl IntoIterator<Item = String>) {
+    for message in messages {
+        log::line(&message);
     }
+}
+
+fn log_hiding_changes(hider: &mut Hider<CString>) {
+    log_all(hider.take_changes().iter().map(text::log::hiding_change));
+}
+
+fn follow(hider: &mut Hider<CString>, changes: &[Change]) {
+    log_all(changes.iter().map(text::log::change));
     hider.follow(changes);
 }
 
 fn act_on(found: Vec<Found<CString>>, hider: &mut Hider<CString>) {
     for found in found {
         match found {
-            Found::Seen { mac, path } => {
+            Found::Seen {
+                mac,
+                path,
+                model,
+                link,
+                problems,
+            } => {
+                log::line(&text::log::link_found(mac, model, link));
+                log_all(
+                    problems
+                        .iter()
+                        .map(|problem| text::log::link_problem(mac, problem)),
+                );
                 let device = hidhide::device_instance_path(&path);
                 hider.link_seen(mac, path, device);
             }
-            Found::Gone { mac, path } => hider.link_gone(mac, &path),
+            Found::Gone { mac, path } => {
+                log::line(&text::log::link_gone(mac));
+                hider.link_gone(mac, &path);
+            }
             Found::Changes(changes) => follow(hider, &changes),
             Found::CannotOpen(unopened) => {
                 log::line(&text::cannot_open(&unopened));
@@ -263,6 +300,9 @@ fn act_on(found: Vec<Found<CString>>, hider: &mut Hider<CString>) {
 fn report_failures(supervisor: &mut Supervisor, not_unplugged: &mut Vec<String>) {
     for failure in supervisor.take_virtual_failures() {
         match failure {
+            VirtualFailure::NoFeedback(error) => {
+                log::line(&text::log::no_virtual_feedback(&error));
+            }
             VirtualFailure::NotReleased(error) => log::line(&text::not_released(&error)),
             VirtualFailure::NotUnplugged(error) => {
                 log::line(&text::not_unplugged(&error));
@@ -296,9 +336,10 @@ impl Finder for HidFinder<'_> {
 
     fn open(&mut self, path: &CString) -> Result<FoundLink, OpenFailure> {
         match ControllerLink::open_path(self.0, path) {
-            Ok((link, mac)) => Ok(FoundLink {
+            Ok((link, mac, problems)) => Ok(FoundLink {
                 mac,
                 reader: Box::new(link),
+                problems,
             }),
             Err(OpenError::VirtualController) => Err(OpenFailure::VirtualController),
             Err(OpenError::Refused(error)) => {

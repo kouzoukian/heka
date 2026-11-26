@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use crate::lifecycle::Change;
-use crate::link::{ControllerModel, LinkReader, ReportError};
+use crate::link::{ControllerModel, LinkKind, LinkProblem, LinkReader, ReportError};
 use crate::mac::MacAddress;
 use crate::supervisor::{LinkId, Supervisor};
 
@@ -23,6 +23,7 @@ pub trait Finder {
 pub struct FoundLink {
     pub mac: MacAddress,
     pub reader: Box<dyn LinkReader>,
+    pub problems: Vec<LinkProblem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,8 +48,17 @@ pub enum OpenFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found<P> {
-    Seen { mac: MacAddress, path: P },
-    Gone { mac: MacAddress, path: P },
+    Seen {
+        mac: MacAddress,
+        path: P,
+        model: ControllerModel,
+        link: LinkKind,
+        problems: Vec<LinkProblem>,
+    },
+    Gone {
+        mac: MacAddress,
+        path: P,
+    },
     Changes(Vec<Change>),
     CannotOpen(Unopened),
 }
@@ -177,13 +187,21 @@ impl<P: Clone + Ord> Discovery<P> {
         found: &mut Vec<Found<P>>,
     ) {
         match finder.open(&path) {
-            Ok(FoundLink { mac, reader }) => {
+            Ok(FoundLink {
+                mac,
+                reader,
+                problems,
+            }) => {
                 if let Some(trouble) = self.troubled.get_mut(&path) {
                     trouble.unopened = None;
                 }
+                let format = reader.format();
                 found.push(Found::Seen {
                     mac,
                     path: path.clone(),
+                    model: format.model(),
+                    link: format.kind(),
+                    problems,
                 });
                 let (id, changes) = supervisor.link_arrived(mac, reader, now);
                 let since = now;

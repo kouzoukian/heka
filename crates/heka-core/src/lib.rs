@@ -1,6 +1,7 @@
 pub mod autostart;
 pub mod bridge;
 pub mod calibration;
+pub mod clock;
 pub mod crc;
 pub mod discovery;
 pub mod dualsense;
