@@ -63,7 +63,11 @@ fn executable(subsystem: u16, imports: &[&str], delay_imports: &[&str]) -> Vec<u
 fn accepts_a_windowed_program_that_imports_only_windows_dlls() {
     let exe = executable(
         GUI,
-        &["KERNEL32.dll", "api-ms-win-core-synch-l1-2-0.dll"],
+        &[
+            "KERNEL32.dll",
+            "api-ms-win-core-synch-l1-2-0.dll",
+            "gdiplus.dll",
+        ],
         &["user32.dll"],
     );
 
@@ -74,6 +78,7 @@ fn accepts_a_windowed_program_that_imports_only_windows_dlls() {
         [
             "KERNEL32.dll",
             "api-ms-win-core-synch-l1-2-0.dll",
+            "gdiplus.dll",
             "user32.dll"
         ]
     );

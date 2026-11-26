@@ -17,7 +17,8 @@ const DELAY_IMPORT_TABLE: usize = 13;
 /// The DLLs of Windows 10 and 11 that heka.exe may import. The Visual C++ runtime
 /// is not one of them. Add a DLL only if every Windows 10 and 11 PC has it.
 /// `icuuc.dll` came with Windows 10 version 1703, the newest of these.
-const WINDOWS_DLLS: [&str; 23] = [
+/// `gdiplus.dll` draws the icons of the menus gpui-component opens on text fields.
+const WINDOWS_DLLS: [&str; 24] = [
     "advapi32.dll",
     "bcryptprimitives.dll",
     "cfgmgr32.dll",
@@ -29,6 +30,7 @@ const WINDOWS_DLLS: [&str; 23] = [
     "dwrite.dll",
     "dxgi.dll",
     "gdi32.dll",
+    "gdiplus.dll",
     "icuuc.dll",
     "imm32.dll",
     "kernel32.dll",
