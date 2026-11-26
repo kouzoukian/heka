@@ -223,6 +223,7 @@ mod tests {
             right_stick: Stick { x: 3, y: 4 },
             left_trigger: 5,
             right_trigger: 6,
+            battery: None,
             touch: [
                 Some(Finger {
                     id: 9,
