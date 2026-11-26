@@ -217,7 +217,11 @@ impl Bridge {
         let (source, writer, asked) = match self.feedback.take().map(JoinHandle::join) {
             Some(Ok((source, writer, asked))) => (Some(source), Some(writer), asked),
             Some(Err(panic)) => std::panic::resume_unwind(panic),
-            None => (self.spare_source.take(), self.spare_writer.take(), self.asked),
+            None => (
+                self.spare_source.take(),
+                self.spare_writer.take(),
+                self.asked,
+            ),
         };
         let end = match self.thread.take()?.join() {
             Ok(end) => end,
