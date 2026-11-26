@@ -34,8 +34,8 @@ pub enum Phase {
     Held { until: Instant },
     /// Connected, and the player told heka not to Bridge it.
     Stopped,
-    /// Connected and wanting a Bridge, but all [`MAX_BRIDGES`] are taken or the
-    /// last attempt failed.
+    /// Connected and wanting a Bridge, but all [`MAX_BRIDGES`] are taken, the
+    /// last attempt failed, or Virtual Controllers cannot be made.
     Waiting,
 }
 
@@ -86,6 +86,8 @@ struct Entry {
 pub struct Lifecycle {
     settings: Settings,
     entries: Vec<Entry>,
+    /// Virtual Controllers cannot be made yet, so nothing is Bridged.
+    bridging_paused: bool,
 }
 
 impl Lifecycle {
@@ -93,7 +95,25 @@ impl Lifecycle {
         Self {
             settings,
             entries: Vec::new(),
+            bridging_paused: false,
         }
+    }
+
+    /// A lifecycle that lists Controllers but Bridges none until
+    /// [`Self::resume_bridging`].
+    pub fn paused(settings: Settings) -> Self {
+        Self {
+            bridging_paused: true,
+            ..Self::new(settings)
+        }
+    }
+
+    /// Virtual Controllers can be made now.
+    pub fn resume_bridging(&mut self, now: Instant) -> Vec<Change> {
+        self.bridging_paused = false;
+        let mut changes = Vec::new();
+        self.fill_slots(now, &mut changes);
+        changes
     }
 
     /// The settings as they stand, to be saved after [`Self::stop`] or [`Self::start`].
@@ -307,6 +327,9 @@ impl Lifecycle {
 
     /// Bridges waiting Controllers, oldest first, while slots are free.
     fn fill_slots(&mut self, now: Instant, changes: &mut Vec<Change>) {
+        if self.bridging_paused {
+            return;
+        }
         let mut used = self
             .entries
             .iter()
