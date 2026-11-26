@@ -15,7 +15,7 @@ The view keeps what only the window knows: the selected Controller, whether its 
 
 - Selection starts on the first Controller and follows it wherever it moves; when it leaves, the one taking its place is shown.
 - The name field is filled only when the settings show another Controller, leaving typing alone. The name is sent as it is typed, so closing the window loses none.
-- The colour picker also follows the lightbar switch while closed. Only the player's changes are sent. The Controller follows a dragged colour, and a typed one once the whole hex value is there (#50). Confirming the colour the picker opened with chooses it too. A chosen colour is sent even if the last sample already shows it, since that sample may be older than the previous command (#49).
+- The colour picker also follows the lightbar switch while closed. Only the player's changes are sent. The Controller follows a dragged colour, and a typed one once the whole hex value is there (#50). Confirming the colour the picker opened with chooses it too. Every choice is sent, even one the last sample already shows, since that sample may be older than the previous command.
 - Ignoring a failed update of the weak view handle is correct: the view is gone only while its window closes.
 
 ## Start-up order

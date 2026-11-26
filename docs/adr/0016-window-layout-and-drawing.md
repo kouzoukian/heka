@@ -21,7 +21,7 @@ The picker is heka's own popup around `gpui-component`'s picker state, which kee
 ## Live drawing
 
 - Shaped like the Output Type: an Xbox pad or a DualShock 4, both heka's own drawings. Positions are pixels from the top left of a drawing of fixed width, scaled as a whole to the room it gets, within limits and with a margin of 20 px beside and 12 px above and below; it takes the rest of its column and never less than its smallest size, and is dimmed and at rest without input.
-- Shapes are painted on one canvas with lettering over them. A shape described by its right half starts on the middle line, goes clockwise and returns to it; the left half is the right walked backwards with control points swapped.
+- Shapes are painted on one canvas with lettering over them, through the `Surface` trait, so that a test builds every shape of both pads without a window. A shape or label that cannot be painted is logged once, not every frame. A shape described by its right half starts on the middle line, goes clockwise and returns to it; the left half is the right walked backwards with control points swapped.
 - Each trigger's lower edge is the middle of the bumper's upper edge, 2 px above it, and each bumper's lower edge follows the body's upper one. These coordinates are kept in step by hand.
 - The Xbox pad is lettered and placed as the Virtual Controller maps it. It has no touchpad or mute button, which drive nothing there, and draws a share button that a Virtual Controller does not have.
 - A touch dot's travel is the pad less the dot's size, so it stays inside. Touch positions are stored in thousandths of the pad.

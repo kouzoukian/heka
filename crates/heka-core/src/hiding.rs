@@ -54,10 +54,12 @@ pub enum HidHideError {
 impl fmt::Display for HidHideError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotInstalled => f.write_str("HidHide is not installed or its driver is not running"),
-            Self::InUse => f.write_str(
-                "HidHide is busy: close the HidHide Configuration Client or HidHideCLI so heka can hide the Controller",
-            ),
+            Self::NotInstalled => {
+                f.write_str("HidHide is not installed or its driver is not running")
+            }
+            Self::InUse => {
+                f.write_str("HidHide is busy: close the HidHide Configuration Client or HidHideCLI")
+            }
             Self::Failed(message) => write!(f, "HidHide failed: {message}"),
         }
     }
@@ -226,6 +228,7 @@ struct Inner {
     app: String,
     wanted: BTreeMap<String, BTreeSet<String>>,
     stay_allowed: bool,
+    journal_unread: bool,
 }
 
 impl Hiding {
@@ -238,6 +241,7 @@ impl Hiding {
                 app,
                 wanted: BTreeMap::new(),
                 stay_allowed: false,
+                journal_unread: false,
             }),
         }
     }
@@ -245,6 +249,7 @@ impl Hiding {
     pub fn allow_heka(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner.stay_allowed = true;
+        inner.read_journal()?;
         let config = inner.hidhide.read()?;
         inner.allow(&config)
     }
@@ -274,9 +279,16 @@ impl Hiding {
 
     pub fn recover(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
-        let saved = inner.store.load()?;
-        merge(&mut inner.journal, saved);
+        inner.journal_unread = true;
         inner.undo()
+    }
+
+    pub fn restore(&self) -> Result<(), HidingError> {
+        self.lock().undo()
+    }
+
+    pub fn inverted(&self) -> Result<bool, HidingError> {
+        Ok(self.lock().hidhide.read()?.inverse)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -285,7 +297,17 @@ impl Hiding {
 }
 
 impl Inner {
+    fn read_journal(&mut self) -> Result<(), HidingError> {
+        if self.journal_unread {
+            let saved = self.store.load()?;
+            merge(&mut self.journal, saved);
+            self.journal_unread = false;
+        }
+        Ok(())
+    }
+
     fn hide(&mut self, device: &DeviceInstancePath) -> Result<(), HidingError> {
+        self.read_journal()?;
         let config = self.hidhide.read()?;
 
         self.allow(&config)?;
@@ -321,6 +343,7 @@ impl Inner {
     }
 
     fn undo(&mut self) -> Result<(), HidingError> {
+        self.read_journal()?;
         let still_wanted: BTreeSet<&String> = self.wanted.values().flatten().collect();
         let nothing_wanted = still_wanted.is_empty();
         let release: Vec<String> = self

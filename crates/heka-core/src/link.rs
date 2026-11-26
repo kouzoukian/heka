@@ -151,7 +151,6 @@ impl FeedbackFormat {
                 };
                 let mut reports = Vec::with_capacity(2);
                 if feedback.lightbar.is_some() && !*lightbar_ready {
-                    *lightbar_ready = true;
                     reports.push(dualsense::bluetooth_lightbar_setup_report(next_seq()).to_vec());
                 }
                 reports
@@ -162,6 +161,14 @@ impl FeedbackFormat {
             Self::DualShock4Bluetooth => {
                 vec![dualshock4::bluetooth_output_report(feedback).to_vec()]
             }
+        }
+    }
+
+    pub fn written(&mut self, report: &[u8]) {
+        if let Self::DualSenseBluetooth { lightbar_ready, .. } = self
+            && dualsense::is_bluetooth_lightbar_setup_report(report)
+        {
+            *lightbar_ready = true;
         }
     }
 }

@@ -1,18 +1,19 @@
-use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use heka_app::text;
-use heka_core::hiding::{DeviceInstancePath, Hiding};
-use heka_core::lifecycle::{Change, Removal};
+use heka_app::{log, text};
+use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
+use heka_core::hider::{Hider, HidingWarning};
+use heka_core::lifecycle::Change;
+use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
-use heka_core::preferences::Preferences;
+use heka_core::preferences::PreferenceChange;
 use heka_core::setup::{self, Driver, Setup};
-use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
-use heka_core::virtual_controller::OutputType;
+use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::drivers::InstalledDrivers;
 use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
@@ -34,7 +35,9 @@ pub struct Snapshot {
     pub status: Status,
     pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
-    pub hiding_note: Option<String>,
+    pub hiding: Vec<HidingWarning>,
+    pub unopened: Vec<Unopened>,
+    pub not_unplugged: Vec<String>,
 }
 
 enum Command {
@@ -42,7 +45,7 @@ enum Command {
     Start(MacAddress),
     SetOutputType(MacAddress, OutputType),
     SetNickname(MacAddress, String),
-    SetPreferences(MacAddress, Preferences),
+    ChangePreference(MacAddress, PreferenceChange),
     CheckDrivers,
     Quit,
 }
@@ -60,7 +63,9 @@ impl Bridging {
             status: Status::Starting,
             setup: None,
             controllers: Vec::new(),
-            hiding_note: None,
+            hiding: Vec::new(),
+            unopened: Vec::new(),
+            not_unplugged: Vec::new(),
         }));
         let thread = thread::Builder::new()
             .name("heka-supervisor".into())
@@ -99,10 +104,8 @@ impl Bridging {
         let _ = self.commands.send(Command::SetNickname(mac, name));
     }
 
-    pub fn set_preferences(&self, mac: MacAddress, preferences: Preferences) {
-        let _ = self
-            .commands
-            .send(Command::SetPreferences(mac, preferences));
+    pub fn change_preference(&self, mac: MacAddress, change: PreferenceChange) {
+        let _ = self.commands.send(Command::ChangePreference(mac, change));
     }
 
     pub fn check_drivers(&self) {
@@ -130,26 +133,17 @@ impl Drop for Bridging {
 
 fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let settings = settings_file::load();
-    let mut hider = Hider::open(settings.never_hidden().collect());
-    let publish = |status: Status, setup: &Setup, controllers, hider: &Hider| {
-        let hiding_note = if setup.is_missing(Driver::HidHide) {
-            None
-        } else {
-            hider.note.clone()
-        };
-        *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = Snapshot {
-            status,
-            setup: Some(setup.clone()),
-            controllers,
-            hiding_note,
-        };
-    };
-
+    let mut hider = Hider::new(
+        hidhide::hiding().map_err(|error| error.to_string()),
+        settings.never_hidden(),
+    );
     let mut supervisor = Supervisor::without_bus(settings);
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
-    hider.follow(&changes);
+    follow(&mut hider, &changes);
     let mut discovery = Discovery::default();
+    let mut api = None;
     let mut status = Status::Starting;
+    let mut not_unplugged = Vec::new();
     let mut looked: Option<Instant> = None;
     let mut unsaved = false;
     loop {
@@ -157,7 +151,7 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
         let now = Instant::now();
         let burst = matches!(
             command,
-            Ok(Command::SetNickname(..) | Command::SetPreferences(..))
+            Ok(Command::SetNickname(..) | Command::ChangePreference(..))
         );
         let changes = match command {
             Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
@@ -178,9 +172,9 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
                 supervisor.set_nickname(mac, &name);
                 Vec::new()
             }
-            Ok(Command::SetPreferences(mac, preferences)) => {
+            Ok(Command::ChangePreference(mac, change)) => {
                 unsaved = true;
-                supervisor.set_preferences(mac, preferences);
+                let preferences = supervisor.change_preference(mac, change);
                 hider.set_hide(mac, preferences.hide);
                 Vec::new()
             }
@@ -191,7 +185,7 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             }
             Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
-        hider.follow(&changes);
+        follow(&mut hider, &changes);
 
         let due = looked.is_none_or(|at| now.duration_since(at) >= POLL_INTERVAL);
         if !burst || due {
@@ -199,249 +193,127 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
                 settings_file::save(supervisor.settings());
                 unsaved = false;
             }
-            status = match discovery.scan(&mut supervisor, &mut hider, now) {
-                Ok(()) => Status::Running,
+            status = match refreshed(&mut api) {
+                Ok(api) => {
+                    let found = discovery.scan(&mut HidFinder(api), &mut supervisor, now);
+                    act_on(found, &mut hider);
+                    Status::Running
+                }
                 Err(error) => Status::HidError(error),
             };
-            hider.follow(&supervisor.poll(now));
-            hider.retry();
+            follow(&mut hider, &supervisor.poll(now));
+            hider.poll(now);
             looked = Some(now);
         }
-        publish(status.clone(), &detected, supervisor.controllers(), &hider);
+        report_failures(&mut supervisor, &mut not_unplugged);
+        let hiding = if detected.is_missing(Driver::HidHide) {
+            Vec::new()
+        } else {
+            hider.warnings()
+        };
+        publish(
+            snapshot,
+            Snapshot {
+                status: status.clone(),
+                setup: Some(detected.clone()),
+                controllers: supervisor.controllers(),
+                hiding,
+                unopened: discovery.unopened().cloned().collect(),
+                not_unplugged: not_unplugged.clone(),
+            },
+        );
     }
     if unsaved {
         settings_file::save(supervisor.settings());
     }
-    hider.follow(&supervisor.quit());
-    hider.restore_all();
-    publish(Status::Starting, &detected, Vec::new(), &hider);
+    follow(&mut hider, &supervisor.quit());
+    report_failures(&mut supervisor, &mut not_unplugged);
+    if let Err(error) = hider.restore_all() {
+        log::line(&format!("could not restore HidHide: {error}"));
+    }
 }
 
-struct Hider {
-    hiding: Option<Hiding>,
-    devices: HashMap<MacAddress, HashMap<CString, Result<DeviceInstancePath, String>>>,
-    wanted: HashSet<MacAddress>,
-    seen: HashSet<MacAddress>,
-    pending: HashSet<MacAddress>,
-    allow_pending: bool,
-    note: Option<String>,
+fn publish(snapshot: &Mutex<Snapshot>, latest: Snapshot) {
+    *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = latest;
 }
 
-impl Hider {
-    fn open(seen: HashSet<MacAddress>) -> Self {
-        let mut hider = Self {
-            hiding: None,
-            devices: HashMap::new(),
-            wanted: HashSet::new(),
-            seen,
-            pending: HashSet::new(),
-            allow_pending: false,
-            note: None,
-        };
-        match hidhide::hiding() {
-            Ok(hiding) => {
-                if let Err(error) = hiding.recover() {
-                    hider.note = Some(text::cannot_restore_earlier_run(&error.to_string()));
-                }
-                hider.hiding = Some(hiding);
-                hider.allow_pending = true;
-                hider.allow();
+fn follow(hider: &mut Hider<CString>, changes: &[Change]) {
+    for change in changes {
+        log::line(&format!("{change:?}"));
+    }
+    hider.follow(changes);
+}
+
+fn act_on(found: Vec<Found<CString>>, hider: &mut Hider<CString>) {
+    for found in found {
+        match found {
+            Found::Seen { mac, path } => {
+                let device =
+                    hidhide::device_instance_path(&path).map_err(|error| error.to_string());
+                hider.link_seen(mac, path, device);
             }
-            Err(error) => hider.note = Some(text::cannot_hide_at_all(&error.to_string())),
-        }
-        hider
-    }
-
-    fn allow(&mut self) {
-        let Some(hiding) = &self.hiding else {
-            self.allow_pending = false;
-            return;
-        };
-        match hiding.allow_heka() {
-            Ok(()) => {
-                self.allow_pending = false;
-                if self.pending.is_empty() {
-                    self.note = None;
-                }
+            Found::Gone { mac, path } => hider.link_gone(mac, &path),
+            Found::Changes(changes) => follow(hider, &changes),
+            Found::CannotOpen(unopened) => {
+                log::line(&text::cannot_open(&unopened));
             }
-            Err(error) => self.note = Some(text::not_allowed(&error.to_string())),
         }
     }
+}
 
-    fn link_seen(&mut self, mac: MacAddress, link: &ControllerLink) {
-        let device = hidhide::device_instance_path(link.hid_path())
-            .map_err(|error| text::cannot_identify_for_hiding(&error.to_string()));
-        self.devices
-            .entry(mac)
-            .or_default()
-            .insert(link.hid_path().to_owned(), device);
-        if self.wanted.contains(&mac) {
-            self.pending.insert(mac);
-            self.hide(mac);
-        }
-    }
-
-    fn link_gone(&mut self, mac: MacAddress, path: &CString) {
-        if let Some(devices) = self.devices.get_mut(&mac) {
-            devices.remove(path);
-        }
-    }
-
-    fn follow(&mut self, changes: &[Change]) {
-        for (index, change) in changes.iter().enumerate() {
-            eprintln!("heka: {change:?}");
-            let replaced = |mac| {
-                changes[index + 1..]
-                    .iter()
-                    .any(|later| matches!(later, Change::Bridged { mac: m, .. } if *m == mac))
-            };
-            match *change {
-                Change::Bridged { mac, .. } | Change::Returned { mac } => {
-                    self.wanted.insert(mac);
-                    self.pending.insert(mac);
-                    self.hide(mac);
-                }
-                Change::Held { .. } => {}
-                Change::Removed {
-                    mac,
-                    why: Removal::OutputTypeChanged,
-                } if replaced(mac) => {}
-                Change::Removed { mac, .. } => {
-                    self.wanted.remove(&mac);
-                    self.pending.remove(&mac);
-                    self.release(mac);
+fn report_failures(supervisor: &mut Supervisor, not_unplugged: &mut Vec<String>) {
+    for failure in supervisor.take_virtual_failures() {
+        match failure {
+            VirtualFailure::NotReleased(error) => log::line(&text::not_released(&error)),
+            VirtualFailure::NotUnplugged(error) => {
+                log::line(&text::not_unplugged(&error));
+                if !not_unplugged.contains(&error) {
+                    not_unplugged.push(error);
                 }
             }
         }
     }
+}
 
-    fn retry(&mut self) {
-        if self.allow_pending {
-            self.allow();
+fn refreshed(api: &mut Option<HidApi>) -> Result<&HidApi, String> {
+    let api = match api {
+        Some(api) => {
+            api.refresh_devices().map_err(|e| e.to_string())?;
+            api
         }
-        let pending: Vec<MacAddress> = self.pending.iter().copied().collect();
-        for mac in pending {
-            self.hide(mac);
-        }
+        None => api.insert(HidApi::new().map_err(|e| e.to_string())?),
+    };
+    Ok(api)
+}
+
+struct HidFinder<'a>(&'a HidApi);
+
+impl Finder for HidFinder<'_> {
+    type Path = CString;
+
+    fn present(&mut self) -> Vec<CString> {
+        controller_paths(self.0)
     }
 
-    fn set_hide(&mut self, mac: MacAddress, hide: bool) {
-        if hide {
-            if self.seen.remove(&mac) && self.wanted.contains(&mac) {
-                self.pending.insert(mac);
-                self.hide(mac);
-            }
-        } else if self.seen.insert(mac) {
-            if self.pending.remove(&mac) && self.pending.is_empty() && !self.allow_pending {
-                self.note = None;
-            }
-            self.release(mac);
-        }
-    }
-
-    fn hide(&mut self, mac: MacAddress) {
-        let Some(hiding) = &self.hiding else {
-            self.pending.remove(&mac);
-            return;
-        };
-        if self.seen.contains(&mac) {
-            self.pending.remove(&mac);
-            return;
-        }
-        let devices = self.devices.get(&mac).filter(|devices| !devices.is_empty());
-        let result = match devices {
-            Some(devices) => devices
-                .values()
-                .map(|device| match device {
-                    Ok(device) => hiding
-                        .hide(&mac.to_string(), device)
-                        .map_err(|e| e.to_string()),
-                    Err(error) => Err(error.clone()),
-                })
-                .fold(Ok(()), Result::and),
-            None => Err(text::NO_LINK_TO_HIDE.into()),
-        };
-        match result {
-            Ok(()) => {
-                self.pending.remove(&mac);
-                if self.pending.is_empty() && !self.allow_pending {
-                    self.note = None;
-                }
-            }
+    fn open(&mut self, path: &CString) -> Result<FoundLink, OpenFailure> {
+        match ControllerLink::open_path(self.0, path) {
+            Ok((link, mac)) => Ok(FoundLink {
+                mac,
+                reader: Box::new(link),
+            }),
+            Err(OpenError::VirtualController) => Err(OpenFailure::VirtualController),
             Err(error) => {
-                self.note = Some(text::not_hidden(&error));
+                let model = self
+                    .0
+                    .device_list()
+                    .find(|info| info.path() == path.as_c_str())
+                    .and_then(|info| controller_model(info.vendor_id(), info.product_id()))
+                    .unwrap_or_default();
+                Err(OpenFailure::Refused(Unopened {
+                    model,
+                    error: error.to_string(),
+                }))
             }
         }
-    }
-
-    fn release(&mut self, mac: MacAddress) {
-        if let Some(Err(error)) = self.hiding.as_ref().map(|h| h.release(&mac.to_string())) {
-            self.note = Some(text::cannot_restore(&error.to_string()));
-        }
-    }
-
-    fn restore_all(&mut self) {
-        if let Some(Err(error)) = self.hiding.as_ref().map(Hiding::restore_all) {
-            eprintln!("heka: could not restore HidHide: {error}");
-        }
-    }
-}
-
-#[derive(Default)]
-struct Discovery {
-    api: Option<HidApi>,
-    known: HashMap<CString, (LinkId, MacAddress)>,
-    virtual_controllers: HashSet<CString>,
-}
-
-impl Discovery {
-    fn scan(
-        &mut self,
-        supervisor: &mut Supervisor,
-        hider: &mut Hider,
-        now: Instant,
-    ) -> Result<(), String> {
-        let api = match &mut self.api {
-            Some(api) => {
-                api.refresh_devices().map_err(|e| e.to_string())?;
-                api
-            }
-            None => self.api.insert(HidApi::new().map_err(|e| e.to_string())?),
-        };
-        let present = controller_paths(api);
-        self.virtual_controllers
-            .retain(|path| present.contains(path));
-
-        let gone: Vec<CString> = self
-            .known
-            .keys()
-            .filter(|path| !present.contains(path))
-            .cloned()
-            .collect();
-        for path in gone {
-            if let Some((id, mac)) = self.known.remove(&path) {
-                hider.link_gone(mac, &path);
-                hider.follow(&supervisor.link_gone(id, now));
-            }
-        }
-
-        for path in present {
-            if self.known.contains_key(&path) || self.virtual_controllers.contains(&path) {
-                continue;
-            }
-            match ControllerLink::open_path(api, &path) {
-                Ok((link, mac)) => {
-                    hider.link_seen(mac, &link);
-                    let (id, changes) = supervisor.link_arrived(mac, Box::new(link), now);
-                    self.known.insert(path, (id, mac));
-                    hider.follow(&changes);
-                }
-                Err(OpenError::VirtualController) => {
-                    self.virtual_controllers.insert(path);
-                }
-                Err(error) => eprintln!("heka: cannot open a Controller: {error}"),
-            }
-        }
-        Ok(())
     }
 }

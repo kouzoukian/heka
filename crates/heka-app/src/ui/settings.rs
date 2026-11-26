@@ -7,7 +7,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Sizable, Theme};
 use heka_core::feedback::{Lightbar, PlayerLights};
-use heka_core::preferences::{LightbarChoice, RumbleStrength};
+use heka_core::preferences::{LightbarChoice, PreferenceChange, RumbleStrength};
 
 use crate::text;
 use crate::ui::banners::{clamped, strip};
@@ -100,7 +100,7 @@ fn rumble_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
             id(entry, "rumble", percent),
             words,
             entry.preferences.rumble == strength,
-            entry.prefer(|preferences| preferences.rumble = strength),
+            Some(entry.prefer(PreferenceChange::Rumble(strength))),
         )
     });
     segmented(segments, send, theme)
@@ -117,7 +117,7 @@ fn lightbar_switch(
         id(entry, "lightbar", text::DEFAULT),
         text::DEFAULT,
         chosen.is_none(),
-        entry.prefer(|preferences| preferences.lightbar = None),
+        Some(entry.prefer(PreferenceChange::Lightbar(None))),
     );
     let colours = COLOURS.map(|(name, light)| {
         Segment::picture(
@@ -125,7 +125,11 @@ fn lightbar_switch(
             name,
             swatch(light),
             chosen == Some(LightbarChoice::Colour(light)),
-            entry.prefer(|preferences| preferences.lightbar = Some(LightbarChoice::Colour(light))),
+            Some(
+                entry.prefer(PreferenceChange::Lightbar(Some(LightbarChoice::Colour(
+                    light,
+                )))),
+            ),
         )
     });
     let rainbow = Segment::picture(
@@ -133,7 +137,7 @@ fn lightbar_switch(
         text::RAINBOW,
         rainbow_swatch(),
         chosen == Some(LightbarChoice::RAINBOW),
-        entry.prefer(|preferences| preferences.lightbar = Some(LightbarChoice::RAINBOW)),
+        Some(entry.prefer(PreferenceChange::Lightbar(Some(LightbarChoice::RAINBOW)))),
     );
     let custom = match chosen {
         Some(LightbarChoice::Colour(colour)) => {
@@ -158,7 +162,7 @@ fn player_lights_switch(entry: &ControllerEntry, send: &SendCommand, theme: &The
             id(entry, "player", words),
             words,
             entry.preferences.player_lights == lights,
-            entry.prefer(|preferences| preferences.player_lights = lights),
+            Some(entry.prefer(PreferenceChange::PlayerLights(lights))),
         )
     });
     segmented(segments, send, theme)
@@ -170,7 +174,7 @@ fn hide_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Di
             id(entry, "hide", words),
             words,
             entry.preferences.hide == hide,
-            entry.prefer(|preferences| preferences.hide = hide),
+            Some(entry.prefer(PreferenceChange::Hide(hide))),
         )
     });
     segmented(segments, send, theme)

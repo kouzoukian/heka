@@ -1,11 +1,12 @@
 use gpui::{
-    BorderStyle, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, Window, point, px, quad,
-    size, transparent_black,
+    BorderStyle, Bounds, ContentMask, Hsla, PaintQuad, Path, PathBuilder, Pixels, Point, Window,
+    point, px, quad, size, transparent_black,
 };
 use gpui_component::Theme;
 use heka_core::state::{Buttons, Stick};
 
-use super::WIDTH;
+use super::{DRAWING_ERRORS, WIDTH};
+use crate::text;
 use crate::ui::pad::{stick_offset, trigger_fill};
 
 pub type Xy = (f32, f32);
@@ -84,7 +85,7 @@ fn mirror((x, y): Xy) -> Xy {
     (WIDTH - x, y)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Palette {
     pub body: Hsla,
     pub outline: Hsla,
@@ -133,11 +134,39 @@ pub struct Label {
     pub color: Hsla,
 }
 
+pub trait Surface {
+    fn path(&mut self, path: Path, color: Hsla);
+
+    fn quad(&mut self, quad: PaintQuad);
+
+    fn clipped(&mut self, bounds: Bounds<Pixels>, paint: &mut dyn FnMut(&mut dyn Surface));
+
+    fn unbuildable(&mut self, error: String);
+}
+
+impl Surface for Window {
+    fn path(&mut self, path: Path, color: Hsla) {
+        self.paint_path(path, color);
+    }
+
+    fn quad(&mut self, quad: PaintQuad) {
+        self.paint_quad(quad);
+    }
+
+    fn clipped(&mut self, bounds: Bounds<Pixels>, paint: &mut dyn FnMut(&mut dyn Surface)) {
+        self.with_content_mask(Some(ContentMask { bounds }), |window| paint(window));
+    }
+
+    fn unbuildable(&mut self, error: String) {
+        DRAWING_ERRORS.line(&text::cannot_draw(&error));
+    }
+}
+
 pub struct Painter<'a> {
     origin: Point<Pixels>,
     scale: f32,
     pub palette: Palette,
-    window: &'a mut Window,
+    surface: &'a mut dyn Surface,
 }
 
 impl<'a> Painter<'a> {
@@ -145,13 +174,13 @@ impl<'a> Painter<'a> {
         origin: Point<Pixels>,
         scale: f32,
         palette: Palette,
-        window: &'a mut Window,
+        surface: &'a mut dyn Surface,
     ) -> Self {
         Self {
             origin,
             scale,
             palette,
-            window,
+            surface,
         }
     }
 
@@ -169,8 +198,13 @@ impl<'a> Painter<'a> {
             path.cubic_bezier_to(self.at(end), self.at(first), self.at(second));
         }
         path.close();
-        if let Ok(path) = path.build() {
-            self.window.paint_path(path, color);
+        self.build(path, color);
+    }
+
+    fn build(&mut self, path: PathBuilder, color: Hsla) {
+        match path.build() {
+            Ok(path) => self.surface.path(path, color),
+            Err(error) => self.surface.unbuildable(error.to_string()),
         }
     }
 
@@ -186,9 +220,7 @@ impl<'a> Painter<'a> {
         let mut path = PathBuilder::stroke(self.length(width));
         path.move_to(self.at(from));
         path.line_to(self.at(to));
-        if let Ok(path) = path.build() {
-            self.window.paint_path(path, color);
-        }
+        self.build(path, color);
     }
 
     pub fn control(&mut self, shape: &Shape, pressed: bool) {
@@ -218,7 +250,7 @@ impl<'a> Painter<'a> {
             self.at((left, top)),
             size(self.length(width), self.length(height)),
         );
-        self.window.paint_quad(quad(
+        self.surface.quad(quad(
             bounds,
             self.length(radius),
             fill,
@@ -272,15 +304,13 @@ impl<'a> Painter<'a> {
         if travel > 0 {
             let (top, bottom) = shape.height();
             let from = bottom - (bottom - top) * trigger_fill(travel);
-            let mask = ContentMask {
-                bounds: Bounds::new(
-                    self.at((0., from)),
-                    size(self.length(WIDTH), self.length(bottom - from + 1.)),
-                ),
-            };
+            let filled = Bounds::new(
+                self.at((0., from)),
+                size(self.length(WIDTH), self.length(bottom - from + 1.)),
+            );
             let (origin, scale) = (self.origin, self.scale);
-            self.window.with_content_mask(Some(mask), |window| {
-                Painter::new(origin, scale, palette, window)
+            self.surface.clipped(filled, &mut |surface| {
+                Painter::new(origin, scale, palette, surface)
                     .fill(shape, palette.pressed.opacity(0.55));
             });
         }

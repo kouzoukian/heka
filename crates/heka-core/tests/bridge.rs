@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use heka_core::calibration::Calibration;
-use heka_core::dualsense::{RumbleMode, usb_output_report};
+use heka_core::dualsense::{RumbleMode, is_bluetooth_lightbar_setup_report, usb_output_report};
 use heka_core::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights, Rumble,
 };
@@ -16,7 +16,10 @@ use heka_core::link::{
 };
 use heka_core::preferences::{LightbarChoice, LivePreferences, Preferences, RumbleStrength};
 use heka_core::state::{Buttons, ControllerState};
-use heka_core::virtual_controller::{OutputType, VirtualController, VirtualError};
+use heka_core::threads::{SystemThreads, Task, Threads};
+use heka_core::virtual_controller::{
+    OutputType, VirtualController, VirtualError, VirtualFailure, VirtualFailures,
+};
 
 enum Step {
     Report(Vec<u8>),
@@ -85,11 +88,13 @@ impl LinkReader for FakeLink {
 struct Written {
     reports: Vec<Vec<u8>>,
     started: usize,
+    failing: usize,
 }
 
 struct FakeWriter {
     written: Arc<Mutex<Written>>,
     gate: Option<Receiver<()>>,
+    format: FeedbackFormat,
 }
 
 impl FakeWriter {
@@ -98,6 +103,7 @@ impl FakeWriter {
         let writer = Box::new(Self {
             written: Arc::clone(&written),
             gate: None,
+            format: FeedbackFormat::DualSenseUsb(RumbleMode::CompatibleV2),
         });
         (writer, written)
     }
@@ -105,7 +111,7 @@ impl FakeWriter {
 
 impl LinkWriter for FakeWriter {
     fn format(&self) -> FeedbackFormat {
-        FeedbackFormat::DualSenseUsb(RumbleMode::CompatibleV2)
+        self.format.clone()
     }
 
     fn write(&mut self, report: &[u8]) -> Result<(), LinkWriteError> {
@@ -113,7 +119,12 @@ impl LinkWriter for FakeWriter {
         if let Some(gate) = &self.gate {
             let _ = gate.recv();
         }
-        self.written.lock().unwrap().reports.push(report.to_vec());
+        let mut written = self.written.lock().unwrap();
+        if written.failing > 0 {
+            written.failing -= 1;
+            return Err(LinkWriteError::new("the Controller is busy"));
+        }
+        written.reports.push(report.to_vec());
         Ok(())
     }
 }
@@ -127,6 +138,7 @@ struct Record {
 struct FakeController {
     record: Arc<Mutex<Record>>,
     fail_updates: bool,
+    fail_unplug: bool,
     feedback: Option<Receiver<Feedback>>,
 }
 
@@ -136,6 +148,7 @@ impl FakeController {
         let controller = Box::new(Self {
             record: Arc::clone(&record),
             fail_updates: false,
+            fail_unplug: false,
             feedback: None,
         });
         (controller, record)
@@ -163,6 +176,9 @@ impl VirtualController for FakeController {
     }
 
     fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
+        if self.fail_unplug {
+            return Err(VirtualError::new("it will not leave"));
+        }
         self.record.lock().unwrap().unplugged = true;
         Ok(())
     }
@@ -728,15 +744,343 @@ fn a_bridge_keeps_following_its_preferences_when_it_moves_to_another_link() {
 
     preferences.set(Preferences {
         rumble: RumbleStrength::percent(25),
+        lightbar: Some(LightbarChoice::Colour(PINK)),
         ..Preferences::default()
     });
-    std::thread::sleep(Duration::from_millis(200));
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
     game.send(rumble(200, 100)).unwrap();
-    wait_until(|| !written.lock().unwrap().reports.is_empty());
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
 
     assert_eq!(
-        written.lock().unwrap().reports[0],
-        output_report(rumble(50, 25))
+        written.lock().unwrap().reports[1],
+        output_report(Feedback {
+            lightbar: Some(PINK),
+            ..rumble(50, 25)
+        })
     );
+    bridge.stop();
+}
+
+fn fail_writes(written: &Arc<Mutex<Written>>, count: usize) {
+    written.lock().unwrap().failing = count;
+}
+
+fn reports(written: &Arc<Mutex<Written>>) -> Vec<Vec<u8>> {
+    written.lock().unwrap().reports.clone()
+}
+
+fn started(written: &Arc<Mutex<Written>>) -> usize {
+    written.lock().unwrap().started
+}
+
+struct Rumbling {
+    bridge: Bridge,
+    written: Arc<Mutex<Written>>,
+    game: Sender<Feedback>,
+    steps: Sender<Step>,
+}
+
+fn rumbling() -> Rumbling {
+    let (link, steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(link, controller, Arc::default()).unwrap();
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| reports(&written).len() == 1);
+    Rumbling {
+        bridge,
+        written,
+        game,
+        steps,
+    }
+}
+
+#[test]
+fn a_failed_write_is_retried_without_new_feedback() {
+    let Rumbling {
+        bridge,
+        written,
+        game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, 2);
+    game.send(Feedback::OFF).unwrap();
+    wait_until(|| reports(&written).len() == 2);
+
+    assert_eq!(reports(&written)[1], output_report(Feedback::OFF));
+    assert_eq!(started(&written), 4);
+    bridge.stop();
+}
+
+#[test]
+fn a_write_that_keeps_failing_is_retried_at_a_bounded_pace() {
+    let Rumbling {
+        bridge,
+        written,
+        game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, usize::MAX);
+    let failing_since = Instant::now();
+    game.send(Feedback::OFF).unwrap();
+    wait_until(|| started(&written) >= 5);
+
+    assert!(failing_since.elapsed() >= Duration::from_millis(250));
+    bridge.stop();
+}
+
+#[test]
+fn the_game_asking_for_the_same_again_does_not_hurry_a_retry() {
+    let Rumbling {
+        bridge,
+        written,
+        game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, usize::MAX);
+    let failing_since = Instant::now();
+    for _ in 0..200 {
+        game.send(Feedback::OFF).unwrap();
+    }
+    wait_until(|| started(&written) >= 4);
+
+    assert!(failing_since.elapsed() >= Duration::from_millis(150));
+    bridge.stop();
+}
+
+#[test]
+fn stopping_the_bridge_retries_the_report_that_stops_the_motors() {
+    let Rumbling {
+        bridge,
+        written,
+        game: _game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, 2);
+    bridge.stop();
+
+    assert_eq!(
+        reports(&written),
+        [output_report(rumble(200, 64)), output_report(Feedback::OFF)]
+    );
+}
+
+#[test]
+fn stopping_the_bridge_gives_up_on_a_controller_that_never_takes_the_report() {
+    let Rumbling {
+        bridge,
+        written,
+        game: _game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, usize::MAX);
+    assert!(matches!(bridge.stop(), BridgeEnd::Stopped { .. }));
+
+    let attempts = started(&written);
+    assert!((3..=6).contains(&attempts), "{attempts}");
+}
+
+#[test]
+fn a_lost_link_ends_the_bridge_without_insisting_on_the_stop_report() {
+    let Rumbling {
+        bridge,
+        written,
+        game: _game,
+        steps,
+    } = rumbling();
+
+    fail_writes(&written, usize::MAX);
+    steps.send(Step::Lost).unwrap();
+    wait_until(|| bridge.is_finished());
+    assert!(matches!(bridge.stop(), BridgeEnd::LinkLost { .. }));
+
+    assert_eq!(started(&written), 2);
+}
+
+#[test]
+fn the_motors_are_stopped_when_a_silent_virtual_controller_meets_failing_writes() {
+    let Rumbling {
+        bridge,
+        written,
+        game,
+        steps: _steps,
+    } = rumbling();
+
+    fail_writes(&written, 3);
+    drop(game);
+    wait_until(|| reports(&written).len() == 2);
+
+    assert_eq!(reports(&written)[1], output_report(Feedback::OFF));
+    bridge.stop();
+}
+
+#[test]
+fn a_light_whose_write_failed_is_not_forgotten_when_the_game_rumbles() {
+    let Following {
+        bridge,
+        written,
+        preferences,
+        game,
+        _steps,
+    } = following(Preferences {
+        lightbar: Some(LightbarChoice::Colour(PINK)),
+        ..Preferences::default()
+    });
+    wait_until(|| reports(&written).len() == 1);
+
+    fail_writes(&written, 1);
+    preferences.set(Preferences::default());
+    wait_until(|| started(&written) >= 2);
+    game.send(rumble(10, 20)).unwrap();
+    let both = output_report(Feedback {
+        lightbar: Some(Lightbar::DEFAULT),
+        ..rumble(10, 20)
+    });
+    wait_until(|| reports(&written).last() == Some(&both));
+
+    bridge.stop();
+}
+
+#[test]
+fn a_bluetooth_lightbar_setup_that_failed_is_sent_again() {
+    let (mut link, _steps, written) = FakeLink::live();
+    link.writer.as_mut().unwrap().format =
+        FeedbackFormat::dualsense_bluetooth(RumbleMode::Compatible);
+    fail_writes(&written, 1);
+    let (controller, _, _game) = FakeController::with_feedback();
+    let preferences = Arc::new(LivePreferences::default());
+    preferences.set(Preferences {
+        lightbar: Some(LightbarChoice::Colour(PINK)),
+        ..Preferences::default()
+    });
+    let mut controller = Plugged::new(controller);
+    controller.follow(preferences);
+
+    let bridge = Bridge::resume(OpenLink::new(link), controller, Arc::default()).unwrap();
+    wait_until(|| reports(&written).len() == 2);
+
+    let sent = reports(&written);
+    assert!(is_bluetooth_lightbar_setup_report(&sent[0]));
+    assert!(!is_bluetooth_lightbar_setup_report(&sent[1]));
+    bridge.stop();
+}
+
+fn reporting(controller: Box<FakeController>) -> (Plugged, Arc<VirtualFailures>) {
+    let failures = Arc::new(VirtualFailures::default());
+    let mut plugged = Plugged::new(controller);
+    plugged.report_to(Arc::clone(&failures));
+    (plugged, failures)
+}
+
+fn not_unplugged() -> VirtualFailure {
+    VirtualFailure::NotUnplugged("it will not leave".into())
+}
+
+#[test]
+fn a_failing_virtual_controller_that_cannot_be_removed_is_reported() {
+    let (mut controller, _) = FakeController::new();
+    controller.fail_updates = true;
+    controller.fail_unplug = true;
+    let (controller, failures) = reporting(controller);
+    let link = OpenLink::new(FakeLink::new([Step::Report(cross())]));
+
+    let bridge = Bridge::resume(link, controller, Arc::default()).unwrap();
+    wait_until(|| bridge.is_finished());
+    bridge.stop();
+
+    assert_eq!(failures.take(), [not_unplugged()]);
+}
+
+#[test]
+fn a_dropped_bridge_reports_a_virtual_controller_that_cannot_be_removed() {
+    let (mut controller, _) = FakeController::new();
+    controller.fail_unplug = true;
+    let (controller, failures) = reporting(controller);
+
+    let link = OpenLink::new(FakeLink::new([]));
+    drop(Bridge::resume(link, controller, Arc::default()).unwrap());
+
+    assert_eq!(failures.take(), [not_unplugged()]);
+}
+
+#[test]
+fn a_virtual_controller_that_cannot_be_released_on_a_lost_link_is_reported() {
+    let (mut controller, _) = FakeController::new();
+    controller.fail_updates = true;
+    let (controller, failures) = reporting(controller);
+    let link = OpenLink::new(FakeLink::new([Step::Lost]));
+
+    let bridge = Bridge::resume(link, controller, Arc::default()).unwrap();
+    wait_until(|| bridge.is_finished());
+    let BridgeEnd::LinkLost { mut controller } = bridge.stop() else {
+        panic!("expected LinkLost");
+    };
+
+    assert!(controller.release().is_err());
+    let not_released = VirtualFailure::NotReleased("the bus went away".into());
+    assert_eq!(failures.take(), [not_released.clone(), not_released]);
+}
+
+struct Refusing(&'static str);
+
+impl Threads for Refusing {
+    fn spawn(&self, name: &str, task: Task) -> std::io::Result<std::thread::JoinHandle<()>> {
+        if name == self.0 {
+            return Err(std::io::Error::other("no more threads"));
+        }
+        SystemThreads.spawn(name, task)
+    }
+}
+
+#[test]
+fn a_thread_that_cannot_start_hands_back_the_link_and_the_virtual_controller() {
+    for refused in ["heka-feedback", "heka-bridge"] {
+        let (link, steps, written) = FakeLink::live();
+        let (controller, record, game) = FakeController::with_feedback();
+
+        let failed = Bridge::resume_on(
+            &Refusing(refused),
+            OpenLink::new(link),
+            Plugged::new(controller),
+            Arc::default(),
+        )
+        .err()
+        .expect(refused);
+
+        assert_eq!(failed.error.to_string(), "no more threads");
+        assert!(!record.lock().unwrap().unplugged);
+        let bridge = Bridge::resume(failed.link, failed.controller, Arc::default()).unwrap();
+        steps.send(Step::Report(cross())).unwrap();
+        wait_until(|| record.lock().unwrap().updates.len() == 1);
+        game.send(rumble(10, 20)).unwrap();
+        wait_until(|| reports(&written).contains(&output_report(rumble(10, 20))));
+        bridge.stop();
+    }
+}
+
+#[test]
+fn a_rainbow_does_not_hurry_the_retry_of_a_failing_write() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        lightbar: Some(LightbarChoice::RAINBOW),
+        ..Preferences::default()
+    });
+    wait_until(|| !reports(&written).is_empty());
+
+    fail_writes(&written, usize::MAX);
+    let before = started(&written);
+    let failing_since = Instant::now();
+    wait_until(|| started(&written) >= before + 5);
+
+    assert!(failing_since.elapsed() >= Duration::from_millis(300));
     bridge.stop();
 }

@@ -14,11 +14,14 @@ use heka_core::link::{
     ReportFormat,
 };
 use heka_core::mac::MacAddress;
-use heka_core::preferences::{LightbarChoice, Preferences};
+use heka_core::preferences::{LightbarChoice, PreferenceChange, Preferences, RumbleStrength};
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
-use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
+use heka_core::threads::{SystemThreads, Task, Threads};
+use heka_core::virtual_controller::{
+    OutputType, VirtualBus, VirtualController, VirtualError, VirtualFailure,
+};
 
 #[derive(Default)]
 struct Script {
@@ -125,6 +128,8 @@ struct Shown {
     output_type: OutputType,
     updates: Vec<ControllerState>,
     unplugged: bool,
+    refuse_updates: bool,
+    refuse_unplug: bool,
 }
 
 #[derive(Default)]
@@ -182,12 +187,20 @@ impl VirtualController for FakeController {
     }
 
     fn update(&mut self, state: &ControllerState) -> Result<(), VirtualError> {
-        self.0.lock().unwrap().updates.push(*state);
+        let mut shown = self.0.lock().unwrap();
+        if shown.refuse_updates {
+            return Err(VirtualError::new("the bus went away"));
+        }
+        shown.updates.push(*state);
         Ok(())
     }
 
     fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
-        self.0.lock().unwrap().unplugged = true;
+        let mut shown = self.0.lock().unwrap();
+        if shown.refuse_unplug {
+            return Err(VirtualError::new("it will not leave"));
+        }
+        shown.unplugged = true;
         Ok(())
     }
 
@@ -703,7 +716,10 @@ fn new_preferences_reach_a_bridged_controller_at_once() {
     let link = LinkHandle::default();
     supervisor.link_arrived(mac(1), link.reader(), t0);
 
-    supervisor.set_preferences(mac(1), pink());
+    supervisor.change_preference(
+        mac(1),
+        PreferenceChange::Lightbar(Some(LightbarChoice::Colour(PINK))),
+    );
 
     wait_until(|| turned_pink(&link));
     assert_eq!(supervisor.controllers()[0].preferences, pink());
@@ -737,4 +753,381 @@ fn a_nickname_is_listed_and_remembered_without_touching_the_bridge() {
     );
     assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
     assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn a_virtual_controller_failing_as_its_link_goes_is_bridged_again_from_the_other_link() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let bluetooth = LinkHandle::bluetooth();
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    let (usb_id, _) = supervisor.link_arrived(mac(1), usb.reader(), t0);
+    let first = bus.shown(0);
+    first.lock().unwrap().refuse_updates = true;
+    usb.send_input(cross());
+    wait_until(|| first.lock().unwrap().unplugged);
+
+    assert_eq!(
+        supervisor.link_gone(usb_id, t0),
+        [Change::Removed {
+            mac: mac(1),
+            why: Removal::Failed
+        }]
+    );
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.phase, Phase::Waiting);
+    assert_eq!(view.error.as_deref(), Some("the bus went away"));
+
+    supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
+    assert_eq!(supervisor.controllers()[0].error, None);
+    shows_input_from(&bus, 1, &bluetooth);
+}
+
+#[test]
+fn a_virtual_controller_failing_as_the_only_link_goes_leaves_nothing_behind() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    let (id, _) = supervisor.link_arrived(mac(1), link.reader(), t0);
+    let first = bus.shown(0);
+    first.lock().unwrap().refuse_updates = true;
+    link.send(cross());
+    wait_until(|| first.lock().unwrap().unplugged);
+
+    supervisor.link_gone(id, t0);
+
+    assert!(supervisor.controllers().is_empty());
+}
+
+#[test]
+fn a_link_the_supervisor_lets_go_is_told_to_whoever_found_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    let link = LinkHandle::default();
+    let (id, _) = supervisor.link_arrived(mac(1), link.reader(), t0);
+    assert_eq!(supervisor.take_dropped_links(), []);
+
+    link.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    assert_eq!(supervisor.take_dropped_links(), [id]);
+    assert_eq!(supervisor.take_dropped_links(), []);
+}
+
+fn shows_live_input(supervisor: &Supervisor, place: usize, from: &LinkHandle) {
+    let live = Arc::clone(&supervisor.controllers()[place].live);
+    from.send_input(cross());
+    wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::CROSS));
+    from.send_input(square());
+    wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::SQUARE));
+}
+
+fn sent_nothing(link: &LinkHandle) -> bool {
+    link.0.lock().unwrap().written.is_empty()
+}
+
+#[test]
+fn a_stopped_controller_shows_live_input_and_is_sent_nothing() {
+    let t0 = Instant::now();
+    let mut settings = Settings::default();
+    settings.set_stopped(mac(1), true);
+    settings.set_preferences(mac(1), pink());
+    let bus = FakeBus::default();
+    let mut supervisor = Supervisor::new(Box::new(bus.clone()), settings);
+    let link = LinkHandle::default();
+
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    shows_live_input(&supervisor, 0, &link);
+    assert!(sent_nothing(&link));
+    assert_eq!(bus.plugged(), 0);
+}
+
+#[test]
+fn stopping_watches_the_same_link_and_starting_bridges_it_again() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.stop(mac(1), t0);
+    shows_live_input(&supervisor, 0, &link);
+    assert_eq!(bus.last_state(0), None);
+
+    supervisor.start(mac(1), t0);
+    shows_input_from(&bus, 1, &link);
+    assert_eq!(supervisor.take_dropped_links(), []);
+}
+
+#[test]
+fn a_fifth_controller_shows_live_input_until_a_bridge_is_free_for_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let links: Vec<LinkHandle> = (0..5).map(|_| LinkHandle::default()).collect();
+    for (n, link) in (1..).zip(&links) {
+        supervisor.link_arrived(mac(n), link.reader(), t0);
+    }
+
+    shows_live_input(&supervisor, 4, &links[4]);
+    assert!(sent_nothing(&links[4]));
+
+    supervisor.stop(mac(1), t0);
+    assert_eq!(supervisor.controllers()[4].phase, Phase::Bridged);
+    shows_input_from(&bus, 4, &links[4]);
+    shows_live_input(&supervisor, 0, &links[0]);
+}
+
+#[test]
+fn a_controller_whose_bridge_failed_shows_live_input_until_it_is_bridged() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    bus.refuse_next_plugs(1);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    shows_live_input(&supervisor, 0, &link);
+    assert!(sent_nothing(&link));
+    assert_eq!(
+        supervisor.controllers()[0].error.as_deref(),
+        Some("no free slot")
+    );
+
+    supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
+    shows_input_from(&bus, 0, &link);
+}
+
+#[test]
+fn a_watched_controller_that_loses_its_link_leaves_the_list() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    let link = LinkHandle::default();
+    let (id, _) = supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.stop(mac(1), t0);
+
+    link.pull_out();
+    wait_until(|| {
+        supervisor.poll(t0);
+        supervisor.controllers().is_empty()
+    });
+
+    assert_eq!(supervisor.take_dropped_links(), [id]);
+}
+
+#[test]
+fn starting_a_watched_controller_whose_link_has_just_gone_removes_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.stop(mac(1), t0);
+    shows_live_input(&supervisor, 0, &link);
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    link.pull_out();
+    wait_until(|| live.latest().is_none());
+
+    supervisor.start(mac(1), t0);
+
+    assert!(supervisor.controllers().is_empty());
+    assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn a_held_virtual_controller_that_cannot_be_released_is_removed() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    bus.shown(0).lock().unwrap().refuse_updates = true;
+    link.pull_out();
+
+    assert_eq!(
+        poll_until_changed(&mut supervisor, t0),
+        [
+            Change::Held { mac: mac(1) },
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::Failed
+            },
+        ]
+    );
+    assert!(bus.unplugged(0));
+    assert!(supervisor.controllers().is_empty());
+    assert!(
+        supervisor
+            .take_virtual_failures()
+            .contains(&VirtualFailure::NotReleased("the bus went away".into()))
+    );
+}
+
+#[test]
+fn a_virtual_controller_that_cannot_be_removed_is_reported() {
+    let t0 = Instant::now();
+    let stop: fn(&mut Supervisor, Instant) = |supervisor, now| {
+        supervisor.stop(mac(1), now);
+    };
+    let quit: fn(&mut Supervisor, Instant) = |supervisor, _| {
+        supervisor.quit();
+    };
+    let change: fn(&mut Supervisor, Instant) = |supervisor, now| {
+        supervisor.set_output_type(mac(1), OutputType::Ps4, now);
+    };
+    for remove in [stop, quit, change] {
+        let (mut supervisor, bus) = setup();
+        supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+        bus.shown(0).lock().unwrap().refuse_unplug = true;
+
+        remove(&mut supervisor, t0);
+
+        assert_eq!(
+            supervisor.take_virtual_failures(),
+            [VirtualFailure::NotUnplugged("it will not leave".into())]
+        );
+    }
+}
+
+#[test]
+fn a_held_virtual_controller_that_cannot_be_removed_when_its_hold_ends_is_reported() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    link.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+    bus.shown(0).lock().unwrap().refuse_unplug = true;
+
+    supervisor.poll(t0 + HOLD_TIME);
+
+    assert_eq!(
+        supervisor.take_virtual_failures(),
+        [VirtualFailure::NotUnplugged("it will not leave".into())]
+    );
+}
+
+#[derive(Default)]
+struct FlakyThreads(Mutex<usize>);
+
+impl FlakyThreads {
+    fn refuse_next(&self, count: usize) {
+        *self.0.lock().unwrap() = count;
+    }
+}
+
+impl Threads for FlakyThreads {
+    fn spawn(&self, name: &str, task: Task) -> std::io::Result<std::thread::JoinHandle<()>> {
+        let mut refusals = self.0.lock().unwrap();
+        if name == "heka-bridge" && *refusals > 0 {
+            *refusals -= 1;
+            return Err(std::io::Error::other("no more threads"));
+        }
+        SystemThreads.spawn(name, task)
+    }
+}
+
+fn flaky() -> (Supervisor, FakeBus, Arc<FlakyThreads>) {
+    let (supervisor, bus) = setup();
+    let threads = Arc::new(FlakyThreads::default());
+    let supervisor = supervisor.spawning_with(Arc::clone(&threads) as Arc<dyn Threads>);
+    (supervisor, bus, threads)
+}
+
+const NO_THREAD: &str = "cannot start a thread: no more threads";
+
+#[test]
+fn a_bridge_that_cannot_start_a_thread_is_tried_again_on_the_same_link() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, threads) = flaky();
+    threads.refuse_next(1);
+    let link = LinkHandle::default();
+
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    assert!(bus.unplugged(0));
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Waiting);
+    assert_eq!(
+        supervisor.controllers()[0].error.as_deref(),
+        Some(NO_THREAD)
+    );
+    supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
+    assert_eq!(supervisor.controllers()[0].error, None);
+    shows_input_from(&bus, 1, &link);
+}
+
+#[test]
+fn a_held_controller_that_cannot_start_a_thread_on_return_is_tried_again() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, threads) = flaky();
+    let first = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    first.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    threads.refuse_next(1);
+    let back = LinkHandle::default();
+    supervisor.link_arrived(mac(1), back.reader(), t0);
+    assert!(bus.unplugged(0));
+
+    supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
+    shows_input_from(&bus, 1, &back);
+}
+
+#[test]
+fn a_move_to_usb_that_cannot_start_a_thread_is_tried_again() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, threads) = flaky();
+    supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+
+    threads.refuse_next(1);
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+    assert!(bus.unplugged(0));
+
+    supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
+    shows_input_from(&bus, 1, &usb);
+}
+
+#[test]
+fn a_watch_that_cannot_start_a_thread_is_tried_again_at_the_next_poll() {
+    let t0 = Instant::now();
+    let threads = Arc::new(FlakyThreads::default());
+    threads.refuse_next(1);
+    let mut supervisor = Supervisor::without_bus(Settings::default())
+        .spawning_with(Arc::clone(&threads) as Arc<dyn Threads>);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    assert_eq!(
+        supervisor.controllers()[0].error.as_deref(),
+        Some(NO_THREAD)
+    );
+
+    supervisor.poll(t0);
+
+    assert_eq!(supervisor.controllers()[0].error, None);
+    shows_live_input(&supervisor, 0, &link);
+}
+
+#[test]
+fn two_preference_changes_are_both_kept() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.change_preference(
+        mac(1),
+        PreferenceChange::Rumble(RumbleStrength::percent(25)),
+    );
+    let preferences = supervisor.change_preference(
+        mac(1),
+        PreferenceChange::Lightbar(Some(LightbarChoice::Colour(PINK))),
+    );
+
+    let expected = Preferences {
+        rumble: RumbleStrength::percent(25),
+        ..pink()
+    };
+    assert_eq!(preferences, expected);
+    assert_eq!(supervisor.controllers()[0].preferences, expected);
+    wait_until(|| turned_pink(&link));
 }

@@ -27,7 +27,7 @@ Reading them sends nothing to the Controller but the request.
 - `Compatible` rumble sets `valid_flag0` to compatible vibration and haptics select; `CompatibleV2` sets haptics select there and compatible vibration 2 in `valid_flag2`.
 - Player lights are five bits from bit 0 on the left (`player_ids` in `dualsense_set_player_leds`).
 - The default lightbar colour is the blue `dualsense_create` gives a DualSense when nothing chooses one.
-- Over USB the lightbar takes a colour at once. Over Bluetooth the DualSense keeps control of its lightbar until a setup report fades its own colour out (`dualsense_reset_leds`, `DS_OUTPUT_LIGHTBAR_SETUP_LIGHT_OUT`), so that report precedes the first colour and changes nothing else. Resending it after a failed write is owed: #45.
+- Over USB the lightbar takes a colour at once. Over Bluetooth the DualSense keeps control of its lightbar until a setup report fades its own colour out (`dualsense_reset_leds`, `DS_OUTPUT_LIGHTBAR_SETUP_LIGHT_OUT`), so that report precedes the first colour and changes nothing else. It counts as sent once it has been written, so a failed write sends it again.
 
 ## Rumble mode
 

@@ -4,10 +4,10 @@ HidHide keeps a cloak switch, a list of hidden devices (by device instance path)
 
 ## Rules
 
-- Every change is written to a journal before it is made, and the journal is saved durably first. If it cannot be saved or read, nothing is changed. Undoing happens in reverse order, and each change is undone before it leaves the journal, so a crash in between leaves an entry whose undo finds nothing to do.
+- Every change is written to a journal before it is made, and the journal is saved durably first. If it cannot be saved or read, nothing is changed, including after a recovery that could not read it. Undoing happens in reverse order, and each change is undone before it leaves the journal, so a crash in between leaves an entry whose undo finds nothing to do.
 - A device or application already listed, and cloaking already on, belong to the player or another tool: they are not journalled and never removed.
 - The journal is a small text file at `%LOCALAPPDATA%\heka\hiding.journal`, written aside and renamed over, and removed when empty.
-- heka allows itself before it hides a device, so it never loses sight of a Controller. With the inverse application list, listing heka would deny it, so it stays off the list (warning about that is #17).
+- heka allows itself before it hides a device, so it never loses sight of a Controller. With the inverse application list, listing heka would deny it, so it stays off the list. Games then see Hidden Controllers, so the window warns while it is on; heka never changes it.
 - Device instance paths compare without regard to case, as HidHide compares them.
 - Each Controller is a hiding owner, keyed by MAC address, and each of its Links is hidden. A Link another owner still wants stays hidden. When no owner wants anything, everything heka changed is undone, except that heka stays allowed until `restore_all`.
 
@@ -17,9 +17,11 @@ HidHide keeps a cloak switch, a list of hidden devices (by device instance path)
 
 ## In the app
 
+- The logic is `Hider` in `heka-core`, tested without the driver. Warnings are typed, each with its own cause, so that the success of one thing never clears another's.
 - A Controller is Hidden while Bridged or Held and restored when its Virtual Controller is removed. Every Link is hidden, including one that arrives later; every Link is tried, so one that cannot be hidden does not leave the others visible. A Link's device is recorded before the Supervisor hears of it.
 - A Controller the player lets games see is never hidden, and is restored as soon as they say so.
-- Failed hides and a failed self-allow are retried every poll, for example while HidHide's own client holds the driver; Bridging goes on meanwhile. Retrying failed restores is #17.
+- Failed hides and a failed self-allow are retried every poll, for example while HidHide's own client holds the driver; Bridging goes on meanwhile. Failed restores, the recovery at start among them, are retried every poll too, and keep what is wanted Hidden again meanwhile.
+- The inverse application list is read every 2 seconds, rather than every poll, because the control device takes one client at a time.
 - Without HidHide every hiding failure follows from that and the setup screen already says so, so no separate note is shown.
 
 ## Driver interface

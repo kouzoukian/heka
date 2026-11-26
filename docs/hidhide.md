@@ -88,9 +88,9 @@ The logic lives in `crates/heka-core/src/hiding.rs` (unit tested in
   interface or other applications (`FilterDriverProxy::DeviceStatus` and
   `HidHideClient/src/HidHideClient.cpp`, string `IDS_STATIC_MESSAGEBOX_IN_USE` in
   `HidHideClient/HidHideClient.rc`).
-- heka maps it to `HidHideError::InUse`, shown in the window as: "HidHide is busy: close
-  the HidHide Configuration Client or HidHideCLI so heka can hide the Controller. Games may
-  see the Controller twice." heka retries every poll and the message clears once hiding
+- heka maps it to `HidHideError::InUse`: "HidHide is busy: close the HidHide
+  Configuration Client or HidHideCLI". The window says whether hiding or restoring failed
+  around it. heka retries every poll and each warning clears once what it is about
   succeeds. `ERROR_FILE_NOT_FOUND` means the driver is not installed or not running.
 
 ## Do not use HidHideCLI to look

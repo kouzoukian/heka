@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::{Mutex, PoisonError};
 
 use crate::feedback::FeedbackSource;
 use crate::state::ControllerState;
@@ -47,5 +48,27 @@ impl fmt::Display for VirtualError {
 impl std::error::Error for VirtualError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.0.as_ref())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VirtualFailure {
+    NotReleased(String),
+    NotUnplugged(String),
+}
+
+#[derive(Debug, Default)]
+pub struct VirtualFailures(Mutex<Vec<VirtualFailure>>);
+
+impl VirtualFailures {
+    pub fn record(&self, failure: VirtualFailure) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(failure);
+    }
+
+    pub fn take(&self) -> Vec<VirtualFailure> {
+        std::mem::take(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }

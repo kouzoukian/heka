@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
-use heka_core::preferences::Preferences;
+use heka_core::preferences::{PreferenceChange, Preferences};
 use heka_core::setup::Missing;
 use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
@@ -27,7 +27,7 @@ pub enum Command {
     Start(MacAddress),
     SetOutputType(MacAddress, OutputType),
     SetNickname(MacAddress, String),
-    SetPreferences(MacAddress, Preferences),
+    ChangePreference(MacAddress, PreferenceChange),
     CheckDrivers,
 }
 
@@ -187,10 +187,8 @@ impl ControllerEntry {
         self.nickname.as_deref().unwrap_or(self.name)
     }
 
-    pub fn prefer(&self, change: impl FnOnce(&mut Preferences)) -> Option<Command> {
-        let mut preferences = self.preferences;
-        change(&mut preferences);
-        (preferences != self.preferences).then_some(Command::SetPreferences(self.mac, preferences))
+    pub fn prefer(&self, change: PreferenceChange) -> Command {
+        Command::ChangePreference(self.mac, change)
     }
 
     pub fn short_mac(&self) -> String {

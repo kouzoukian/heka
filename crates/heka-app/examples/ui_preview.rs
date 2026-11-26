@@ -125,17 +125,13 @@ impl Backend for Fake {
         let t = now.duration_since(self.started).as_secs_f32();
         let mut controllers = self.controllers.borrow().clone();
         for entry in &mut controllers {
-            if entry.bus_missing && entry.state != EntryState::Stopped {
+            if entry.active_link.is_some() {
                 entry.pad = Some(moving_pad(t));
             }
-            match entry.state {
-                EntryState::Bridged => entry.pad = Some(moving_pad(t)),
-                EntryState::Held { .. } => {
-                    entry.state = EntryState::Held {
-                        seconds_left: 30 - (t as u64 % 30),
-                    };
-                }
-                EntryState::Stopped | EntryState::NotBridged => {}
+            if let EntryState::Held { .. } = entry.state {
+                entry.state = EntryState::Held {
+                    seconds_left: 30 - (t as u64 % 30),
+                };
             }
         }
         let missing = self.missing.borrow().clone();
@@ -160,7 +156,7 @@ impl Backend for Fake {
             | Command::Start(mac)
             | Command::SetOutputType(mac, _)
             | Command::SetNickname(mac, _)
-            | Command::SetPreferences(mac, _) => *mac,
+            | Command::ChangePreference(mac, _) => *mac,
             Command::CheckDrivers => {
                 self.missing.borrow_mut().clear();
                 for entry in controllers.iter_mut() {
@@ -176,7 +172,6 @@ impl Backend for Fake {
         match command {
             Command::Stop(_) => {
                 entry.state = EntryState::Stopped;
-                entry.pad = None;
                 entry.error = None;
             }
             Command::Start(_) => entry.state = EntryState::Bridged,
@@ -185,7 +180,7 @@ impl Backend for Fake {
                 let name = name.trim();
                 entry.nickname = (!name.is_empty()).then(|| name.to_owned());
             }
-            Command::SetPreferences(_, preferences) => entry.preferences = preferences,
+            Command::ChangePreference(_, change) => entry.preferences.change(change),
             Command::CheckDrivers => {}
         }
     }
