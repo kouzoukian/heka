@@ -121,6 +121,11 @@ impl Lifecycle {
         &self.settings
     }
 
+    /// For settings that change nothing in the lifecycle.
+    pub(crate) fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
+    }
+
     /// Every listed Controller in arrival order: connected ones, and Held ones.
     pub fn controllers(&self) -> impl Iterator<Item = (MacAddress, Phase)> + '_ {
         self.entries.iter().map(|entry| (entry.mac, entry.phase))

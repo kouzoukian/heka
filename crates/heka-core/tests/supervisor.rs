@@ -8,10 +8,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use heka_core::calibration::Calibration;
+use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar};
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
-use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{
+    ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
+    ReportFormat,
+};
 use heka_core::mac::MacAddress;
+use heka_core::preferences::Preferences;
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
@@ -23,6 +29,8 @@ use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, V
 struct Script {
     reports: VecDeque<Vec<u8>>,
     lost: bool,
+    /// The output reports sent to the Controller.
+    written: Vec<Vec<u8>>,
 }
 
 /// A Link the test feeds reports to and can pull out. A DualSense on USB unless
@@ -92,6 +100,33 @@ impl LinkReader for FakeLink {
                 LinkRead::Timeout
             }
         }
+    }
+
+    fn feedback_writer(&mut self) -> Option<Box<dyn LinkWriter>> {
+        Some(Box::new(FakeWriter(self.0.clone())))
+    }
+}
+
+struct FakeWriter(LinkHandle);
+
+impl LinkWriter for FakeWriter {
+    fn format(&self) -> FeedbackFormat {
+        FeedbackFormat::DualSenseUsb(RumbleMode::CompatibleV2)
+    }
+
+    fn write(&mut self, report: &[u8]) -> Result<(), LinkWriteError> {
+        (self.0).0.lock().unwrap().written.push(report.to_vec());
+        Ok(())
+    }
+}
+
+/// A game that never sends Feedback.
+struct QuietGame;
+
+impl FeedbackSource for QuietGame {
+    fn next(&mut self, timeout: Duration) -> FeedbackEvent {
+        std::thread::sleep(timeout);
+        FeedbackEvent::Timeout
     }
 }
 
@@ -165,6 +200,10 @@ impl VirtualController for FakeController {
     fn unplug(self: Box<Self>) -> Result<(), VirtualError> {
         self.0.lock().unwrap().unplugged = true;
         Ok(())
+    }
+
+    fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
+        Some(Box::new(QuietGame))
     }
 }
 
@@ -665,4 +704,72 @@ fn without_a_bus_the_active_link_is_read_and_follows_usb() {
         }]
     );
     shows_input_from(&bus, 0, &bluetooth);
+}
+
+const PINK: Lightbar = Lightbar {
+    red: 255,
+    green: 0,
+    blue: 128,
+};
+
+fn pink() -> Preferences {
+    Preferences {
+        lightbar: Some(PINK),
+        ..Preferences::default()
+    }
+}
+
+/// True once the Controller at the end of this Link has been told to turn pink.
+fn turned_pink(link: &LinkHandle) -> bool {
+    let report = usb_output_report(
+        &Feedback {
+            lightbar: Some(PINK),
+            ..Feedback::OFF
+        },
+        RumbleMode::CompatibleV2,
+    );
+    link.0.lock().unwrap().written.contains(&report.to_vec())
+}
+
+#[test]
+fn new_preferences_reach_a_bridged_controller_at_once() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.set_preferences(mac(1), pink());
+
+    wait_until(|| turned_pink(&link));
+    assert_eq!(supervisor.controllers()[0].preferences, pink());
+    assert_eq!(supervisor.settings().controller(mac(1)).preferences, pink());
+    assert_eq!(bus.plugged(), 1, "the Virtual Controller is not replaced");
+}
+
+#[test]
+fn remembered_preferences_apply_to_an_arriving_controller() {
+    let mut settings = Settings::default();
+    settings.set_preferences(mac(1), pink());
+    let mut supervisor = Supervisor::new(Box::new(FakeBus::default()), settings);
+    let link = LinkHandle::default();
+
+    supervisor.link_arrived(mac(1), link.reader(), Instant::now());
+
+    wait_until(|| turned_pink(&link));
+}
+
+#[test]
+fn a_nickname_is_listed_and_remembered_without_touching_the_bridge() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    supervisor.set_nickname(mac(1), "Sofa");
+
+    assert_eq!(
+        supervisor.controllers()[0].nickname.as_deref(),
+        Some("Sofa")
+    );
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
+    assert_eq!(bus.plugged(), 1);
 }

@@ -7,7 +7,7 @@
 
 use crate::calibration::{self, CALIBRATION_BLOCK_LEN, Calibration};
 use crate::crc;
-use crate::feedback::Feedback;
+use crate::feedback::{Feedback, PlayerLights};
 use crate::link::ReportError;
 use crate::mac::MacAddress;
 use crate::state::{Battery, Buttons, Charge, ControllerState, Finger, Motion, Stick};
@@ -282,6 +282,7 @@ const OUT_MOTOR_RIGHT: usize = 3; // common.motor_right
 const OUT_MOTOR_LEFT: usize = 4; // common.motor_left
 const OUT_VALID_FLAG1: usize = 2; // common.valid_flag1
 const OUT_VALID_FLAG2: usize = 39; // common.valid_flag2
+const OUT_PLAYER_LEDS: usize = 44; // common.player_leds
 const OUT_LIGHTBAR_RED: usize = 45; // common.lightbar_red
 const OUT_LIGHTBAR_GREEN: usize = 46; // common.lightbar_green
 const OUT_LIGHTBAR_BLUE: usize = 47; // common.lightbar_blue
@@ -290,6 +291,19 @@ const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0; // DS_OUTPUT_VALID_FLAG0_COMPATIB
 const FLAG0_HAPTICS_SELECT: u8 = 1 << 1; // DS_OUTPUT_VALID_FLAG0_HAPTICS_SELECT
 const FLAG1_LIGHTBAR_CONTROL_ENABLE: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG1_LIGHTBAR_CONTROL_ENABLE
 const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2; // DS_OUTPUT_VALID_FLAG2_COMPATIBLE_VIBRATION2
+const FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE: u8 = 1 << 4; // DS_OUTPUT_VALID_FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE
+
+/// Which of the five player lights show, one bit each from bit 0 on the left
+/// (`player_ids` in `dualsense_set_player_leds`).
+fn player_leds(lights: PlayerLights) -> u8 {
+    match lights {
+        PlayerLights::Off => 0,
+        PlayerLights::One => 0b00100,
+        PlayerLights::Two => 0b01010,
+        PlayerLights::Three => 0b10101,
+        PlayerLights::Four => 0b11011,
+    }
+}
 
 /// How a DualSense imitates classic two-motor rumble with its haptic actuators.
 ///
@@ -332,7 +346,8 @@ pub fn rumble_mode(product_id: u16, firmware_info: Option<&[u8]>) -> RumbleMode 
 }
 
 /// Builds the USB output report that sets the rumble motors and, when the
-/// Feedback has one, the lightbar colour. Nothing else on the Controller changes.
+/// Feedback has them, the lightbar colour and the player lights. Nothing else on
+/// the Controller changes.
 ///
 /// The large (Xbox left) motor drives the DualSense left motor, as the kernel maps
 /// a force-feedback effect's strong magnitude to `motor_left`. Over USB the
@@ -353,6 +368,10 @@ pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTP
         report[OUT_LIGHTBAR_RED] = lightbar.red;
         report[OUT_LIGHTBAR_GREEN] = lightbar.green;
         report[OUT_LIGHTBAR_BLUE] = lightbar.blue;
+    }
+    if let Some(lights) = feedback.player_lights {
+        report[OUT_VALID_FLAG1] |= FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE;
+        report[OUT_PLAYER_LEDS] = player_leds(lights);
     }
     report
 }

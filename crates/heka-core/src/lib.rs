@@ -13,6 +13,7 @@ pub mod hiding;
 pub mod lifecycle;
 pub mod link;
 pub mod mac;
+pub mod preferences;
 pub mod ps4;
 pub mod settings;
 pub mod setup;

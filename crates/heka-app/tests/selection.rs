@@ -2,6 +2,7 @@
 
 use heka_app::ui::model::{ControllerEntry, EntryState, Selection};
 use heka_core::mac::MacAddress;
+use heka_core::preferences::Preferences;
 use heka_core::virtual_controller::OutputType;
 
 fn mac(last: u8) -> MacAddress {
@@ -14,6 +15,9 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
         .map(|&last| ControllerEntry {
             mac: mac(last),
             name: "DualSense",
+            nickname: None,
+            has_player_lights: true,
+            preferences: Preferences::default(),
             experimental: false,
             active_link: None,
             battery: None,

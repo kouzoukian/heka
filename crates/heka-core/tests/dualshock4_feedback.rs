@@ -13,6 +13,7 @@ fn feedback(large: u8, small: u8, colour: Option<(u8, u8, u8)>) -> Feedback {
     Feedback {
         rumble: Rumble { large, small },
         lightbar: colour.map(|(red, green, blue)| Lightbar { red, green, blue }),
+        ..Feedback::OFF
     }
 }
 

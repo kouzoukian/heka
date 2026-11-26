@@ -7,10 +7,12 @@
 //! Hiding follows the lifecycle's changes: a Controller is Hidden with HidHide when
 //! it is Bridged and again when it returns from a Hold, stays Hidden while Held, and
 //! is restored whenever its Virtual Controller is removed. Every Link of a Hidden
-//! Controller is Hidden, including one that arrives later. A start after a crash
-//! first restores what the crashed run Hid. Before looking for Controllers heka adds
-//! itself to HidHide's allowed applications, so it also finds a Controller another
-//! tool hid; it stays allowed until it quits.
+//! Controller is Hidden, including one that arrives later. A Controller the player
+//! lets games see is never Hidden, and is restored as soon as they say so.
+//!
+//! A start after a crash first restores what the crashed run Hid. Before looking for
+//! Controllers heka adds itself to HidHide's allowed applications, so it also finds
+//! a Controller another tool hid; it stays allowed until it quits.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -23,6 +25,7 @@ use heka_app::text;
 use heka_core::hiding::{DeviceInstancePath, Hiding};
 use heka_core::lifecycle::{Change, Removal};
 use heka_core::mac::MacAddress;
+use heka_core::preferences::Preferences;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
 use heka_core::virtual_controller::OutputType;
@@ -60,6 +63,8 @@ enum Command {
     Stop(MacAddress),
     Start(MacAddress),
     SetOutputType(MacAddress, OutputType),
+    SetNickname(MacAddress, String),
+    SetPreferences(MacAddress, Preferences),
     CheckDrivers,
     Quit,
 }
@@ -113,6 +118,17 @@ impl Bridging {
         let _ = self.commands.send(Command::SetOutputType(mac, output_type));
     }
 
+    /// Names the Controller; a blank name takes the name away.
+    pub fn set_nickname(&self, mac: MacAddress, name: String) {
+        let _ = self.commands.send(Command::SetNickname(mac, name));
+    }
+
+    pub fn set_preferences(&self, mac: MacAddress, preferences: Preferences) {
+        let _ = self
+            .commands
+            .send(Command::SetPreferences(mac, preferences));
+    }
+
     /// Looks for the drivers again, for example after the player installed one.
     pub fn check_drivers(&self) {
         let _ = self.commands.send(Command::CheckDrivers);
@@ -140,7 +156,8 @@ impl Drop for Bridging {
 }
 
 fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
-    let mut hider = Hider::open();
+    let settings = settings_file::load();
+    let mut hider = Hider::open(settings.never_hidden().collect());
     let publish = |status: Status, setup: &Setup, controllers, hider: &Hider| {
         // Without HidHide every hiding failure follows from that, and the setup
         // screen already says so.
@@ -157,19 +174,47 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
         };
     };
 
-    let mut supervisor = Supervisor::without_bus(settings_file::load());
+    let mut supervisor = Supervisor::without_bus(settings);
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     hider.follow(&changes);
     let mut discovery = Discovery::default();
+    let mut status = Status::Starting;
+    let mut looked: Option<Instant> = None;
+    let mut unsaved = false;
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
+        // Names and preferences arrive in bursts, as the player types or drags a
+        // colour. Those are only applied: looking for Controllers and saving keep
+        // their usual pace.
+        let burst = matches!(
+            command,
+            Ok(Command::SetNickname(..) | Command::SetPreferences(..))
+        );
         let changes = match command {
             Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
-            Ok(Command::Stop(mac)) => supervisor.stop(mac, now),
-            Ok(Command::Start(mac)) => supervisor.start(mac, now),
+            Ok(Command::Stop(mac)) => {
+                unsaved = true;
+                supervisor.stop(mac, now)
+            }
+            Ok(Command::Start(mac)) => {
+                unsaved = true;
+                supervisor.start(mac, now)
+            }
             Ok(Command::SetOutputType(mac, output_type)) => {
+                unsaved = true;
                 supervisor.set_output_type(mac, output_type, now)
+            }
+            Ok(Command::SetNickname(mac, name)) => {
+                unsaved = true;
+                supervisor.set_nickname(mac, &name);
+                Vec::new()
+            }
+            Ok(Command::SetPreferences(mac, preferences)) => {
+                unsaved = true;
+                supervisor.set_preferences(mac, preferences);
+                hider.set_hide(mac, preferences.hide);
+                Vec::new()
             }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
@@ -178,21 +223,26 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             }
             Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
-        if matches!(
-            command,
-            Ok(Command::Stop(_) | Command::Start(_) | Command::SetOutputType(..))
-        ) {
-            settings_file::save(supervisor.settings());
-        }
         hider.follow(&changes);
 
-        let status = match discovery.scan(&mut supervisor, &mut hider, now) {
-            Ok(()) => Status::Running,
-            Err(error) => Status::HidError(error),
-        };
-        hider.follow(&supervisor.poll(now));
-        hider.retry();
-        publish(status, &detected, supervisor.controllers(), &hider);
+        let due = looked.is_none_or(|at| now.duration_since(at) >= POLL_INTERVAL);
+        if !burst || due {
+            if unsaved {
+                settings_file::save(supervisor.settings());
+                unsaved = false;
+            }
+            status = match discovery.scan(&mut supervisor, &mut hider, now) {
+                Ok(()) => Status::Running,
+                Err(error) => Status::HidError(error),
+            };
+            hider.follow(&supervisor.poll(now));
+            hider.retry();
+            looked = Some(now);
+        }
+        publish(status.clone(), &detected, supervisor.controllers(), &hider);
+    }
+    if unsaved {
+        settings_file::save(supervisor.settings());
     }
     hider.follow(&supervisor.quit());
     hider.restore_all();
@@ -208,6 +258,8 @@ struct Hider {
     devices: HashMap<MacAddress, HashMap<CString, Result<DeviceInstancePath, String>>>,
     /// Controllers that should be Hidden: Bridged or Held.
     wanted: HashSet<MacAddress>,
+    /// Controllers the player lets games see, never Hidden.
+    seen: HashSet<MacAddress>,
     /// Controllers to Hide that are not Hidden yet, retried every poll, for
     /// example while HidHide's own client holds the driver.
     pending: HashSet<MacAddress>,
@@ -220,11 +272,12 @@ struct Hider {
 impl Hider {
     /// Opens HidHide, undoes whatever a killed run left Hidden, and allows heka so
     /// that the first look for Controllers also finds ones other tools hid.
-    fn open() -> Self {
+    fn open(seen: HashSet<MacAddress>) -> Self {
         let mut hider = Self {
             hiding: None,
             devices: HashMap::new(),
             wanted: HashSet::new(),
+            seen,
             pending: HashSet::new(),
             allow_pending: false,
             note: None,
@@ -323,11 +376,32 @@ impl Hider {
         }
     }
 
+    /// The player chooses whether this Controller is Hidden while it is Bridged
+    /// or Held.
+    fn set_hide(&mut self, mac: MacAddress, hide: bool) {
+        if hide {
+            if self.seen.remove(&mac) && self.wanted.contains(&mac) {
+                self.pending.insert(mac);
+                self.hide(mac);
+            }
+        } else if self.seen.insert(mac) {
+            // A failure to Hide it no longer matters.
+            if self.pending.remove(&mac) && self.pending.is_empty() && !self.allow_pending {
+                self.note = None;
+            }
+            self.release(mac);
+        }
+    }
+
     fn hide(&mut self, mac: MacAddress) {
         let Some(hiding) = &self.hiding else {
             self.pending.remove(&mac);
             return;
         };
+        if self.seen.contains(&mac) {
+            self.pending.remove(&mac);
+            return;
+        }
         let devices = self.devices.get(&mac).filter(|devices| !devices.is_empty());
         let result = match devices {
             // Every Link is tried, so that one that cannot be Hidden does not

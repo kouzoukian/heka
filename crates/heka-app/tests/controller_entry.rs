@@ -10,6 +10,7 @@ use heka_core::calibration::Calibration;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
+use heka_core::preferences::{Preferences, RumbleStrength};
 use heka_core::settings::Settings;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
@@ -24,6 +25,8 @@ fn view(phase: Phase) -> ControllerView {
         model: ControllerModel::DualSense,
         phase,
         output_type: OutputType::Xbox,
+        nickname: None,
+        preferences: Preferences::default(),
         active_link: Some(LinkKind::Usb),
         live: Arc::new(LiveInput::default()),
         error: None,
@@ -309,5 +312,42 @@ fn the_status_bar_counts_controllers_and_bridges() {
     assert_eq!(
         summary(&[Phase::Bridged, Phase::Stopped]),
         "2 Controllers, 1 Bridged"
+    );
+}
+
+#[test]
+fn an_entry_is_called_by_its_nickname_when_it_has_one() {
+    let now = Instant::now();
+    let mut named = view(Phase::Bridged);
+    assert_eq!(entry_of(&named, now).title(), text::DUALSENSE);
+
+    named.nickname = Some("Sofa".into());
+    assert_eq!(entry_of(&named, now).title(), "Sofa");
+}
+
+#[test]
+fn only_a_dualsense_has_player_lights() {
+    let now = Instant::now();
+    let mut other = view(Phase::Bridged);
+    assert!(entry_of(&other, now).has_player_lights);
+
+    other.model = ControllerModel::DualShock4;
+    assert!(!entry_of(&other, now).has_player_lights);
+}
+
+#[test]
+fn only_a_changed_preference_asks_for_anything() {
+    let entry = entry_of(&view(Phase::Bridged), Instant::now());
+
+    assert_eq!(entry.prefer(|preferences| preferences.hide = true), None);
+    assert_eq!(
+        entry.prefer(|preferences| preferences.rumble = RumbleStrength::OFF),
+        Some(Command::SetPreferences(
+            MAC,
+            Preferences {
+                rumble: RumbleStrength::OFF,
+                ..Preferences::default()
+            }
+        ))
     );
 }

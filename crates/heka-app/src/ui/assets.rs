@@ -9,7 +9,7 @@ use heka_core::link::LinkKind;
 use heka_core::state::{Battery, Charge};
 
 // The icons heka uses beyond gpui-component's default bundle.
-icon_assets!(ExtraIcons, [Bluetooth, Gamepad2, Unplug, Usb]);
+icon_assets!(ExtraIcons, [Bluetooth, Gamepad2, Palette, Unplug, Usb]);
 
 /// gpui-component's default icons and heka's own few.
 pub struct Assets;

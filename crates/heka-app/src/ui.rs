@@ -8,4 +8,7 @@ pub mod metrics;
 pub mod model;
 pub mod pad;
 pub mod panel;
+pub mod picker;
+pub mod segmented;
+pub mod settings;
 pub mod view;

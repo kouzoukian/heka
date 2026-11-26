@@ -2,12 +2,13 @@
 //!
 //! It touches no HID device, ViGEmBus or HidHide.
 //!
-//! `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--first N] [--seconds N]`
+//! `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--first N] [--settings]
+//! [--seconds N]`
 //!
 //! `--empty` shows the window with no Controller, `--missing` adds the setup
 //! screen for both drivers, `--first N` lists the Nth Controller first, so that it
-//! is the one selected, and `--seconds N` closes the window by itself. It prints
-//! how often the window samples its backend.
+//! is the one selected, `--settings` opens on its settings, and `--seconds N` closes
+//! the window by itself. It prints how often the window samples its backend.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -20,6 +21,7 @@ use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view;
 use heka_core::link::LinkKind;
 use heka_core::mac::MacAddress;
+use heka_core::preferences::Preferences;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::virtual_controller::OutputType;
@@ -41,6 +43,9 @@ impl Fake {
         let entry = |last: u8, state, active_link, battery, output_type| ControllerEntry {
             mac: MacAddress([0x02, 0, 0, 0, 0, last]),
             name: text::DUALSENSE,
+            nickname: None,
+            has_player_lights: true,
+            preferences: Preferences::default(),
             experimental: false,
             active_link,
             battery,
@@ -83,6 +88,8 @@ impl Fake {
         ];
         controllers[2].name = text::DUALSHOCK4;
         controllers[2].experimental = true;
+        controllers[2].has_player_lights = false;
+        controllers[1].nickname = Some("Sofa".into());
         controllers[3].error = Some("made-up error for the preview".into());
         if missing {
             // Without ViGEmBus nothing is Bridged, but input still shows.
@@ -163,8 +170,12 @@ impl Backend for Fake {
     fn command(&self, command: Command) {
         eprintln!("ui_preview: {command:?}");
         let mut controllers = self.controllers.borrow_mut();
-        let mac = match command {
-            Command::Stop(mac) | Command::Start(mac) | Command::SetOutputType(mac, _) => mac,
+        let mac = match &command {
+            Command::Stop(mac)
+            | Command::Start(mac)
+            | Command::SetOutputType(mac, _)
+            | Command::SetNickname(mac, _)
+            | Command::SetPreferences(mac, _) => *mac,
             Command::CheckDrivers => {
                 // As if the player had installed both.
                 self.missing.borrow_mut().clear();
@@ -186,6 +197,11 @@ impl Backend for Fake {
             }
             Command::Start(_) => entry.state = EntryState::Bridged,
             Command::SetOutputType(_, output_type) => entry.output_type = output_type,
+            Command::SetNickname(_, name) => {
+                let name = name.trim();
+                entry.nickname = (!name.is_empty()).then(|| name.to_owned());
+            }
+            Command::SetPreferences(_, preferences) => entry.preferences = preferences,
             Command::CheckDrivers => {}
         }
     }
@@ -220,6 +236,7 @@ fn main() {
     let mut missing = false;
     let mut first = 1;
     let mut seconds = None;
+    let mut settings = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -228,6 +245,7 @@ fn main() {
             "--first" => {
                 first = args.next().and_then(|n| n.parse().ok()).expect("--first N");
             }
+            "--settings" => settings = true,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
             other => panic!("unknown argument {other}"),
         }
@@ -236,7 +254,12 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx| {
             view::init(cx);
-            view::open_window(cx, Rc::new(Fake::new(empty, missing, first)))
+            let open = if settings {
+                view::open_window_in_settings
+            } else {
+                view::open_window
+            };
+            open(cx, Rc::new(Fake::new(empty, missing, first)))
                 .expect("failed to open the preview window");
             if let Some(seconds) = seconds {
                 cx.spawn(async move |cx| {

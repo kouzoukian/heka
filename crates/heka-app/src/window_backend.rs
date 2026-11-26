@@ -46,6 +46,8 @@ impl Backend for WindowBackend {
             Command::Stop(mac) => bridging.stop_controller(mac),
             Command::Start(mac) => bridging.start_controller(mac),
             Command::SetOutputType(mac, output_type) => bridging.set_output_type(mac, output_type),
+            Command::SetNickname(mac, name) => bridging.set_nickname(mac, name),
+            Command::SetPreferences(mac, preferences) => bridging.set_preferences(mac, preferences),
             Command::CheckDrivers => bridging.check_drivers(),
         }
     }

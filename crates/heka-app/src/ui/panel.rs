@@ -100,16 +100,25 @@ fn row(entry: &ControllerEntry, selected: bool, choose: Choose, theme: &Theme) -
             }
         })
         .child(icon(IconName::Gamepad2).text_color(entry_color(entry, theme)))
-        .child(entry.name)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(SMALL_TEXT)
-                .text_color(faint(theme))
-                .child(entry.short_mac()),
-        )
+        .map(|this| match &entry.nickname {
+            // The player's name tells it apart without its address.
+            Some(nickname) => this.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(SharedString::from(nickname.clone())),
+            ),
+            None => this.child(entry.name).child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(SMALL_TEXT)
+                    .text_color(faint(theme))
+                    .child(entry.short_mac()),
+            ),
+        })
         .child(end)
         .on_click(move |_, _, cx| choose(mac, cx))
 }

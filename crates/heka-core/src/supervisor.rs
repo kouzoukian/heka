@@ -1,6 +1,6 @@
 //! Carries out the Bridge lifecycle: owns every Link, Bridge and Virtual Controller.
 //!
-//! The caller finds Links and reports them, passes on the player's Stop and Start,
+//! The caller finds Links and reports them, passes on the player's choices,
 //! and calls [`Supervisor::poll`] regularly with the current time. Every call
 //! returns the [`Change`]s it carried out, in order, so that per-Controller side
 //! effects such as hiding can follow them (see [`crate::lifecycle`]).
@@ -18,6 +18,7 @@ use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
+use crate::preferences::{LivePreferences, Preferences};
 use crate::settings::Settings;
 use crate::virtual_controller::{OutputType, VirtualBus};
 use crate::watch::Watch;
@@ -34,6 +35,9 @@ pub struct ControllerView {
     pub model: ControllerModel,
     pub phase: Phase,
     pub output_type: OutputType,
+    /// What the player calls this Controller.
+    pub nickname: Option<String>,
+    pub preferences: Preferences,
     /// The Link heka reads, `None` while Held.
     pub active_link: Option<LinkKind>,
     /// The latest input while Bridged, or while connected and there is no bus.
@@ -57,6 +61,8 @@ struct Slot {
     /// As its Links say, remembered while it has none.
     model: ControllerModel,
     live: Arc<LiveInput>,
+    /// Shared with the Bridge, so that it follows the player's changes.
+    preferences: Arc<LivePreferences>,
     /// Every Link, in arrival order.
     links: Vec<LinkSlot>,
     /// The Link the Bridge or Watch reads.
@@ -191,11 +197,14 @@ impl Supervisor {
             .controllers()
             .map(|(mac, phase)| {
                 let slot = self.slots.get(&mac);
+                let settings = self.settings().controller(mac);
                 ControllerView {
                     mac,
                     model: slot.map(|slot| slot.model).unwrap_or_default(),
                     phase,
-                    output_type: self.settings().controller(mac).output_type,
+                    output_type: settings.output_type,
+                    nickname: settings.nickname,
+                    preferences: settings.preferences,
                     active_link: slot.and_then(Slot::active).map(|link| link.kind),
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone()),
@@ -339,6 +348,22 @@ impl Supervisor {
     ) -> Vec<Change> {
         let changes = self.lifecycle.set_output_type(mac, output_type, now);
         self.apply(changes, now)
+    }
+
+    /// The player names this Controller; a blank name takes the name away.
+    pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {
+        self.lifecycle.settings_mut().set_nickname(mac, name);
+    }
+
+    /// The player chooses this Controller's preferences. A running Bridge
+    /// follows them at once. Hiding is the caller's to carry out.
+    pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {
+        self.lifecycle
+            .settings_mut()
+            .set_preferences(mac, preferences);
+        if let Some(slot) = self.slots.get(&mac) {
+            slot.preferences.set(preferences);
+        }
     }
 
     /// Removes every Virtual Controller and closes every Link.
@@ -494,11 +519,14 @@ impl Supervisor {
     }
 
     /// Starts a Bridge from the Controller's Active Link to this Virtual Controller.
-    fn bridge_to(&mut self, mac: MacAddress, controller: Plugged) -> Result<(), String> {
+    fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), String> {
+        let preferences = self.settings().controller(mac).preferences;
         let slot = self.slot(mac);
         let link = slot
             .take_active()
             .ok_or("the Link was closed; reconnect the Controller")?;
+        slot.preferences.set(preferences);
+        controller.follow(Arc::clone(&slot.preferences));
         let bridge = Bridge::resume(link, controller, Arc::clone(&slot.live))
             .map_err(|e| format!("cannot start the input thread: {e}"))?;
         slot.bridge = Some(bridge);

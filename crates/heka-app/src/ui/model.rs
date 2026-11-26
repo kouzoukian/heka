@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
+use heka_core::preferences::Preferences;
 use heka_core::setup::Missing;
 use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
@@ -32,12 +33,15 @@ pub trait Backend {
 pub type SendCommand = Rc<dyn Fn(Command)>;
 
 /// Something the player asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Stop(MacAddress),
     Start(MacAddress),
     /// Replaces the Controller's Virtual Controller with one of this Output Type.
     SetOutputType(MacAddress, OutputType),
+    /// Names the Controller; a blank name takes the name away.
+    SetNickname(MacAddress, String),
+    SetPreferences(MacAddress, Preferences),
     /// Look for the drivers again.
     CheckDrivers,
 }
@@ -164,6 +168,11 @@ pub enum EntryState {
 pub struct ControllerEntry {
     pub mac: MacAddress,
     pub name: &'static str,
+    /// What the player calls this Controller.
+    pub nickname: Option<String>,
+    /// This kind of Controller has player lights.
+    pub has_player_lights: bool,
+    pub preferences: Preferences,
     /// heka's support for this kind of Controller is experimental.
     pub experimental: bool,
     /// `None` when the Controller has no Link.
@@ -189,6 +198,8 @@ impl ControllerEntry {
             model,
             phase,
             output_type,
+            nickname,
+            preferences,
             active_link,
             live,
             error,
@@ -205,6 +216,9 @@ impl ControllerEntry {
         Self {
             mac: *mac,
             name: text::controller(*model),
+            nickname: nickname.clone(),
+            has_player_lights: *model == ControllerModel::DualSense,
+            preferences: *preferences,
             experimental: *model == ControllerModel::DualShock4,
             active_link: *active_link,
             battery: input.and_then(|input| input.battery),
@@ -214,6 +228,19 @@ impl ControllerEntry {
             error: error.clone(),
             pad: input.map(|input| PadModel::from_state(&input)),
         }
+    }
+
+    /// What the window calls the Controller: the player's name for it, or its
+    /// model's.
+    pub fn title(&self) -> &str {
+        self.nickname.as_deref().unwrap_or(self.name)
+    }
+
+    /// What changing a preference asks for, if it changes anything.
+    pub fn prefer(&self, change: impl FnOnce(&mut Preferences)) -> Option<Command> {
+        let mut preferences = self.preferences;
+        change(&mut preferences);
+        (preferences != self.preferences).then_some(Command::SetPreferences(self.mac, preferences))
     }
 
     /// The last two bytes of the MAC address, to tell apart two Controllers of

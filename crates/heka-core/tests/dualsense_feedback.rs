@@ -11,13 +11,13 @@ use heka_core::dualsense::{
     PRODUCT_ID_DUALSENSE, PRODUCT_ID_DUALSENSE_EDGE, RumbleMode, bluetooth_output_report,
     rumble_mode, usb_output_report,
 };
-use heka_core::feedback::{Feedback, Lightbar, Rumble};
+use heka_core::feedback::{Feedback, Lightbar, PlayerLights, Rumble};
 use heka_core::link::FeedbackFormat;
 
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
         rumble: Rumble { large, small },
-        lightbar: None,
+        ..Feedback::OFF
     }
 }
 
@@ -89,6 +89,36 @@ fn a_lightbar_colour_is_sent_with_the_rumble() {
 fn no_lightbar_leaves_the_controllers_lightbar_alone() {
     let report = usb_output_report(&rumble(0, 0), RumbleMode::Compatible);
     assert_eq!(report[2] & 0x04, 0);
+}
+
+// valid_flag1 bit 4 enables the player lights; player_leds is byte 44.
+
+#[test]
+fn each_players_lights_are_sent_as_the_kernel_patterns_them() {
+    for (lights, pattern) in [
+        (PlayerLights::Off, 0x00),
+        (PlayerLights::One, 0x04),
+        (PlayerLights::Two, 0x0A),
+        (PlayerLights::Three, 0x15),
+        (PlayerLights::Four, 0x1B),
+    ] {
+        let feedback = Feedback {
+            player_lights: Some(lights),
+            ..Feedback::OFF
+        };
+        let report = usb_output_report(&feedback, RumbleMode::Compatible);
+        assert_eq!(
+            report.to_vec(),
+            expected(&[(0, 0x02), (1, 0x03), (2, 0x10), (44, pattern)]),
+            "{lights:?}"
+        );
+    }
+}
+
+#[test]
+fn no_player_lights_leaves_the_controllers_own_alone() {
+    let report = usb_output_report(&rumble(0, 0), RumbleMode::Compatible);
+    assert_eq!((report[2] & 0x10, report[44]), (0, 0));
 }
 
 // Bluetooth. Expected bytes are written out by hand from `struct

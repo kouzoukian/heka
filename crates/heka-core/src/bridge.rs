@@ -9,6 +9,10 @@
 //! Controller's return, a Stopped Controller's Link is kept open. Feedback travels
 //! with them: [`OpenLink`] keeps the Link's Feedback writer and [`Plugged`] keeps
 //! the Virtual Controller's Feedback source, so a later Bridge carries rumble too.
+//!
+//! What reaches the Controller is the game's Feedback shaped by the player's
+//! preferences, which [`Plugged::follow`] names and which may change while the
+//! Bridge runs.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,8 +20,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource};
-use crate::link::{LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights};
+use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::preferences::LivePreferences;
 use crate::state::ControllerState;
 use crate::virtual_controller::{VirtualController, VirtualError};
 
@@ -66,6 +71,8 @@ pub struct Plugged {
     feedback: Option<Box<dyn FeedbackSource>>,
     /// The Feedback games last sent, shown again when a Bridge moves to another Link.
     asked: Feedback,
+    /// What shapes that Feedback on its way to the Controller.
+    preferences: Arc<LivePreferences>,
 }
 
 impl Plugged {
@@ -75,7 +82,13 @@ impl Plugged {
             controller,
             feedback,
             asked: Feedback::OFF,
+            preferences: Arc::default(),
         }
+    }
+
+    /// Shapes the Feedback by these preferences, also as they change.
+    pub fn follow(&mut self, preferences: Arc<LivePreferences>) {
+        self.preferences = preferences;
     }
 
     /// Shows everything released and sticks centred.
@@ -133,6 +146,7 @@ pub struct Bridge {
     spare_writer: Option<Box<dyn LinkWriter>>,
     /// The Feedback games last sent, while no Feedback thread runs.
     asked: Feedback,
+    preferences: Arc<LivePreferences>,
 }
 
 impl Bridge {
@@ -151,6 +165,7 @@ impl Bridge {
     /// Controller to the Link, so a slow write never holds up input. It first
     /// shows the Feedback games last sent, so a Controller that moves to another
     /// Link keeps its rumble and lightbar, and it stops the rumble when the Bridge ends.
+    /// On the way the Feedback is shaped by the player's preferences.
     pub fn resume(
         link: OpenLink,
         controller: Plugged,
@@ -159,11 +174,13 @@ impl Bridge {
         let stop = Arc::new(AtomicBool::new(false));
         let (mut spare_source, mut spare_writer) = (None, None);
         let asked = controller.asked;
+        let preferences = controller.preferences;
         let feedback = match (controller.feedback, link.writer) {
             (Some(source), Some(writer)) => {
                 Some(thread::Builder::new().name("heka-feedback".into()).spawn({
                     let stop = Arc::clone(&stop);
-                    move || run_feedback(source, writer, asked, &stop)
+                    let preferences = Arc::clone(&preferences);
+                    move || run_feedback(source, writer, asked, &preferences, &stop)
                 })?)
             }
             (source, writer) => {
@@ -199,6 +216,7 @@ impl Bridge {
             spare_source,
             spare_writer,
             asked,
+            preferences,
         })
     }
 
@@ -228,10 +246,12 @@ impl Bridge {
             Ok(end) => end,
             Err(panic) => std::panic::resume_unwind(panic),
         };
+        let preferences = Arc::clone(&self.preferences);
         let plugged = |controller| Plugged {
             controller,
             feedback: source,
             asked,
+            preferences,
         };
         Some(match end {
             InputEnd::Stopped(reader, controller) => BridgeEnd::Stopped {
@@ -302,37 +322,68 @@ fn run(
     end
 }
 
-/// How long the Feedback thread waits for Feedback before checking for a stop.
+/// How long the Feedback thread waits for Feedback before checking for a stop
+/// or for changed preferences.
 const FEEDBACK_POLL: Duration = Duration::from_millis(50);
+
+/// A Controller's motors and lights, as far as one Link has set them.
+struct Output {
+    writer: Box<dyn LinkWriter>,
+    format: FeedbackFormat,
+    /// What the Controller shows. It is at rest until heka first sends Feedback,
+    /// so a Bridge that asks for nothing never sends an output report.
+    shown: Feedback,
+}
+
+impl Output {
+    fn show(&mut self, feedback: Feedback) {
+        // Kept unchanged on a failed write, so the next Feedback is sent again.
+        if feedback != self.shown
+            && self
+                .format
+                .reports(&feedback)
+                .iter()
+                .all(|report| self.writer.write(report).is_ok())
+        {
+            self.shown = feedback;
+        }
+    }
+}
 
 /// Passes Feedback on until the Bridge ends, then hands both ends back.
 fn run_feedback(
     mut source: Box<dyn FeedbackSource>,
-    mut writer: Box<dyn LinkWriter>,
+    writer: Box<dyn LinkWriter>,
     mut asked: Feedback,
+    preferences: &LivePreferences,
     stop: &AtomicBool,
 ) -> FeedbackParts {
-    let mut format = writer.format();
-    // What the Controller shows. It is at rest until heka first sends Feedback,
-    // so a Bridge no game rumbles never sends an output report.
-    let mut shown = Feedback::OFF;
-    let mut show = |writer: &mut Box<dyn LinkWriter>, feedback: Feedback| {
-        // Kept unchanged on a failed write, so the next Feedback is sent again.
-        if feedback != shown
-            && format
-                .reports(&feedback)
-                .iter()
-                .all(|report| writer.write(report).is_ok())
-        {
-            shown = feedback;
-        }
+    let mut output = Output {
+        format: writer.format(),
+        writer,
+        shown: Feedback::OFF,
     };
-    show(&mut writer, asked);
+    let mut applied = preferences.get();
+    output.show(applied.apply(asked));
     while !stop.load(Ordering::Relaxed) {
-        match source.next(FEEDBACK_POLL) {
+        let event = source.next(FEEDBACK_POLL);
+        let chosen = preferences.get();
+        if chosen != applied {
+            let mut next = chosen.apply(asked);
+            // A light the player no longer chooses goes back to how it started.
+            if applied.lightbar.is_some() {
+                next.lightbar = next.lightbar.or(Some(Lightbar::DEFAULT));
+            }
+            if applied.player_lights.is_some() {
+                next.player_lights = next.player_lights.or(Some(PlayerLights::Off));
+            }
+            applied = chosen;
+            output.show(next);
+        }
+        match event {
             FeedbackEvent::Feedback(feedback) => {
                 asked = feedback;
-                show(&mut writer, feedback);
+                output.show(applied.apply(feedback));
             }
             FeedbackEvent::Timeout => {}
             FeedbackEvent::Closed => break,
@@ -340,6 +391,6 @@ fn run_feedback(
     }
     // The Bridge is ending, or the Virtual Controller is gone: nothing will stop
     // the motors after this. On a lost Link the write fails, which is harmless.
-    show(&mut writer, Feedback::OFF);
-    (source, writer, asked)
+    output.show(Feedback::OFF);
+    (source, output.writer, asked)
 }

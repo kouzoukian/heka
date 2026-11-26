@@ -37,6 +37,38 @@ pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
 pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Controller.";
 
+// The selected Controller's settings.
+pub const SETTINGS: &str = "Controller settings";
+pub const ROW_NAME: &str = "Name";
+pub const ROW_RUMBLE: &str = "Rumble";
+pub const ROW_LIGHTBAR: &str = "Light bar";
+pub const ROW_PLAYER_LIGHTS: &str = "Player lights";
+pub const ROW_HIDE: &str = "Hide from games";
+pub const DEFAULT: &str = "Default";
+pub const ON: &str = "On";
+pub const OFF: &str = "Off";
+pub const BLUE: &str = "Blue";
+pub const RED: &str = "Red";
+pub const GREEN: &str = "Green";
+pub const PINK: &str = "Pink";
+pub const ORANGE: &str = "Orange";
+pub const WHITE: &str = "White";
+pub const CUSTOM_COLOUR: &str = "Custom colour";
+pub const HUE: &str = "Hue";
+pub const SATURATION: &str = "Saturation";
+pub const LIGHTNESS: &str = "Lightness";
+pub const NAME_TIP: &str = "Shown in place of the Controller's model.";
+pub const RUMBLE_TIP: &str = "How strongly the Controller rumbles when a game asks it to.";
+pub const LIGHTBAR_TIP: &str =
+    "The colour while no game sets one. Default leaves the light bar to the Controller.";
+pub const PLAYER_LIGHTS_TIP: &str = "The white lights under the touchpad.";
+pub const HIDE_TIP: &str = "Off lets games see the Controller too, which can cause double input. Restart a running game after a change.";
+pub const SETTINGS_NOTE: &str = "Rumble and lights apply while the Controller is Bridged.";
+
+pub fn percent(percent: u8) -> String {
+    format!("{percent}%")
+}
+
 /// A Controller's name as the window shows it.
 pub fn controller(model: ControllerModel) -> &'static str {
     match model {

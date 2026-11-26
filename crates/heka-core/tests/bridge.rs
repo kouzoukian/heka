@@ -7,13 +7,16 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink};
+use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
-use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Rumble};
+use heka_core::feedback::{
+    Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights, Rumble,
+};
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
 };
+use heka_core::preferences::{LivePreferences, Preferences, RumbleStrength};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::virtual_controller::{OutputType, VirtualController, VirtualError};
 
@@ -355,7 +358,7 @@ fn a_failing_virtual_controller_is_removed_and_the_link_handed_back() {
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
         rumble: Rumble { large, small },
-        lightbar: None,
+        ..Feedback::OFF
     }
 }
 
@@ -567,5 +570,178 @@ fn a_bridge_moved_to_another_link_shows_the_games_last_feedback_there() {
     let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
     wait_until(|| !on_other.lock().unwrap().reports.is_empty());
     assert_eq!(on_other.lock().unwrap().reports[0], output_report(asked));
+    bridge.stop();
+}
+
+// Preferences shape the Feedback on its way to the Controller.
+
+const PINK: Lightbar = Lightbar {
+    red: 255,
+    green: 0,
+    blue: 128,
+};
+
+/// A running Bridge following preferences the test changes, with what the game
+/// and the Controller at its ends see.
+struct Following {
+    bridge: Bridge,
+    preferences: Arc<LivePreferences>,
+    written: Arc<Mutex<Written>>,
+    game: Sender<Feedback>,
+    /// Keeps the Link scripted.
+    _steps: Sender<Step>,
+}
+
+fn following(chosen: Preferences) -> Following {
+    let (link, steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let preferences = Arc::new(LivePreferences::default());
+    preferences.set(chosen);
+    let mut controller = Plugged::new(controller);
+    controller.follow(Arc::clone(&preferences));
+    Following {
+        bridge: Bridge::resume(OpenLink::new(link), controller, Arc::default()).unwrap(),
+        preferences,
+        written,
+        game,
+        _steps: steps,
+    }
+}
+
+#[test]
+fn chosen_lights_show_as_soon_as_the_bridge_starts() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        lightbar: Some(PINK),
+        player_lights: Some(PlayerLights::Two),
+        ..Preferences::default()
+    });
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(Feedback {
+            lightbar: Some(PINK),
+            player_lights: Some(PlayerLights::Two),
+            ..Feedback::OFF
+        })
+    );
+    bridge.stop();
+}
+
+#[test]
+fn the_rumble_reaches_the_controller_at_the_chosen_strength() {
+    let Following {
+        bridge,
+        written,
+        game,
+        _steps,
+        ..
+    } = following(Preferences {
+        rumble: RumbleStrength::percent(50),
+        ..Preferences::default()
+    });
+
+    game.send(rumble(200, 65)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(rumble(100, 33))
+    );
+    bridge.stop();
+}
+
+#[test]
+fn a_running_bridge_follows_changed_preferences() {
+    let Following {
+        bridge,
+        preferences,
+        written,
+        game,
+        _steps,
+    } = following(Preferences::default());
+    game.send(rumble(200, 64)).unwrap();
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+
+    preferences.set(Preferences {
+        rumble: RumbleStrength::OFF,
+        lightbar: Some(PINK),
+        ..Preferences::default()
+    });
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+
+    assert_eq!(
+        written.lock().unwrap().reports[1],
+        output_report(Feedback {
+            lightbar: Some(PINK),
+            ..Feedback::OFF
+        })
+    );
+    bridge.stop();
+}
+
+#[test]
+fn lights_no_longer_chosen_go_back_to_how_they_started() {
+    let Following {
+        bridge,
+        preferences,
+        written,
+        game: _game,
+        _steps,
+    } = following(Preferences {
+        lightbar: Some(PINK),
+        player_lights: Some(PlayerLights::One),
+        ..Preferences::default()
+    });
+    wait_until(|| written.lock().unwrap().reports.len() == 1);
+
+    preferences.set(Preferences::default());
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+
+    assert_eq!(
+        written.lock().unwrap().reports[1],
+        output_report(Feedback {
+            lightbar: Some(Lightbar::DEFAULT),
+            player_lights: Some(PlayerLights::Off),
+            ..Feedback::OFF
+        })
+    );
+    bridge.stop();
+}
+
+#[test]
+fn a_bridge_keeps_following_its_preferences_when_it_moves_to_another_link() {
+    let Following {
+        bridge,
+        preferences,
+        game,
+        _steps,
+        ..
+    } = following(Preferences::default());
+    let BridgeEnd::Stopped { controller, .. } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+    let (other, _steps, written) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
+
+    preferences.set(Preferences {
+        rumble: RumbleStrength::percent(25),
+        ..Preferences::default()
+    });
+    // Time for the Feedback thread to see the change before the game speaks.
+    std::thread::sleep(Duration::from_millis(200));
+    game.send(rumble(200, 100)).unwrap();
+    wait_until(|| !written.lock().unwrap().reports.is_empty());
+
+    assert_eq!(
+        written.lock().unwrap().reports[0],
+        output_report(rumble(50, 25))
+    );
     bridge.stop();
 }

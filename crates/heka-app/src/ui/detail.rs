@@ -1,5 +1,6 @@
-//! The selected Controller's pane: its tab with Stop or Start, heka's notices,
-//! its properties and the live drawing. Without a Controller, the empty state.
+//! The selected Controller's pane: its tab with the settings button and Stop or
+//! Start, heka's notices, then either its properties and the live drawing or its
+//! settings. Without a Controller, the empty state.
 //!
 //! Everything above the drawing is a whole number of rows high at any width, so
 //! that it stays level with the panel's rows.
@@ -8,7 +9,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, Div, InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tooltip::Tooltip;
@@ -23,9 +24,29 @@ use crate::ui::drawing::drawing;
 use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, EntryState, Screen, SendCommand};
 use crate::ui::panel::{entry_color, faint};
+use crate::ui::segmented::{Segment, segmented};
+use crate::ui::settings::{Fields, settings};
+
+/// What the pane shows of the selected Controller.
+pub enum Showing<'a> {
+    /// Its properties and the live drawing.
+    Live,
+    /// Its settings.
+    Settings(Fields<'a>),
+}
+
+/// What a click on the settings button does.
+pub type ToggleSettings = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// The pane for `entry`, the selected Controller, if there is one.
-pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> Div {
+pub fn pane(
+    screen: &Screen,
+    entry: Option<&ControllerEntry>,
+    showing: Showing,
+    toggle_settings: &ToggleSettings,
+    send: &SendCommand,
+    cx: &App,
+) -> Div {
     let body = div()
         .id("pane")
         .flex()
@@ -34,12 +55,14 @@ pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand
         .min_h_0()
         .overflow_y_scroll()
         .children(setup_banners(&screen.missing, send, cx));
-    let body = match entry {
-        Some(entry) => body
+    let in_settings = matches!(showing, Showing::Settings(_));
+    let body = match (entry, showing) {
+        (Some(entry), Showing::Live) => body
             .child(properties(entry, send, cx))
             .children(entry.detail().map(|detail| note(entry, detail, cx)))
             .child(drawing(entry.output_type, entry.pad, cx)),
-        None => body.child(empty_state(screen.starting, cx)),
+        (Some(entry), Showing::Settings(fields)) => body.child(settings(entry, fields, send, cx)),
+        (None, _) => body.child(empty_state(screen.starting, cx)),
     };
     div()
         .flex()
@@ -47,7 +70,7 @@ pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand
         .flex_1()
         .min_w_0()
         .h_full()
-        .child(tab_strip(entry, send, cx))
+        .child(tab_strip(entry, in_settings, toggle_settings, send, cx))
         // heka's notices stay in view while the rest scrolls.
         .children(
             screen
@@ -59,8 +82,15 @@ pub fn pane(screen: &Screen, entry: Option<&ControllerEntry>, send: &SendCommand
         .child(body)
 }
 
-/// One tab, for the selected Controller, and its Stop or Start button.
-fn tab_strip(entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> Div {
+/// One tab, for the selected Controller, then its settings button and its Stop or
+/// Start button.
+fn tab_strip(
+    entry: Option<&ControllerEntry>,
+    in_settings: bool,
+    toggle_settings: &ToggleSettings,
+    send: &SendCommand,
+    cx: &App,
+) -> Div {
     let theme = cx.theme();
     let tab = entry.map(|entry| {
         div()
@@ -74,13 +104,16 @@ fn tab_strip(entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> D
             .border_color(theme.border)
             .text_color(theme.foreground)
             .child(icon(IconName::Gamepad2))
-            .child(entry.name)
-            .child(
-                div()
-                    .text_size(SMALL_TEXT)
-                    .text_color(faint(theme))
-                    .child(entry.short_mac()),
-            )
+            .child(SharedString::from(entry.title().to_owned()))
+            // The player's name tells it apart without its address.
+            .when(entry.nickname.is_none(), |this| {
+                this.child(
+                    div()
+                        .text_size(SMALL_TEXT)
+                        .text_color(faint(theme))
+                        .child(entry.short_mac()),
+                )
+            })
     });
     // The same box and line as the panel's header, so that the two read as one row.
     div()
@@ -96,9 +129,28 @@ fn tab_strip(entry: Option<&ControllerEntry>, send: &SendCommand, cx: &App) -> D
                 .flex_1()
                 .items_center()
                 .justify_end()
+                .gap(GAP)
                 .pr(GAP)
+                .children(entry.map(|_| settings_button(in_settings, toggle_settings, theme)))
                 .children(entry.map(|entry| toggle(entry, send))),
         )
+}
+
+/// Switches the pane between the live view and the settings.
+fn settings_button(in_settings: bool, toggle: &ToggleSettings, theme: &Theme) -> Button {
+    let toggle = Rc::clone(toggle);
+    Button::new("settings")
+        .ghost()
+        .selected(in_settings)
+        .size(CONTROL)
+        .p_0()
+        .when(in_settings, |this| {
+            this.bg(theme.accent).text_color(theme.accent_foreground)
+        })
+        .child(icon(IconName::Settings))
+        .accessibility_label(text::SETTINGS)
+        .tooltip(text::SETTINGS)
+        .on_click(move |_, window, cx| toggle(window, cx))
 }
 
 fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {
@@ -117,7 +169,7 @@ fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {
         .child(icon(name))
         .accessibility_label(label)
         .tooltip(label)
-        .on_click(move |_, _, _| send(command))
+        .on_click(move |_, _, _| send(command.clone()))
 }
 
 fn properties(entry: &ControllerEntry, send: &SendCommand, cx: &App) -> Div {
@@ -155,7 +207,7 @@ fn properties(entry: &ControllerEntry, send: &SendCommand, cx: &App) -> Div {
 
 /// A full-width property: its label on the left and its value on the right, as in
 /// Zed's settings.
-fn row(theme: &Theme) -> Div {
+pub(super) fn row(theme: &Theme) -> Div {
     div()
         .flex()
         .flex_none()
@@ -243,40 +295,18 @@ fn output_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
             OutputType::Xbox => ("xbox", text::XBOX),
             OutputType::Ps4 => ("ps4", text::PS4),
         };
-        let selected = entry.output_type == output_type;
-        let command = entry.choose(output_type);
-        let send = Rc::clone(send);
-        Button::new(SharedString::from(format!("{key}-{}", entry.mac)))
-            .ghost()
-            .selected(selected)
-            // The switch's border and padding bring it to a control's height.
-            .h(CONTROL - px(6.))
-            .px(GAP)
-            .rounded(px(3.))
-            .map(|this| {
-                if selected {
-                    this.bg(theme.accent).text_color(theme.accent_foreground)
-                } else {
-                    this.text_color(theme.muted_foreground)
-                }
-            })
-            .accessibility_label(label)
-            .child(div().text_size(SMALL_TEXT).child(label))
-            .on_click(move |_, _, _| {
-                if let Some(command) = command {
-                    send(command);
-                }
-            })
+        Segment::words(
+            format!("{key}-{}", entry.mac),
+            label,
+            entry.output_type == output_type,
+            entry.choose(output_type),
+        )
     };
-    div()
-        .flex()
-        .gap(px(2.))
-        .p(px(2.))
-        .border_1()
-        .border_color(theme.border)
-        .rounded(theme.radius)
-        .child(segment(OutputType::Xbox))
-        .child(segment(OutputType::Ps4))
+    segmented(
+        [segment(OutputType::Xbox), segment(OutputType::Ps4)],
+        send,
+        theme,
+    )
 }
 
 /// The line that explains the Controller's state.

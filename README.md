@@ -66,8 +66,9 @@ battery level and a live drawing of its input, and to choose:
   to be restarted.
 - **Stop** and **Start**, the button at the top right. A Stopped Controller is not
   Bridged, and games see it as it is.
+- Its [settings](#controller-settings), behind the button beside it.
 
-heka remembers both for each Controller.
+heka remembers all of these for each Controller.
 
 |                                             | Xbox | PS4 |
 | ------------------------------------------- | ---- | --- |
@@ -84,6 +85,22 @@ A Controller connected over both USB and Bluetooth is listed once, and heka read
 USB. A Controller that loses both is **Held** for 30 seconds: its Virtual Controller
 stays, with everything released, and carries on when the Controller returns.
 
+### Controller settings
+
+- **Name**, shown in place of the Controller's model, up to 24 characters.
+- **Rumble**, how strongly the Controller rumbles when a game asks: off, 25%, 50%,
+  75% or 100%.
+- **Light bar**, a colour of your own: one of six, or any other from the picker, typed
+  as a hex value or set with the hue, saturation and lightness sliders. A colour set by
+  a game wins, so with the PS4 Output Type yours shows while the game sets none.
+  **Default** leaves the light bar alone.
+- **Player lights** (DualSense only), the pattern of player 1 to 4 on the white lights
+  under the touchpad. **Default** leaves them alone.
+- **Hide from games**, on unless you turn it off. See
+  [Hiding Controllers](#hiding-controllers).
+
+Rumble and lights apply while the Controller is Bridged.
+
 ### Tray
 
 Closing the window leaves heka running in the notification area, with every Bridge. Click
@@ -97,6 +114,10 @@ While a Controller is Bridged or Held, heka Hides it with HidHide: it adds the C
 to HidHide's hidden devices, adds itself to the allowed applications and turns hiding on.
 When the Bridge ends, or heka quits, it undoes what it changed. Entries that you or
 another tool added stay as they were.
+
+With **Hide from games** off for a Controller, heka does not Hide it: games see it
+beside its Virtual Controller, which can cause double input. Turn it off only for a
+game or app that needs the Controller itself.
 
 - **A game or app that opened the Controller before it was Hidden keeps seeing it.** Start
   heka before the game. If you see double input, restart the game, or unplug the
