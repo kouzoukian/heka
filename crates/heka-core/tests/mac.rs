@@ -1,12 +1,7 @@
-//! Controllers are identified by MAC address.
-
 use heka_core::dualsense;
 use heka_core::link::ReportError;
 use heka_core::mac::MacAddress;
 
-/// DERIVED: a pairing-info feature report laid out as `hid-playstation.c` reads it
-/// (`dualsense_get_mac_address`): report ID 0x09, then the MAC in little-endian order.
-/// The remaining bytes are not read. No real Controller's MAC is stored in the repo.
 fn pairing_info() -> Vec<u8> {
     let mut report = vec![0u8; dualsense::PAIRING_INFO_LEN];
     report[0] = dualsense::PAIRING_INFO_REPORT_ID;

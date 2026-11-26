@@ -1,5 +1,3 @@
-//! The third-party crates behind heka.exe.
-
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
@@ -7,20 +5,16 @@ use serde::Deserialize;
 
 use crate::Error;
 
-/// One third-party crate.
 #[derive(Debug, Clone)]
 pub struct Crate {
     pub name: String,
     pub version: String,
-    /// The SPDX expression in its manifest.
     pub license: Option<String>,
     pub authors: Vec<String>,
     pub repository: Option<String>,
-    /// Where its sources are unpacked.
     pub dir: PathBuf,
 }
 
-/// The parts of `cargo metadata --format-version 1` used here.
 #[derive(Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
@@ -35,7 +29,6 @@ struct Package {
     license: Option<String>,
     authors: Vec<String>,
     repository: Option<String>,
-    /// `None` for a crate of this workspace.
     source: Option<String>,
     manifest_path: PathBuf,
 }
@@ -59,15 +52,9 @@ struct Dependency {
 
 #[derive(Deserialize)]
 struct DependencyKind {
-    /// `None` for a normal dependency, otherwise `"build"` or `"dev"`.
     kind: Option<String>,
 }
 
-/// Every third-party crate that the workspace package `root` depends on, directly
-/// or not, sorted by name and version. Build dependencies count, because what they
-/// generate can end up in the binary. Dev dependencies do not.
-///
-/// `metadata` should be filtered to the target platform (`--filter-platform`).
 pub fn shipped(metadata: &str, root: &str) -> Result<Vec<Crate>, Error> {
     let metadata: Metadata = serde_json::from_str(metadata)?;
     let packages: HashMap<&str, &Package> = metadata

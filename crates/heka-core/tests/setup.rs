@@ -1,6 +1,3 @@
-//! Driver detection results, injected, go in; what the setup screen lists, which
-//! Controllers are listed and what gets Bridged come out.
-
 mod common;
 
 use std::collections::VecDeque;
@@ -18,15 +15,12 @@ use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
 use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
 
-// ---- Fakes ----------------------------------------------------------------
-
 #[derive(Default)]
 struct Script {
     reports: VecDeque<Vec<u8>>,
     lost: bool,
 }
 
-/// A Link the test feeds reports to and can pull out.
 #[derive(Clone, Default)]
 struct LinkHandle(Arc<Mutex<Script>>);
 
@@ -72,7 +66,6 @@ impl LinkReader for FakeLink {
     }
 }
 
-/// The states shown on every Virtual Controller, one list per plug.
 #[derive(Clone, Default)]
 struct FakeBus(Arc<Mutex<Vec<Vec<ControllerState>>>>);
 
@@ -111,7 +104,6 @@ impl VirtualController for FakeController {
     }
 }
 
-/// Injected detection results, changeable as if the player installed a driver.
 struct FakeDrivers {
     vigem_bus: Mutex<Option<BusUnavailable>>,
     hidhide: Mutex<HidHideStatus>,
@@ -153,8 +145,6 @@ impl Drivers for FakeDrivers {
     }
 }
 
-// ---- Helpers --------------------------------------------------------------
-
 fn mac(n: u8) -> MacAddress {
     MacAddress([0xA0, 0, 0, 0, 0, n])
 }
@@ -168,7 +158,6 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 fn cross() -> Vec<u8> {
-    // DERIVED: captured baseline with Cross pressed (buttons[0] bit 5).
     common::derived(&[(8, 0x28)])
 }
 
@@ -179,14 +168,11 @@ fn live_buttons(supervisor: &Supervisor, index: usize) -> Option<Buttons> {
         .map(|state| state.buttons)
 }
 
-/// A Supervisor that has checked the drivers once, as heka does at start.
 fn started(drivers: &FakeDrivers, now: Instant) -> Supervisor {
     let mut supervisor = Supervisor::without_bus(Settings::default());
     setup::check(drivers, &mut supervisor, now);
     supervisor
 }
-
-// ---- Tests ----------------------------------------------------------------
 
 #[test]
 fn without_vigem_bus_a_controller_is_listed_with_live_input_and_not_bridged() {
@@ -214,7 +200,6 @@ fn checking_again_after_installing_vigem_bus_bridges_the_listed_controllers() {
     let link = LinkHandle::default();
     supervisor.link_arrived(mac(1), link.reader(), t0);
 
-    // Still missing: checking again changes nothing.
     assert_eq!(setup::check(&drivers, &mut supervisor, t0).1, []);
 
     drivers.install_vigem_bus();
@@ -245,7 +230,6 @@ fn without_vigem_bus_a_controller_that_loses_its_link_leaves_the_list() {
     supervisor.link_arrived(mac(1), pulled.reader(), t0);
     let (id, _) = supervisor.link_arrived(mac(2), reported.reader(), t0);
 
-    // One Link notices by itself, the other is reported gone.
     pulled.pull_out();
     wait_until(|| {
         assert_eq!(supervisor.poll(t0), []);
@@ -254,7 +238,6 @@ fn without_vigem_bus_a_controller_that_loses_its_link_leaves_the_list() {
     assert_eq!(supervisor.link_gone(id, t0), []);
     assert!(supervisor.controllers().is_empty());
 
-    // It lists again when it returns, still without a Hold.
     let back = LinkHandle::default();
     supervisor.link_arrived(mac(1), back.reader(), t0);
     back.send(cross());
@@ -276,7 +259,6 @@ fn a_stopped_controller_shows_input_without_vigem_bus_and_stays_stopped_when_it_
     assert_eq!(setup::check(&drivers, &mut supervisor, t0).1, []);
     assert_eq!(supervisor.controllers()[0].phase, Phase::Stopped);
 
-    // Its Link is still open: Start Bridges it.
     supervisor.start(mac(1), t0);
     link.send(cross());
     wait_until(|| drivers.bus.plugged() == 1 && drivers.bus.last_state(0).is_some());
@@ -315,7 +297,6 @@ fn every_combination_of_detection_results_lists_exactly_the_missing_drivers() {
     ];
     let hidhide_cases = [
         (HidHideStatus::Ready, None),
-        // Installed, only held by another program for the moment.
         (HidHideStatus::InUse, None),
         (
             HidHideStatus::NotInstalled,
@@ -345,7 +326,6 @@ fn every_combination_of_detection_results_lists_exactly_the_missing_drivers() {
                 .collect();
             assert_eq!(found.missing(), expected, "{bus:?} {hidhide:?}");
 
-            // HidHide never holds back a Bridge.
             supervisor.link_arrived(mac(1), LinkHandle::default().reader(), Instant::now());
             let bridged = supervisor.controllers()[0].phase == Phase::Bridged;
             assert_eq!(bridged, bus.is_none(), "{bus:?} {hidhide:?}");

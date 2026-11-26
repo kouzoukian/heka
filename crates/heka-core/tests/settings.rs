@@ -1,5 +1,3 @@
-//! Stopped and Output Type are remembered per Controller across restarts.
-
 use heka_core::feedback::{Lightbar, PlayerLights};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{Preferences, RumbleStrength};
@@ -64,7 +62,6 @@ fn a_ps4_output_type_is_remembered_across_a_save() {
 
 #[test]
 fn unknown_fields_and_bad_entries_do_not_lose_the_good_ones() {
-    // A later version may add fields; a hand edit may break one entry.
     let text = r#"{
         "future": 1,
         "controllers": {
@@ -133,7 +130,6 @@ fn a_nickname_is_trimmed_cut_to_length_and_dropped_when_blank() {
     assert_eq!(named("   "), None);
     let long = "é".repeat(MAX_NICKNAME_CHARS + 5);
     assert_eq!(named(&long), Some("é".repeat(MAX_NICKNAME_CHARS)));
-    // A hand edit is read the same way.
     let text = r#"{"controllers": {"11:22:33:44:55:66": {"nickname": "  "}}}"#;
     assert_eq!(Settings::load(Some(text)).controller(MAC).nickname, None);
 }

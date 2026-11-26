@@ -1,6 +1,3 @@
-//! The portable zip: one folder with heka.exe, the README, both of heka's licenses
-//! and the third-party notices.
-
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -10,17 +7,11 @@ use crate::Error;
 use crate::crates::Crate;
 use crate::notices::{Section, notices};
 
-/// What goes into one release zip.
 pub struct Release<'a> {
-    /// heka's version, without the `v`.
     pub version: &'a str,
-    /// The top of heka's repository.
     pub workspace: &'a Path,
-    /// The built heka.exe.
     pub exe: &'a Path,
-    /// The Rust toolchain's notices for its standard library.
     pub rust_notices: &'a Path,
-    /// The third-party crates in heka.exe.
     pub crates: &'a [Crate],
 }
 
@@ -29,8 +20,6 @@ const FONT_LICENSE: &str = "crates/heka-app/fonts/LICENSE-GOOGLE-SANS-CODE";
 const CHROMIUM: &str = include_str!("../notices/chromium.txt");
 
 impl Release<'_> {
-    /// Writes `heka-v<version>-windows-x64.zip` into `dist`, replacing any earlier
-    /// one, and returns its path.
     pub fn zip(&self, dist: &Path) -> Result<PathBuf, Error> {
         let name = format!("heka-v{}-windows-x64", self.version);
         let folder = dist.join(&name);
@@ -92,7 +81,6 @@ impl Release<'_> {
         )?;
 
         let status = Command::new(tar())
-            // `-a` picks the zip format from the file name.
             .arg("-a")
             .arg("-cf")
             .arg(&zip)
@@ -108,7 +96,6 @@ impl Release<'_> {
     }
 }
 
-/// A removal that found nothing to remove succeeds.
 fn remove(result: std::io::Result<()>, path: &Path) -> Result<(), Error> {
     match result {
         Err(error) if error.kind() != ErrorKind::NotFound => {
@@ -118,15 +105,11 @@ fn remove(result: std::io::Result<()>, path: &Path) -> Result<(), Error> {
     }
 }
 
-/// The tar that comes with Windows, which writes zip files. A `tar` found on the
-/// path may be another one that cannot.
 pub fn tar() -> PathBuf {
     let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
     PathBuf::from(windows).join("System32").join("tar.exe")
 }
 
-/// A release is built only from the tag `v<version>`, so that its name matches
-/// what is inside.
 pub fn check_tag(tag: &str, version: &str) -> Result<(), Error> {
     if tag.strip_prefix('v') == Some(version) {
         Ok(())

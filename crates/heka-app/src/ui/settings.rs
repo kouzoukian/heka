@@ -1,8 +1,3 @@
-//! The selected Controller's settings, one row each: its name, rumble, lights and
-//! whether it is Hidden. A tooltip on each label explains the row.
-//!
-//! The rows are the pane's, so that they stay level with the panel's.
-
 use gpui::{
     App, Div, Entity, InteractiveElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, div, px,
@@ -21,13 +16,10 @@ use crate::ui::model::{ControllerEntry, SendCommand};
 use crate::ui::picker::{picker, swatch};
 use crate::ui::segmented::{Segment, segmented};
 
-/// How wide the name's field is.
 const NAME_WIDTH: f32 = 220.;
 
-/// The rumble strengths on offer, in percent.
 const STRENGTHS: [u8; 5] = [0, 25, 50, 75, 100];
 
-/// The lightbar colours on offer.
 const COLOURS: [(&str, Lightbar); 6] = [
     (text::BLUE, colour(0, 0, 255)),
     (text::RED, colour(255, 0, 0)),
@@ -41,15 +33,12 @@ const fn colour(red: u8, green: u8, blue: u8) -> Lightbar {
     Lightbar { red, green, blue }
 }
 
-/// What the settings' fields remember between redraws, which the view keeps.
 #[derive(Clone, Copy)]
 pub struct Fields<'a> {
     pub name: &'a Entity<InputState>,
-    /// The picker for a lightbar colour of the player's own.
     pub colour: &'a Entity<ColorPickerState>,
 }
 
-/// The settings of `entry`, typed and picked in `fields`.
 pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx: &App) -> Div {
     let theme = cx.theme();
     let line =
@@ -84,7 +73,6 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
         .child(strip("settings-note", 1, theme).child(clamped(text::SETTINGS_NOTE.into())))
 }
 
-/// A row's label, which says what the row is for when pointed at.
 fn explained(label: &'static str, tip: &'static str, theme: &Theme) -> Stateful<Div> {
     div()
         .id(label)
@@ -96,7 +84,6 @@ fn explained(label: &'static str, tip: &'static str, theme: &Theme) -> Stateful<
         .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
 }
 
-/// An id of its own for each Controller's choice, so that each keeps its own hover.
 fn id(entry: &ControllerEntry, row: &str, choice: impl std::fmt::Display) -> SharedString {
     format!("{row}-{choice}-{}", entry.mac).into()
 }
@@ -119,7 +106,6 @@ fn rumble_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
     segmented(segments, send, theme)
 }
 
-/// Default, a few colours, then the picker for any other.
 fn lightbar_switch(
     entry: &ControllerEntry,
     colour_picker: &Entity<ColorPickerState>,

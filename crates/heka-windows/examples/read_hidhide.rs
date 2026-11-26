@@ -1,8 +1,3 @@
-//! Prints HidHide's configuration and what heka would hide. Reads only: it never
-//! changes HidHide.
-//!
-//! cargo run -p heka-windows --example read_hidhide
-
 use heka_core::hiding::{HidHide, HidHideStatus};
 use heka_windows::hid::dualsense_usb_devices;
 use heka_windows::hidhide::{HidHideDriver, device_instance_path, journal_path, own_image_name};

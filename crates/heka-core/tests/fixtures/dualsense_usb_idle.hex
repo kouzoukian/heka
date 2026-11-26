@@ -1,6 +1,3 @@
-# CAPTURED from a real DualSense (054c:0ce6) over USB, interface 3, on 2026-11-26,
-# with crates/heka-windows/examples/capture_dualsense.rs, while nobody was giving input:
-# every button released, sticks resting, triggers released. One report per line.
 01 7e 7d 7f 7c 00 00 ac 08 00 00 00 a1 ea 00 96 06 00 0a 00 fc ff 3e 03 bc 1f a9 fe a7 73 8f 10 17 8e 61 e7 0a 89 4c 97 06 68 09 09 00 00 00 00 00 46 87 8f 10 29 08 00 49 f9 34 d6 39 13 76 2d
 01 7e 7d 7f 7c 00 00 ad 08 00 00 00 a2 ea 00 96 07 00 08 00 fc ff 4d 03 b4 1f 92 fe 41 a3 8f 10 17 8e 61 e7 0a 89 4c 97 06 68 09 09 00 00 00 00 00 26 b6 8f 10 29 08 00 f7 34 fe 7d 2f 11 de 53
 01 7e 7d 7f 7c 00 00 ae 08 00 00 00 a3 ea 00 96 07 00 09 00 fc ff 47 03 b4 1f b8 fe dc d2 8f 10 17 8e 61 e7 0a 89 4c 97 06 68 09 09 00 00 00 00 00 06 e5 8f 10 29 08 00 be 64 90 a3 34 bd ac 3a

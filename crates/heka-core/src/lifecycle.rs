@@ -1,92 +1,62 @@
-//! The Bridge lifecycle: which Controllers are Bridged, Held, Stopped or waiting.
-//!
-//! This is a pure state machine. Link and timer events go in, each carrying the
-//! time it happens at, and [`Change`]s come out. It owns no threads, Links or
-//! Virtual Controllers: [`crate::supervisor::Supervisor`] carries the changes out.
-//!
-//! The changes are also where per-Controller side effects attach. Hiding, for
-//! example, hides a Controller on [`Change::Bridged`] and [`Change::Returned`]
-//! (a returning Controller is a new device to the system), keeps it hidden while
-//! [`Phase::Held`], and restores it on [`Change::Removed`], except when the removal
-//! is [`Removal::OutputTypeChanged`] and a [`Change::Bridged`] follows at once.
-
 use std::time::{Duration, Instant};
 
 use crate::mac::MacAddress;
 use crate::settings::Settings;
 use crate::virtual_controller::OutputType;
 
-/// How many Controllers can be Bridged or Held at once.
 pub const MAX_BRIDGES: usize = 4;
 
-/// How long a Bridge whose Controller lost every Link keeps its Virtual Controller.
 pub const HOLD_TIME: Duration = Duration::from_secs(30);
 
-/// How long after a failed Bridge heka tries again.
 pub const BRIDGE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-/// Where one listed Controller stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
-    /// Connected and driving its Virtual Controller.
     Bridged,
-    /// Every Link lost. The Virtual Controller stays, released, until `until`.
     Held { until: Instant },
-    /// Connected, and the player told heka not to Bridge it.
     Stopped,
-    /// Connected and wanting a Bridge, but all [`MAX_BRIDGES`] are taken, the
-    /// last attempt failed, or Virtual Controllers cannot be made.
     Waiting,
 }
 
-/// Why a Virtual Controller is removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Removal {
-    /// The player Stopped the Controller.
     Stopped,
-    /// The Controller was Held for [`HOLD_TIME`] and did not return.
     Expired,
-    /// The Virtual Controller could not be created or refused an update.
     Failed,
-    /// The player chose another Output Type. A Bridged Controller is Bridged again
-    /// at once, to a Virtual Controller of the new type.
     OutputTypeChanged,
-    /// heka is quitting.
     Quit,
 }
 
-/// A step in one Controller's lifecycle, for the caller to carry out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
-    /// Create a Virtual Controller of this Output Type and Bridge the Controller's Link to it.
     Bridged {
         mac: MacAddress,
         output_type: OutputType,
     },
-    /// The Controller lost every Link: release everything on its Virtual Controller and keep it.
-    Held { mac: MacAddress },
-    /// A Held Controller has a Link again: Bridge it to the same Virtual Controller.
-    Returned { mac: MacAddress },
-    /// Remove the Controller's Virtual Controller.
-    Removed { mac: MacAddress, why: Removal },
+    Held {
+        mac: MacAddress,
+    },
+    Returned {
+        mac: MacAddress,
+    },
+    Removed {
+        mac: MacAddress,
+        why: Removal,
+    },
 }
 
 #[derive(Debug)]
 struct Entry {
     mac: MacAddress,
     phase: Phase,
-    /// How many Links the Controller has. Zero only while [`Phase::Held`].
     links: usize,
-    /// While [`Phase::Waiting`] after a failure: no new Bridge before this.
     retry_at: Option<Instant>,
 }
 
-/// Every listed Controller, in arrival order, with the settings that shape them.
 #[derive(Debug)]
 pub struct Lifecycle {
     settings: Settings,
     entries: Vec<Entry>,
-    /// Virtual Controllers cannot be made yet, so nothing is Bridged.
     bridging_paused: bool,
 }
 
@@ -99,8 +69,6 @@ impl Lifecycle {
         }
     }
 
-    /// A lifecycle that lists Controllers but Bridges none until
-    /// [`Self::resume_bridging`].
     pub fn paused(settings: Settings) -> Self {
         Self {
             bridging_paused: true,
@@ -108,7 +76,6 @@ impl Lifecycle {
         }
     }
 
-    /// Virtual Controllers can be made now.
     pub fn resume_bridging(&mut self, now: Instant) -> Vec<Change> {
         self.bridging_paused = false;
         let mut changes = Vec::new();
@@ -116,17 +83,14 @@ impl Lifecycle {
         changes
     }
 
-    /// The settings as they stand, to be saved after [`Self::stop`] or [`Self::start`].
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
 
-    /// For settings that change nothing in the lifecycle.
     pub(crate) fn settings_mut(&mut self) -> &mut Settings {
         &mut self.settings
     }
 
-    /// Every listed Controller in arrival order: connected ones, and Held ones.
     pub fn controllers(&self) -> impl Iterator<Item = (MacAddress, Phase)> + '_ {
         self.entries.iter().map(|entry| (entry.mac, entry.phase))
     }
@@ -135,7 +99,6 @@ impl Lifecycle {
         self.entry(mac).map(|entry| entry.phase)
     }
 
-    /// The next time [`Self::tick`] has something to do.
     pub fn next_deadline(&self) -> Option<Instant> {
         self.entries
             .iter()
@@ -147,8 +110,6 @@ impl Lifecycle {
             .min()
     }
 
-    /// A Link to this Controller appeared. A Controller is listed once however
-    /// many Links it has; which Link a Bridge reads is not the lifecycle's concern.
     pub fn link_arrived(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         if let Some(entry) = self.entry_mut(mac) {
             entry.links += 1;
@@ -174,7 +135,6 @@ impl Lifecycle {
         changes
     }
 
-    /// One of the Controller's Links went away. Only losing the last one matters.
     pub fn link_lost(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let Some(index) = self.index(mac) else {
             return Vec::new();
@@ -200,7 +160,6 @@ impl Lifecycle {
         }
     }
 
-    /// The player Stops this Controller. Remembered in the settings.
     pub fn stop(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let Some(index) = self.index(mac) else {
             return Vec::new();
@@ -230,7 +189,6 @@ impl Lifecycle {
         changes
     }
 
-    /// The player starts a Stopped Controller again. Remembered in the settings.
     pub fn start(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let mut changes = Vec::new();
         let Some(entry) = self.entry_mut(mac) else {
@@ -245,12 +203,6 @@ impl Lifecycle {
         changes
     }
 
-    /// The player chooses this Controller's Output Type. Remembered in the settings.
-    ///
-    /// A Bridged Controller's Virtual Controller is removed and a new one of this
-    /// type is Bridged in its place. A Held Controller's Virtual Controller is
-    /// removed and the Controller is forgotten until it returns. Otherwise the
-    /// choice takes effect at the next Bridge.
     pub fn set_output_type(
         &mut self,
         mac: MacAddress,
@@ -281,8 +233,6 @@ impl Lifecycle {
         changes
     }
 
-    /// The Bridge could not be made or broke down. Its Virtual Controller is gone;
-    /// another is tried after [`BRIDGE_RETRY_DELAY`].
     pub fn bridge_failed(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let mut changes = Vec::new();
         let Some(entry) = self.entry_mut(mac) else {
@@ -301,7 +251,6 @@ impl Lifecycle {
         changes
     }
 
-    /// Time has passed: Holds expire and waiting Controllers get free slots.
     pub fn tick(&mut self, now: Instant) -> Vec<Change> {
         let mut changes = Vec::new();
         self.entries.retain(|entry| match entry.phase {
@@ -318,7 +267,6 @@ impl Lifecycle {
         changes
     }
 
-    /// heka is quitting: every Virtual Controller goes, and the list is emptied.
     pub fn quit(&mut self) -> Vec<Change> {
         self.entries
             .drain(..)
@@ -330,7 +278,6 @@ impl Lifecycle {
             .collect()
     }
 
-    /// Bridges waiting Controllers, oldest first, while slots are free.
     fn fill_slots(&mut self, now: Instant, changes: &mut Vec<Change>) {
         if self.bridging_paused {
             return;

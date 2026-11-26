@@ -1,10 +1,3 @@
-//! The selected Controller's pane: its tab with the settings button and Stop or
-//! Start, heka's notices, then either its properties and the live drawing or its
-//! settings. Without a Controller, the empty state.
-//!
-//! Everything above the drawing is a whole number of rows high at any width, so
-//! that it stays level with the panel's rows.
-
 use std::rc::Rc;
 
 use gpui::{
@@ -27,18 +20,13 @@ use crate::ui::panel::{entry_color, faint};
 use crate::ui::segmented::{Segment, segmented};
 use crate::ui::settings::{Fields, settings};
 
-/// What the pane shows of the selected Controller.
 pub enum Showing<'a> {
-    /// Its properties and the live drawing.
     Live,
-    /// Its settings.
     Settings(Fields<'a>),
 }
 
-/// What a click on the settings button does.
 pub type ToggleSettings = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// The pane for `entry`, the selected Controller, if there is one.
 pub fn pane(
     screen: &Screen,
     entry: Option<&ControllerEntry>,
@@ -71,7 +59,6 @@ pub fn pane(
         .min_w_0()
         .h_full()
         .child(tab_strip(entry, in_settings, toggle_settings, send, cx))
-        // heka's notices stay in view while the rest scrolls.
         .children(
             screen
                 .notices
@@ -82,8 +69,6 @@ pub fn pane(
         .child(body)
 }
 
-/// One tab, for the selected Controller, then its settings button and its Stop or
-/// Start button.
 fn tab_strip(
     entry: Option<&ControllerEntry>,
     in_settings: bool,
@@ -105,7 +90,6 @@ fn tab_strip(
             .text_color(theme.foreground)
             .child(icon(IconName::Gamepad2))
             .child(SharedString::from(entry.title().to_owned()))
-            // The player's name tells it apart without its address.
             .when(entry.nickname.is_none(), |this| {
                 this.child(
                     div()
@@ -115,7 +99,6 @@ fn tab_strip(
                 )
             })
     });
-    // The same box and line as the panel's header, so that the two read as one row.
     div()
         .flex()
         .flex_none()
@@ -136,7 +119,6 @@ fn tab_strip(
         )
 }
 
-/// Switches the pane between the live view and the settings.
 fn settings_button(in_settings: bool, toggle: &ToggleSettings, theme: &Theme) -> Button {
     let toggle = Rc::clone(toggle);
     Button::new("settings")
@@ -160,12 +142,10 @@ fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {
         _ => (text::STOP, IconName::Square),
     };
     let send = Rc::clone(send);
-    // One id per Controller, so that each keeps its own hover and tooltip.
     Button::new(SharedString::from(format!("toggle-{}", entry.mac)))
         .ghost()
         .size(CONTROL)
         .p_0()
-        // A child, not `.icon`, which would resize it.
         .child(icon(name))
         .accessibility_label(label)
         .tooltip(label)
@@ -205,8 +185,6 @@ fn properties(entry: &ControllerEntry, send: &SendCommand, cx: &App) -> Div {
         .children(experimental)
 }
 
-/// A full-width property: its label on the left and its value on the right, as in
-/// Zed's settings.
 pub(super) fn row(theme: &Theme) -> Div {
     div()
         .flex()
@@ -228,8 +206,6 @@ fn value(theme: &Theme) -> Div {
         .text_color(theme.foreground)
 }
 
-/// The Active Link, the battery and the Output Type switch side by side, with
-/// dividers between them. Their icons and words name them; a tooltip says so.
 fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
     div()
         .flex()
@@ -267,7 +243,6 @@ fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
         )
 }
 
-/// One of the facts that share a row, with `tip` in its tooltip.
 fn cell(id: &'static str, tip: SharedString) -> Stateful<Div> {
     div()
         .id(id)
@@ -288,7 +263,6 @@ fn state_label(state: EntryState) -> SharedString {
     }
 }
 
-/// A segmented control with one segment per Output Type.
 fn output_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
     let segment = |output_type: OutputType| {
         let (key, label) = match output_type {
@@ -309,7 +283,6 @@ fn output_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
     )
 }
 
-/// The line that explains the Controller's state.
 fn note(entry: &ControllerEntry, detail: String, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let words = SharedString::from(detail);
@@ -319,7 +292,6 @@ fn note(entry: &ControllerEntry, detail: String, cx: &App) -> Stateful<Div> {
         .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 
-/// Shown while there is no Controller.
 fn empty_state(starting: bool, cx: &App) -> Div {
     let theme = cx.theme();
     let (title, hint) = if starting {

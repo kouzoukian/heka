@@ -1,10 +1,3 @@
-//! Feedback in, DualSense USB output report bytes out.
-//!
-//! Expected bytes are written out by hand from `struct dualsense_output_report_usb`
-//! and the `DS_OUTPUT_VALID_FLAG*` bits in Linux `hid-playstation.c`: byte 0 is the
-//! report ID 0x02, byte 1 valid_flag0, byte 2 valid_flag1, byte 3 motor_right,
-//! byte 4 motor_left, byte 39 valid_flag2, 63 bytes in all.
-
 mod common;
 
 use heka_core::dualsense::{
@@ -21,7 +14,6 @@ fn rumble(large: u8, small: u8) -> Feedback {
     }
 }
 
-/// A 63-byte report of zeros with `(offset, value)` bytes set.
 fn expected(bytes: &[(usize, u8)]) -> Vec<u8> {
     let mut report = vec![0u8; 63];
     for &(offset, value) in bytes {
@@ -33,7 +25,6 @@ fn expected(bytes: &[(usize, u8)]) -> Vec<u8> {
 #[test]
 fn compatible_rumble_drives_the_left_motor_from_the_large_motor() {
     let report = usb_output_report(&rumble(0xC8, 0x40), RumbleMode::Compatible);
-    // valid_flag0 = COMPATIBLE_VIBRATION | HAPTICS_SELECT.
     assert_eq!(
         report.to_vec(),
         expected(&[(0, 0x02), (1, 0x03), (3, 0x40), (4, 0xC8)])
@@ -43,7 +34,6 @@ fn compatible_rumble_drives_the_left_motor_from_the_large_motor() {
 #[test]
 fn v2_rumble_selects_haptics_and_flags_compatible_vibration2() {
     let report = usb_output_report(&rumble(0xC8, 0x40), RumbleMode::CompatibleV2);
-    // valid_flag0 = HAPTICS_SELECT, valid_flag2 = COMPATIBLE_VIBRATION2.
     assert_eq!(
         report.to_vec(),
         expected(&[(0, 0x02), (1, 0x02), (3, 0x40), (4, 0xC8), (39, 0x04)])
@@ -55,9 +45,6 @@ fn feedback_off_still_sets_the_rumble_flags_with_both_motors_at_zero() {
     let report = usb_output_report(&Feedback::OFF, RumbleMode::Compatible);
     assert_eq!(report.to_vec(), expected(&[(0, 0x02), (1, 0x03)]));
 }
-
-// Lightbar: valid_flag1 bit 2 (`DS_OUTPUT_VALID_FLAG1_LIGHTBAR_CONTROL_ENABLE`), and
-// lightbar_red, lightbar_green, lightbar_blue at bytes 45, 46, 47.
 
 #[test]
 fn a_lightbar_colour_is_sent_with_the_rumble() {
@@ -91,8 +78,6 @@ fn no_lightbar_leaves_the_controllers_lightbar_alone() {
     assert_eq!(report[2] & 0x04, 0);
 }
 
-// valid_flag1 bit 4 enables the player lights; player_leds is byte 44.
-
 #[test]
 fn each_players_lights_are_sent_as_the_kernel_patterns_them() {
     for (lights, pattern) in [
@@ -121,15 +106,6 @@ fn no_player_lights_leaves_the_controllers_own_alone() {
     assert_eq!((report[2] & 0x10, report[44]), (0, 0));
 }
 
-// Bluetooth. Expected bytes are written out by hand from `struct
-// dualsense_output_report_bt` and `dualsense_init_output_report` in Linux
-// `hid-playstation.c`: byte 0 is the report ID 0x31, byte 1 the sequence number in
-// its high nibble, byte 2 the tag 0x10 (`DS_OUTPUT_TAG`), the common block from
-// byte 3 (so valid_flag0 at 3, motor_right at 5, motor_left at 6, valid_flag2 at
-// 41), 78 bytes in all, ending in a little-endian CRC32 seeded with 0xA2. Expected
-// CRCs were computed with Python's `zlib.crc32(bytes([0xA2]) + report[:74])`.
-
-/// A 78-byte report of zeros with `(offset, value)` bytes set and this CRC.
 fn expected_bluetooth(bytes: &[(usize, u8)], crc: u32) -> Vec<u8> {
     let mut report = vec![0u8; 78];
     for &(offset, value) in bytes {
@@ -169,7 +145,6 @@ fn a_bluetooth_report_puts_its_sequence_number_in_the_high_nibble() {
 
 #[test]
 fn each_bluetooth_report_takes_the_next_sequence_number_wrapping_after_15() {
-    // `dualsense_init_output_report`: "needs to be increased every report", 0..=15.
     let mut format = FeedbackFormat::dualsense_bluetooth(RumbleMode::Compatible);
     let sequence: Vec<u8> = (0..18)
         .flat_map(|_| format.reports(&Feedback::OFF))
@@ -199,11 +174,6 @@ fn coloured(red: u8, green: u8, blue: u8) -> Feedback {
 
 #[test]
 fn the_first_bluetooth_colour_follows_a_lightbar_setup_report() {
-    // `dualsense_reset_leds`: over Bluetooth the lightbar must be set up before it
-    // takes a colour: valid_flag2 bit 1 (`DS_OUTPUT_VALID_FLAG2_LIGHTBAR_SETUP_CONTROL_ENABLE`)
-    // at byte 41 and lightbar_setup = bit 1 (`DS_OUTPUT_LIGHTBAR_SETUP_LIGHT_OUT`) at
-    // byte 44. The colour follows in the next report: valid_flag1 bit 2 at byte 4,
-    // red, green, blue at bytes 47, 48, 49.
     let mut format = FeedbackFormat::dualsense_bluetooth(RumbleMode::Compatible);
     assert_eq!(
         format.reports(&coloured(0xFF, 0x10, 0x80)),
@@ -225,7 +195,6 @@ fn the_first_bluetooth_colour_follows_a_lightbar_setup_report() {
         ]
     );
 
-    // Later colours need no setup.
     let next = Feedback {
         rumble: Rumble { large: 0, small: 9 },
         ..coloured(0xFF, 0x10, 0x80)
@@ -255,11 +224,6 @@ fn bluetooth_feedback_without_a_colour_needs_no_lightbar_setup() {
     assert_eq!(format.reports(&rumble(1, 2)).len(), 1);
 }
 
-// Rumble mode. The firmware info feature report is 0x20, 64 bytes, with the
-// little-endian update version at bytes 44..46 (`dualsense_get_firmware_info`);
-// version 2.21 (0x0215) and later use the v2 mode (`dualsense_create`).
-
-/// DERIVED: a firmware info report of zeros with the update version set.
 fn firmware_info(update_version: u16) -> Vec<u8> {
     let mut report = vec![0u8; 64];
     report[0] = 0x20;

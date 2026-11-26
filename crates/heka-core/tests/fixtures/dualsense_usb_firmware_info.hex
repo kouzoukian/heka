@@ -1,3 +1,1 @@
-# CAPTURED: firmware info feature report 0x20 from the maintainer's DualSense (054c:0ce6)
-# over USB, read with the capture_dualsense example. Bytes 44..46 hold update version 0x0630.
 20 4a 75 6c 20 20 34 20 32 30 32 35 31 30 3a 33 38 3a 34 30 03 00 0b 00 09 11 00 00 2a 00 10 01 00 58 02 00 00 00 00 00 00 00 00 00 30 06 00 00 01 00 03 00 10 10 03 00 06 00 00 00 00 00 00 00

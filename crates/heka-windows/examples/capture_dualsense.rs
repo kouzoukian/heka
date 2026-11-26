@@ -1,16 +1,3 @@
-//! Records raw DualSense USB input reports, read-only, as fixture lines.
-//!
-//! ```text
-//! cargo run -p heka-windows --example capture_dualsense -- [COUNT] > reports.hex
-//! ```
-//!
-//! Prints every DualSense HID collection it finds on stderr, then COUNT reports
-//! (default 50) as hex lines on stdout, in the format `heka-core`'s fixtures use.
-//! It also prints the firmware info feature report, the Feedback format with the
-//! rumble mode chosen from it and the motion calibration feature report on
-//! stderr. Hold the inputs you want recorded while it runs. Nothing is sent
-//! to the Controller: it opens the device and reads, nothing else.
-
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -66,7 +53,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => eprintln!("firmware info (feature report 0x20): not available"),
     }
     if let Some(writer) = link.feedback_writer() {
-        // Only names the rumble mode: nothing is written.
         eprintln!("Feedback format: {:?}", writer.format());
     }
     match read_calibration_report(&device) {

@@ -1,7 +1,3 @@
-//! The ViGEmBus backend for Virtual Controllers (ADR 0001), through `vigem-rust`.
-//!
-//! This only moves reports: what they contain is decided in `heka-core`.
-
 use std::time::Duration;
 
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Rumble};
@@ -14,14 +10,11 @@ use vigem_rust::{
     RecvTimeoutError, TargetHandle, X360Button, X360Notification, X360Report, Xbox360,
 };
 
-/// A connection to ViGEmBus. Every Virtual Controller it plugs is removed when
-/// the Virtual Controller is unplugged, or at the latest when this is dropped.
 pub struct VigemBus {
     client: Client,
 }
 
 impl VigemBus {
-    /// Opens ViGEmBus. Fails when the driver is not installed or not running.
     pub fn connect() -> Result<Self, VirtualError> {
         let client = Client::connect().map_err(VirtualError::new)?;
         Ok(Self { client })
@@ -86,9 +79,6 @@ impl VirtualController for VigemPs4 {
     }
 }
 
-/// Rumble and lightbar colour a game sends to a PS4 Virtual Controller. Every
-/// notification carries both, so the lightbar shows whatever colour the game
-/// last asked for.
 struct VigemPs4Feedback(NotificationReceiver<Ds4Notification>);
 
 impl FeedbackSource for VigemPs4Feedback {
@@ -142,9 +132,6 @@ impl VirtualController for VigemXbox {
     }
 }
 
-/// Rumble a game sends to an Xbox Virtual Controller. The default subscription
-/// keeps a few notifications and drops the oldest, which suits rumble: only the
-/// latest motor speeds matter.
 struct VigemXboxFeedback(NotificationReceiver<X360Notification>);
 
 impl FeedbackSource for VigemXboxFeedback {
@@ -159,14 +146,11 @@ impl FeedbackSource for VigemXboxFeedback {
                 player_lights: None,
             }),
             Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
-            // Disconnected, or a bus error, which vigem-rust documents as often
-            // terminal: either way no more Feedback can be trusted to come.
             Err(_) => FeedbackEvent::Closed,
         }
     }
 }
 
-/// heka-core's Xbox report uses the same XUSB bit values as `X360Button`.
 fn x360_report(report: &XboxReport) -> X360Report {
     X360Report {
         buttons: X360Button::from_bits_retain(report.buttons),

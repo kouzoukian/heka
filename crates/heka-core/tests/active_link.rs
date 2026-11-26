@@ -1,5 +1,3 @@
-//! A Controller's Links in arrival order in, the Active Link out.
-
 use heka_core::link::{LinkKind, active_link};
 
 use LinkKind::{Bluetooth, Usb};

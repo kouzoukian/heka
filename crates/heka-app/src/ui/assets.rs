@@ -1,6 +1,3 @@
-//! The icons built into heka. Without an asset source gpui-component's icons
-//! render blank.
-
 use std::borrow::Cow;
 
 use gpui::{AssetSource, Result, SharedString};
@@ -8,10 +5,8 @@ use gpui_kit_assets::{IconName, icon_assets};
 use heka_core::link::LinkKind;
 use heka_core::state::{Battery, Charge};
 
-// The icons heka uses beyond gpui-component's default bundle.
 icon_assets!(ExtraIcons, [Bluetooth, Gamepad2, Palette, Unplug, Usb]);
 
-/// gpui-component's default icons and heka's own few.
 pub struct Assets;
 
 impl AssetSource for Assets {

@@ -1,5 +1,3 @@
-//! What both pads are drawn with: curves, circles and the controls they share.
-
 use gpui::{
     BorderStyle, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, Window, point, px, quad,
     size, transparent_black,
@@ -12,13 +10,10 @@ use crate::ui::pad::{stick_offset, trigger_fill};
 
 pub type Xy = (f32, f32);
 
-/// A cubic curve from where the last one ended: two control points and its end.
 pub type Curve = (Xy, Xy, Xy);
 
-/// Moves a point around the middle by a quarter or half turn.
 type Turn = fn(Xy) -> Xy;
 
-/// An outline made of curves, closed back to its start.
 #[derive(Clone)]
 pub struct Shape {
     start: Xy,
@@ -33,7 +28,6 @@ impl Shape {
         }
     }
 
-    /// Straight edges between `points`.
     pub fn polygon(points: &[Xy]) -> Self {
         let curves = points
             .windows(2)
@@ -45,12 +39,8 @@ impl Shape {
         }
     }
 
-    /// A shape the same on both sides, from its right half: from a point on the
-    /// drawing's middle line, clockwise, back to that line.
     pub fn symmetric(start: Xy, right: &[Curve]) -> Self {
         let mut curves = right.to_vec();
-        // The left half is the right one walked backwards, so each curve ends
-        // where the one before it ends and takes its control points swapped.
         for (index, &(first, second, _)) in right.iter().enumerate().rev() {
             let end = index.checked_sub(1).map_or(start, |before| right[before].2);
             curves.push((mirror(second), mirror(first), mirror(end)));
@@ -58,7 +48,6 @@ impl Shape {
         Self { start, curves }
     }
 
-    /// The same shape on the other side of the drawing.
     pub fn mirrored(&self) -> Self {
         Self {
             start: mirror(self.start),
@@ -70,7 +59,6 @@ impl Shape {
         }
     }
 
-    /// The same shape with every point moved by `place`.
     pub fn map(&self, place: impl Fn(Xy) -> Xy) -> Self {
         Self {
             start: place(self.start),
@@ -82,7 +70,6 @@ impl Shape {
         }
     }
 
-    /// The top and bottom of the shape's points.
     fn height(&self) -> (f32, f32) {
         self.curves
             .iter()
@@ -97,7 +84,6 @@ fn mirror((x, y): Xy) -> Xy {
     (WIDTH - x, y)
 }
 
-/// The colours of one drawing.
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub body: Hsla,
@@ -132,7 +118,6 @@ impl Palette {
         }
     }
 
-    /// A label's colour on a control that is or is not pressed.
     pub fn on(&self, pressed: bool) -> Hsla {
         if pressed {
             self.pressed_label
@@ -142,17 +127,14 @@ impl Palette {
     }
 }
 
-/// A word on the drawing, centred on `at`.
 pub struct Label {
     pub at: Xy,
     pub text: &'static str,
     pub color: Hsla,
 }
 
-/// Paints onto the drawing's canvas.
 pub struct Painter<'a> {
     origin: Point<Pixels>,
-    /// How many pixels one of the drawing's pixels covers.
     scale: f32,
     pub palette: Palette,
     window: &'a mut Window,
@@ -173,7 +155,6 @@ impl<'a> Painter<'a> {
         }
     }
 
-    /// A length of the drawing's on screen.
     fn length(&self, length: f32) -> Pixels {
         px(length * self.scale)
     }
@@ -188,7 +169,6 @@ impl<'a> Painter<'a> {
             path.cubic_bezier_to(self.at(end), self.at(first), self.at(second));
         }
         path.close();
-        // A shape that cannot be built is only missing from the picture.
         if let Ok(path) = path.build() {
             self.window.paint_path(path, color);
         }
@@ -202,7 +182,6 @@ impl<'a> Painter<'a> {
         self.path(PathBuilder::stroke(self.length(width)), shape, color);
     }
 
-    /// A straight line.
     pub fn line(&mut self, from: Xy, to: Xy, width: f32, color: Hsla) {
         let mut path = PathBuilder::stroke(self.length(width));
         path.move_to(self.at(from));
@@ -212,7 +191,6 @@ impl<'a> Painter<'a> {
         }
     }
 
-    /// A filled and outlined control, in the pressed colour when `pressed`.
     pub fn control(&mut self, shape: &Shape, pressed: bool) {
         let Palette {
             control,
@@ -229,7 +207,6 @@ impl<'a> Painter<'a> {
         self.stroke(shape, 1., edge);
     }
 
-    /// A rectangle with rounded corners, from its left, top, width and height.
     pub fn rect(
         &mut self,
         (left, top, width, height): (f32, f32, f32, f32),
@@ -256,7 +233,6 @@ impl<'a> Painter<'a> {
         self.rect((x - radius, y - radius, side, side), radius, fill, border);
     }
 
-    /// A round button, filled with `lit` when pressed.
     pub fn button(&mut self, centre: Xy, radius: f32, pressed: bool, lit: Hsla) {
         let Palette {
             control, outline, ..
@@ -269,13 +245,11 @@ impl<'a> Painter<'a> {
         self.circle(centre, radius, fill, (1., edge));
     }
 
-    /// The faint circle a group of controls sits in.
     pub fn well(&mut self, centre: Xy, radius: f32) {
         let outline = self.palette.outline.opacity(0.4);
         self.circle(centre, radius, transparent_black(), (1., outline));
     }
 
-    /// The d-pad's four keys: `up`, drawn around the middle, turned each way.
     pub fn dpad(&mut self, (x, y): Xy, up: &Shape, held: Buttons) {
         let turns: [(Buttons, Turn); 4] = [
             (Buttons::DPAD_UP, |(x, y)| (x, y)),
@@ -292,8 +266,6 @@ impl<'a> Painter<'a> {
         }
     }
 
-    /// A trigger that fills from the bottom with its travel, outlined once it
-    /// clicks.
     pub fn trigger(&mut self, shape: &Shape, travel: u8, clicked: bool) {
         let palette = self.palette;
         self.fill(shape, palette.control);
@@ -320,9 +292,7 @@ impl<'a> Painter<'a> {
         self.stroke(shape, 1., edge);
     }
 
-    /// A stick's ring and its cap, which fills when the stick is clicked.
     pub fn stick(&mut self, (x, y): Xy, at: Stick, clicked: bool) {
-        /// How far the cap moves from the centre at full travel.
         const TRAVEL: f32 = 8.;
         let palette = self.palette;
         self.circle((x, y), 25., palette.control, (1., palette.outline));

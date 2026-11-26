@@ -1,9 +1,3 @@
-//! DualShock 4 USB input report in, Controller state out.
-//!
-//! No DualShock 4 is available, so every report is DERIVED from the layout in
-//! Linux `hid-playstation.c` (see `common::ds4_usb`). Offsets here include the
-//! report ID byte.
-
 mod common;
 
 use heka_core::calibration::Calibration;
@@ -36,7 +30,6 @@ fn sticks_and_triggers_are_read_from_their_bytes() {
 
 #[test]
 fn every_button_is_read_from_its_bit() {
-    // `DS_BUTTONS0_*`, `DS_BUTTONS1_*` and `DS_BUTTONS2_*`. Share is `CREATE`.
     let bits = [
         (5, 4, Buttons::SQUARE),
         (5, 5, Buttons::CROSS),
@@ -54,7 +47,6 @@ fn every_button_is_read_from_its_bit() {
         (7, 1, Buttons::TOUCHPAD),
     ];
     for (byte, bit, button) in bits {
-        // Byte 5 also holds the hat, which stays released (8).
         let hat = if byte == 5 { 0x08 } else { 0 };
         let state = parse(&[(byte, hat | (1 << bit))]);
         assert_eq!(state.buttons, button, "byte {byte} bit {bit}");
@@ -63,7 +55,6 @@ fn every_button_is_read_from_its_bit() {
 
 #[test]
 fn the_report_counter_beside_ps_and_touchpad_presses_nothing() {
-    // Bits 2..=7 of byte 7 count reports on a DualShock 4, which has no mute button.
     assert_eq!(parse(&[(7, 0xFC)]).buttons, Buttons::NONE);
 }
 
@@ -95,15 +86,10 @@ fn other_reports_and_short_reads_are_refused() {
     assert_eq!(parse(&report), Err(ReportError::UnexpectedId { id: 0x11 }));
 }
 
-/// DERIVED: a USB calibration feature report (0x02, 37 bytes) from the fields
-/// `dualshock4_get_calibration_data` reads, each a little-endian i16 starting at
-/// byte 1.
 fn calibration_report() -> Vec<u8> {
     let fields: [i16; 17] = [
-        0, 0, 0, // gyro biases: pitch, yaw, roll
-        1000, -1000, 2000, -2000, 4000, -4000, // gyro plus and minus, axis by axis
-        500, 500, // gyro speed plus and minus
-        8100, -8100, 8292, -8092, 4096, -4096, // accelerometer x, y, z plus and minus
+        0, 0, 0, 1000, -1000, 2000, -2000, 4000, -4000, 500, 500, 8100, -8100, 8292, -8092, 4096,
+        -4096,
     ];
     let mut report = vec![0x02];
     report.extend(fields.iter().flat_map(|field| field.to_le_bytes()));
@@ -111,7 +97,6 @@ fn calibration_report() -> Vec<u8> {
     report
 }
 
-/// `(offset, value)` pairs writing little-endian `i16`s from `offset`.
 fn le16s(offset: usize, values: [i16; 3]) -> Vec<(usize, u8)> {
     let bytes = values.iter().flat_map(|value| value.to_le_bytes());
     (offset..).zip(bytes).collect()
@@ -120,18 +105,14 @@ fn le16s(offset: usize, values: [i16; 3]) -> Vec<(usize, u8)> {
 #[test]
 fn motion_is_read_with_the_controllers_calibration() {
     let calibration = parse_usb_calibration(&calibration_report()).unwrap();
-    // Gyro from byte 13, accelerometer from byte 19.
     let changes = [le16s(13, [100, 100, -100]), le16s(19, [8100, 100, -2048])].concat();
     let state = parse_usb_input_report(&common::ds4_usb(&changes), &calibration).unwrap();
-    // Gyro: raw * (500 + 500) * 1024 / (plus - minus).
     assert_eq!(state.motion.gyro, [51_200, 25_600, -12_800]);
-    // Accelerometer: (raw - middle) * 16384 / (plus - minus), y's middle being 100.
     assert_eq!(state.motion.accel, [8192, 0, -4096]);
 }
 
 #[test]
 fn the_timestamp_counts_sixteen_dualsense_ticks_for_each_dualshock_4_tick() {
-    // le16 sensor_timestamp at byte 10, in units of 16/3 microseconds.
     let state = parse(&[(10, 0x34), (11, 0x12)]);
     assert_eq!(state.motion.timestamp, 0x0001_2340);
 }
@@ -150,7 +131,6 @@ fn a_calibration_report_with_another_id_or_cut_short_is_refused() {
     );
 }
 
-/// The 4 bytes of a finger: contact, x low, x high nibble and y low nibble, y high.
 fn finger(offset: usize, contact: u8, x: u16, y: u16) -> Vec<(usize, u8)> {
     let bytes = [
         contact,
@@ -163,8 +143,6 @@ fn finger(offset: usize, contact: u8, x: u16, y: u16) -> Vec<(usize, u8)> {
 
 #[test]
 fn touch_is_reported_in_dualsense_touchpad_units() {
-    // The fingers of the first touch report are at bytes 35 and 39. The DualShock
-    // 4's pad is 942 high and the state's is 1080.
     let changes = [finger(35, 5, 1000, 500), finger(39, 6, 1919, 941)].concat();
     let at = |id, x, y| Some(Finger { id, x, y });
     assert_eq!(parse(&changes).touch, [at(5, 1000, 573), at(6, 1919, 1079)]);
@@ -172,8 +150,6 @@ fn touch_is_reported_in_dualsense_touchpad_units() {
 
 #[test]
 fn the_newest_touch_report_gives_the_touch() {
-    // Three touch reports, oldest first, at bytes 34, 43 and 52: their first
-    // fingers are at 35, 44 and 53.
     let changes = [
         vec![(33, 3)],
         finger(35, 1, 10, 0),
@@ -188,7 +164,6 @@ fn the_newest_touch_report_gives_the_touch() {
 
 #[test]
 fn without_a_new_touch_report_the_first_one_is_read() {
-    // As SDL does (`SDL_hidapi_ps4.c` reads the first touch report whatever the count).
     let changes = [vec![(33, 0)], finger(35, 2, 40, 0)].concat();
     let first = Finger { id: 2, x: 40, y: 0 };
     assert_eq!(parse(&changes).touch[0], Some(first));
@@ -200,20 +175,17 @@ fn a_touch_reaches_a_ps4_virtual_controller_unchanged() {
     for y in 0..=941u16 {
         let input = common::ds4_usb(&finger(35, 3, 960, y));
         let state = parse_usb_input_report(&input, &Calibration::UNCALIBRATED).unwrap();
-        // The virtual report has no report ID: its first finger is at byte 34.
         assert_eq!(translator.report(&state)[34..38], input[35..39], "y {y}");
     }
 }
 
 #[test]
 fn the_battery_level_and_charge_come_from_the_first_status_byte() {
-    // status[0] at byte 30: capacity in bits 0..=3, cable connected in bit 4.
     let battery = |status| parse(&[(30, status)]).battery.unwrap();
     let is = |percent, charge| Battery { percent, charge };
     assert_eq!(battery(0x00), is(5, Charge::Discharging));
     assert_eq!(battery(0x07), is(75, Charge::Discharging));
     assert_eq!(battery(0x0A), is(100, Charge::Discharging));
-    // Without a cable the kernel reads anything past 9 as full.
     assert_eq!(battery(0x0B), is(100, Charge::Discharging));
     assert_eq!(battery(0x13), is(35, Charge::Charging));
     assert_eq!(battery(0x1A), is(100, Charge::Charging));

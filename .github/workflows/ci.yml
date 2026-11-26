@@ -17,14 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
-        # With no arguments, installs what rust-toolchain.toml asks for.
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
-          # Shared with the Release workflow. Only main saves it: other branches
-          # and tags can all read what main saved.
           shared-key: heka
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Comments
+        run: cargo run -p heka-lint --locked
       - name: Build
         run: cargo build --workspace --locked
       - name: Clippy
@@ -32,7 +31,5 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Package
-        # Fails here, before any tag, if the release zip cannot be made. Also puts
-        # the release build in the cache the Release workflow starts from.
         if: github.ref == 'refs/heads/main'
         run: cargo run -p heka-package --locked

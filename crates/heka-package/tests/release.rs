@@ -1,5 +1,3 @@
-//! The portable zip published on GitHub Releases.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,7 +11,6 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Runs Windows' tar, which reads zip files, and returns what it printed.
 fn run_tar(args: &[&str]) -> String {
     let output = Command::new(tar()).args(args).output().unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -36,7 +33,6 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
         crates: &[],
     };
 
-    // Twice: a second run replaces what the first left behind.
     release.zip(&dist).unwrap();
     fs::write(dist.join("heka-v9.8.7-windows-x64/stale.txt"), "stale").unwrap();
     let zip = release.zip(&dist).unwrap();
@@ -74,11 +70,9 @@ fn zips_heka_with_both_licenses_the_readme_and_every_notice_in_one_folder() {
         "the standard library's notices"
     );
     let notices = read("THIRD-PARTY-NOTICES.txt");
-    // Min Theme's holders, and the code in AccessKit that comes from Chromium.
     assert!(notices.contains("Copyright (c) 2018-2021 Miguel Solorio"));
     assert!(notices.contains("The Chromium Authors"));
     assert!(read("LICENSE-MIN-THEME").contains("Copyright (c) 2024 Phillip"));
-    // The built-in font's license travels with it.
     assert!(notices.contains("The Google Sans Code Project Authors"));
     assert!(read("LICENSE-GOOGLE-SANS-CODE").contains("SIL OPEN FONT LICENSE"));
 }

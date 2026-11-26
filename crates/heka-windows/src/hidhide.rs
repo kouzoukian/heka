@@ -1,17 +1,3 @@
-//! HidHide's driver interface, for [`heka_core::hiding`].
-//!
-//! Source for every name and code here: nefarius/HidHide tag `v1.2.128.0` (MIT), the
-//! version installed on the development PC.
-//! - Control device `\\.\HidHide`: `HidHideCLI/HidHideCLI.rc` (`IDS_CONTROL_DEVICE_NAME`).
-//! - IOCTL codes and buffer shapes: `HidHideCLI/src/FilterDriverProxy.cpp`, checked
-//!   against the driver's handlers in `HidHide/src/Logic.c`.
-//! - The control device takes one client at a time (`WdfDeviceInitSetExclusive` in
-//!   `HidHide/src/ControlDevice.c`); HidHide's own client reports `ERROR_ACCESS_DENIED`
-//!   on open as "in use" (`HidHideClient/src/HidHideClient.cpp`). So heka opens it
-//!   for one operation at a time and closes it straight away.
-//!
-//! See `docs/hidhide.md` for what is verified and what is not.
-
 use std::ffi::CStr;
 use std::io;
 use std::path::PathBuf;
@@ -39,12 +25,10 @@ use windows_sys::Win32::System::Threading::{
 
 const CONTROL_DEVICE: &str = r"\\.\HidHide";
 
-/// `CTL_CODE` from the Windows DDK (`devioctl.h`).
 const fn ctl_code(device_type: u32, function: u32, method: u32, access: u32) -> u32 {
     (device_type << 16) | (access << 14) | (function << 2) | method
 }
 
-/// HidHide's custom device type (`IoControlDeviceType` in `FilterDriverProxy.cpp`).
 const DEVICE_TYPE: u32 = 32769;
 const METHOD_BUFFERED: u32 = 0;
 const FILE_READ_DATA: u32 = 1;
@@ -57,7 +41,6 @@ const IOCTL_GET_ACTIVE: u32 = ctl_code(DEVICE_TYPE, 2052, METHOD_BUFFERED, FILE_
 const IOCTL_SET_ACTIVE: u32 = ctl_code(DEVICE_TYPE, 2053, METHOD_BUFFERED, FILE_READ_DATA);
 const IOCTL_GET_WLINVERSE: u32 = ctl_code(DEVICE_TYPE, 2054, METHOD_BUFFERED, FILE_READ_DATA);
 
-/// HidHide's driver, opened for each call.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HidHideDriver;
 
@@ -90,10 +73,8 @@ impl HidHide for HidHideDriver {
 struct ControlDevice(HANDLE);
 
 impl ControlDevice {
-    /// Opens the control device the way `HidHideCLI` does: read access, fully shared.
     fn open() -> Result<Self, HidHideError> {
         let name = wide(CONTROL_DEVICE);
-        // SAFETY: `name` is NUL-terminated and outlives the call.
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
@@ -116,10 +97,8 @@ impl ControlDevice {
         Ok(Self(handle))
     }
 
-    /// One buffered IOCTL. Returns the number of output bytes.
     fn ioctl(&self, code: u32, input: &[u8], output: &mut [u8]) -> Result<usize, HidHideError> {
         let mut returned = 0u32;
-        // SAFETY: both buffers are valid for the lengths passed; the call is synchronous.
         let ok = unsafe {
             DeviceIoControl(
                 self.0,
@@ -156,7 +135,6 @@ impl ControlDevice {
         }
     }
 
-    /// A REG_MULTI_SZ list: asked once for its size in bytes, then read.
     fn get_list(&self, code: u32) -> Result<Vec<String>, HidHideError> {
         let needed = self.ioctl(code, &[], &mut [])?;
         let mut bytes = vec![0u8; needed];
@@ -171,7 +149,6 @@ impl ControlDevice {
         Ok(from_multi_string(&units))
     }
 
-    /// Replaces a list. An empty input buffer clears it (`Logic.c`, "No input then clear the list").
     fn set_list(&self, code: u32, items: &[String]) -> Result<(), HidHideError> {
         let bytes: Vec<u8> = to_multi_string(items)
             .into_iter()
@@ -184,7 +161,6 @@ impl ControlDevice {
 
 impl Drop for ControlDevice {
     fn drop(&mut self) {
-        // SAFETY: the handle came from CreateFileW and is closed once.
         unsafe { CloseHandle(self.0) };
     }
 }
@@ -197,7 +173,6 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
-/// Strings separated by NUL, ended by an empty string. Empty input means an empty list.
 fn to_multi_string(items: &[String]) -> Vec<u16> {
     if items.is_empty() {
         return Vec::new();
@@ -218,14 +193,9 @@ fn from_multi_string(units: &[u16]) -> Vec<String> {
         .collect()
 }
 
-/// heka's own full image name as HidHide lists allowed applications, for example
-/// `\Device\HarddiskVolume3\Tools\heka\heka.exe`. The driver matches allowed
-/// applications against the image name the kernel reports when a process loads
-/// (`OnSystemLoadImage` in `Logic.c`), which is this native form.
 pub fn own_image_name() -> io::Result<String> {
     let mut buffer = vec![0u16; 1024];
     let mut len = buffer.len() as u32;
-    // SAFETY: `len` holds the buffer's length in characters, as the API requires.
     let ok = unsafe {
         QueryFullProcessImageNameW(
             GetCurrentProcess(),
@@ -240,15 +210,11 @@ pub fn own_image_name() -> io::Result<String> {
     Ok(String::from_utf16_lossy(&buffer[..len as usize]))
 }
 
-/// The device instance path of the HID collection behind a `hidapi` path, which is
-/// what HidHide hides (HidHide's own client lists each HID collection by it).
 pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
     let interface = wide(&hid_path.to_string_lossy());
-    // Device instance IDs are at most 200 characters (MAX_DEVICE_ID_LEN).
     let mut buffer = [0u16; 256];
     let mut size = std::mem::size_of_val(&buffer) as u32;
     let mut kind = 0u32;
-    // SAFETY: `interface` is NUL-terminated; `size` is the buffer's size in bytes.
     let result = unsafe {
         CM_Get_Device_Interface_PropertyW(
             interface.as_ptr(),
@@ -272,9 +238,6 @@ pub fn device_instance_path(hid_path: &CStr) -> io::Result<DeviceInstancePath> {
     Ok(DeviceInstancePath::new(text))
 }
 
-/// heka's [`Hiding`] over the real driver, journalled at [`journal_path`]. Call
-/// [`Hiding::recover`] on it once, then [`Hiding::allow_heka`], before looking for
-/// Controllers.
 pub fn hiding() -> io::Result<Hiding> {
     let journal = journal_path().ok_or_else(|| io::Error::other("LOCALAPPDATA is not set"))?;
     Ok(Hiding::new(
@@ -284,7 +247,6 @@ pub fn hiding() -> io::Result<Hiding> {
     ))
 }
 
-/// Where heka keeps its HidHide journal: `%LOCALAPPDATA%\heka\hiding.journal`.
 pub fn journal_path() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(|dir| PathBuf::from(dir).join("heka").join("hiding.journal"))
@@ -296,7 +258,6 @@ mod tests {
 
     #[test]
     fn ioctl_codes_match_ctl_code_by_hand() {
-        // (32769 << 16) | (FILE_READ_DATA << 14) | (2048 << 2) | METHOD_BUFFERED
         assert_eq!(IOCTL_GET_WHITELIST, 0x8001_6000);
         assert_eq!(IOCTL_SET_ACTIVE, 0x8001_6014);
     }

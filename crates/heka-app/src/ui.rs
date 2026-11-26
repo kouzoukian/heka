@@ -1,5 +1,3 @@
-//! The main window.
-
 pub mod assets;
 pub mod banners;
 pub mod detail;

@@ -1,6 +1,3 @@
-//! The Feedback a game asks for and the player's preferences in, what the
-//! Controller shows out.
-
 use heka_core::feedback::{Feedback, Lightbar, PlayerLights, Rumble};
 use heka_core::preferences::{Preferences, RumbleStrength};
 

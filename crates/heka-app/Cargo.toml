@@ -25,7 +25,6 @@ tray-icon.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 
-# For examples/tray_spike.rs.
 [dev-dependencies.windows-sys]
 workspace = true
 features = [

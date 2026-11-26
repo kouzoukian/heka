@@ -1,23 +1,10 @@
-//! Checks heka.exe before it goes into the release zip: it must open no console
-//! window, and import only DLLs that Windows comes with.
-//!
-//! Offsets are from Microsoft's "PE Format":
-//! <https://learn.microsoft.com/windows/win32/debug/pe-format>.
-
 use crate::Error;
 
-/// `IMAGE_SUBSYSTEM_WINDOWS_GUI`.
 const GUI: u16 = 2;
-/// The optional header magic of a 64-bit (PE32+) image.
 const PE32_PLUS: u16 = 0x20b;
-/// Data directory indexes.
 const IMPORT_TABLE: usize = 1;
 const DELAY_IMPORT_TABLE: usize = 13;
 
-/// The DLLs of Windows 10 and 11 that heka.exe may import. The Visual C++ runtime
-/// is not one of them. Add a DLL only if every Windows 10 and 11 PC has it.
-/// `icuuc.dll` came with Windows 10 version 1703, the newest of these.
-/// `gdiplus.dll` draws the icons of the menus gpui-component opens on text fields.
 const WINDOWS_DLLS: [&str; 24] = [
     "advapi32.dll",
     "bcryptprimitives.dll",
@@ -45,7 +32,6 @@ const WINDOWS_DLLS: [&str; 24] = [
     "winmm.dll",
 ];
 
-/// Checks the executable and returns the DLLs it imports, delay-loaded ones last.
 pub fn check(exe: &[u8]) -> Result<Vec<String>, Error> {
     let image = Image::read(exe).ok_or("not a 64-bit Windows executable, or a damaged one")?;
     if image.subsystem != GUI {
@@ -73,8 +59,6 @@ pub fn check(exe: &[u8]) -> Result<Vec<String>, Error> {
 
 fn comes_with_windows(dll: &str) -> bool {
     let dll = dll.to_ascii_lowercase();
-    // API sets are part of Windows, except the C runtime's, whose presence means
-    // the runtime was not linked in.
     (dll.starts_with("api-ms-win-") && !dll.starts_with("api-ms-win-crt-"))
         || WINDOWS_DLLS.contains(&dll.as_str())
 }
@@ -84,7 +68,6 @@ struct Image {
     imports: Vec<String>,
 }
 
-/// A section's place in memory and in the file.
 struct Section {
     address: u32,
     len: u32,
@@ -104,7 +87,6 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
 }
 
 impl Image {
-    /// `None` for anything that is not a whole PE32+ image.
     fn read(exe: &[u8]) -> Option<Self> {
         if !exe.starts_with(b"MZ") {
             return None;
@@ -131,7 +113,6 @@ impl Image {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        // Where in the file an address in memory comes from.
         let offset = |address: u32| {
             sections.iter().find_map(|section| {
                 let within = address.checked_sub(section.address)?;
@@ -140,8 +121,6 @@ impl Image {
         };
 
         let mut imports = Vec::new();
-        // Each table is an array of descriptors that ends with an empty one, whose
-        // name address is zero: (directory, descriptor length, name address at).
         for (directory, len, name_at) in [(IMPORT_TABLE, 20, 12), (DELAY_IMPORT_TABLE, 32, 4)] {
             if directory >= directory_count {
                 continue;

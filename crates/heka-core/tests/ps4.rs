@@ -1,12 +1,3 @@
-//! Controller state in, PS4 Virtual Controller report out.
-//!
-//! The report is the DualShock 4 USB input report without its report ID
-//! (`struct dualshock4_input_report_usb` in Linux `hid-playstation.c`), which is
-//! also ViGEmBus's 63-byte `DS4_REPORT_EX`: sticks at 0..4, buttons[3] at 4..7,
-//! triggers at 7 and 8, sensor timestamp (le16) at 9, gyro[3] at 12, accel[3] at 18,
-//! touch report count at 32, first touch report at 33 (packet counter, then two
-//! points of contact, x_lo, x_hi:4|y_lo:4, y_hi).
-
 use heka_core::calibration::Calibration;
 use heka_core::ps4::Ps4Translator;
 use heka_core::state::{Buttons, ControllerState, Finger, Motion, Stick};
@@ -33,8 +24,6 @@ fn neutral_state_centres_sticks_releases_the_dpad_and_lifts_every_finger() {
 
 #[test]
 fn every_button_lands_on_its_dualshock_4_bit() {
-    // `DS_BUTTONS0_*`, `DS_BUTTONS1_*` and `DS_BUTTONS2_*`, shared by both pads in
-    // `hid-playstation.c`. Create is the DualShock 4's Share.
     let cases = [
         (Buttons::SQUARE, 4, 0x18),
         (Buttons::CROSS, 4, 0x28),
@@ -109,8 +98,6 @@ fn sticks_and_triggers_pass_through() {
 
 #[test]
 fn two_fingers_keep_their_contact_numbers_with_y_scaled_to_the_dualshock_4_pad() {
-    // DualSense touchpad 1920 x 1080, DualShock 4 1920 x 942 (`DS_TOUCHPAD_*` and
-    // `DS4_TOUCHPAD_*`): x is unchanged, y 0..=1079 maps onto 0..=941.
     let state = ControllerState {
         touch: [
             Some(Finger {
@@ -127,9 +114,7 @@ fn two_fingers_keep_their_contact_numbers_with_y_scaled_to_the_dualshock_4_pad()
         ..ControllerState::NEUTRAL
     };
     let bytes = report(&state);
-    // Finger 1: contact 5, x 1919 = 0x77F, y 941 = 0x3AD.
     assert_eq!(&bytes[34..38], &[0x05, 0x7F, 0xD7, 0x3A]);
-    // Finger 2: contact 0x7F, x 960 = 0x3C0, y 540 * 941 / 1079 = 470.9, so 471 = 0x1D7.
     assert_eq!(&bytes[38..42], &[0x7F, 0xC0, 0x73, 0x1D]);
 }
 
@@ -149,9 +134,6 @@ fn the_touch_packet_counter_moves_when_the_touch_changes() {
     assert_eq!(lifted, first.wrapping_add(2));
 }
 
-/// ViGEmBus's answer to a DualShock 4 calibration request (feature report `0x02`),
-/// copied from `sys/Ds4Pdo.cpp` (`HID_REPORT_ID_1` response). Games calibrate the
-/// PS4 Virtual Controller's motion with it.
 const VIGEM_CALIBRATION: [u8; 37] = [
     0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x87, 0x22, 0x7B, 0xDD, 0xB2, 0x22, 0x47, 0xDD, 0xBD,
     0x22, 0x43, 0xDD, 0x1C, 0x02, 0x1C, 0x02, 0x7F, 0x1E, 0x2E, 0xDF, 0x60, 0x1F, 0x4C, 0xE0, 0x3A,
@@ -185,8 +167,6 @@ fn motion_reads_back_through_the_virtual_controllers_calibration() {
         let gyro = game.gyro(std::array::from_fn(|i| le16(&bytes, 12 + 2 * i)));
         let accel = game.accel(std::array::from_fn(|i| le16(&bytes, 18 + 2 * i)));
         for i in 0..3 {
-            // One raw step of the virtual pad is about 63 gyro units and 1 accel
-            // unit: rounding to it, then the game truncating, costs under 1.5 steps.
             assert!((gyro[i] - motion.gyro[i]).abs() <= 94, "gyro {i}: {gyro:?}");
             assert!(
                 (accel[i] - motion.accel[i]).abs() <= 2,
@@ -198,8 +178,6 @@ fn motion_reads_back_through_the_virtual_controllers_calibration() {
 
 #[test]
 fn one_g_on_x_is_a_worked_raw_value() {
-    // Accel x: plus 0x1E7F = 7807, minus 0xDF2E = -8402, so range 16209 and bias
-    // 7807 - 8104 = -297. One g (8192) is 8192 * 16209 / 16384 - 297 = 7807.5, so 7808.
     let bytes = report(&ControllerState {
         motion: Motion {
             accel: [8192, 0, 0],
@@ -212,8 +190,6 @@ fn one_g_on_x_is_a_worked_raw_value() {
 
 #[test]
 fn the_sensor_timestamp_becomes_dualshock_4_ticks() {
-    // DualSense ticks are 1/3 µs, DualShock 4 ticks 16/3 µs (`hid-playstation.c`
-    // timestamp conversions), so one DualShock 4 tick is 16 DualSense ticks.
     let at = |timestamp| {
         let bytes = report(&ControllerState {
             motion: Motion {

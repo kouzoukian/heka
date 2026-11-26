@@ -1,5 +1,3 @@
-//! Which crates heka.exe ships, read from `cargo metadata` output.
-
 use heka_package::crates::shipped;
 use serde_json::{Value, json};
 
@@ -24,8 +22,6 @@ fn registry(name: &str) -> Value {
     )
 }
 
-/// A resolve node whose dependencies are `(crate, dependency kind)`, where the
-/// kind is `None` for a normal dependency, as cargo writes it.
 fn node(id: &str, deps: &[(&str, Option<&str>)]) -> Value {
     let deps: Vec<Value> = deps
         .iter()

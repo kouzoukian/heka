@@ -1,7 +1,3 @@
-//! heka's value under the current user's Run key, which Windows starts at sign-in.
-//!
-//! Never called by tests: the logic around it is tested in `heka-core` with a fake.
-
 use std::io;
 
 use heka_core::autostart::RunEntry;
@@ -25,7 +21,6 @@ fn check(status: u32) -> io::Result<()> {
     }
 }
 
-/// `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, value `heka`.
 #[derive(Debug, Default)]
 pub struct RunKey;
 
@@ -51,7 +46,6 @@ impl RunEntry for RunKey {
                 ERROR_MORE_DATA => buffer.resize(bytes as usize / 2 + 1, 0),
                 _ => {
                     check(status)?;
-                    // `bytes` counts the terminating null.
                     let len = (bytes as usize / 2).saturating_sub(1);
                     return Ok(Some(String::from_utf16_lossy(&buffer[..len])));
                 }

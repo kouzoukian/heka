@@ -1,17 +1,3 @@
-//! Hiding Controllers from games with HidHide, and putting everything back.
-//!
-//! HidHide keeps three things heka touches: a cloak switch, a list of hidden devices
-//! (by device instance path) and a list of allowed applications (by full image name).
-//! Other tools share that configuration, so heka only ever undoes what it did itself.
-//! Every change is written to a [`Journal`] before it is made, so that the next start
-//! can undo it after a crash.
-//!
-//! [`Hiding`] is the seam a Bridge supervisor calls: [`Hiding::hide`] when a Link of a
-//! Bridged or Held Controller is seen, [`Hiding::release`] when that Controller's Bridge
-//! ends, [`Hiding::restore_all`] on stop or quit, and [`Hiding::recover`] then
-//! [`Hiding::allow_heka`] at start, before looking for Controllers: a Controller another
-//! tool hid cannot even be found by heka until heka is allowed.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
@@ -19,9 +5,6 @@ use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
-/// A PnP device instance path, such as `HID\VID_054C&PID_0CE6&MI_03\8&15C30336&0&0000`.
-///
-/// HidHide compares these without regard to case, and so does heka.
 #[derive(Debug, Clone)]
 pub struct DeviceInstancePath(String);
 
@@ -53,28 +36,18 @@ impl fmt::Display for DeviceInstancePath {
     }
 }
 
-/// HidHide's whole configuration as read from the driver.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HidHideConfig {
-    /// Cloaking is on: hidden devices are hidden from applications that are not allowed.
     pub active: bool,
-    /// The application list is inverted: listed applications are the ones denied.
     pub inverse: bool,
-    /// Device instance paths of hidden devices.
     pub hidden_devices: Vec<String>,
-    /// Full image names (`\Device\HarddiskVolumeN\...\app.exe`) of allowed applications.
     pub allowed_apps: Vec<String>,
 }
 
-/// Why HidHide could not be read or changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HidHideError {
-    /// HidHide's driver is not installed or not running.
     NotInstalled,
-    /// Another program holds HidHide's control device, which takes one client at a time.
-    /// Usually HidHide's own configuration app or command line is open.
     InUse,
-    /// Any other driver failure, with the system's message.
     Failed(String),
 }
 
@@ -92,9 +65,6 @@ impl fmt::Display for HidHideError {
 
 impl std::error::Error for HidHideError {}
 
-/// Access to HidHide's configuration. Implemented over the driver in `heka-windows`.
-///
-/// Each list setter replaces the whole list, as HidHide's own interface does.
 pub trait HidHide: Send {
     fn read(&self) -> Result<HidHideConfig, HidHideError>;
     fn set_hidden_devices(&self, devices: &[String]) -> Result<(), HidHideError>;
@@ -102,7 +72,6 @@ pub trait HidHide: Send {
     fn set_active(&self, active: bool) -> Result<(), HidHideError>;
 }
 
-/// Whether HidHide can be used, for the setup screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HidHideStatus {
     Ready,
@@ -112,7 +81,6 @@ pub enum HidHideStatus {
 }
 
 impl HidHideStatus {
-    /// Detects HidHide by reading its configuration. Changes nothing.
     pub fn detect(hidhide: &dyn HidHide) -> Self {
         match hidhide.read() {
             Ok(_) => Self::Ready,
@@ -123,14 +91,10 @@ impl HidHideStatus {
     }
 }
 
-/// What heka has changed in HidHide and must undo. Empty means nothing to undo.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Journal {
-    /// heka turned cloaking on; it was off before.
     pub cloak_was_off: bool,
-    /// heka added this full image name to the allowed applications.
     pub allowed_app: Option<String>,
-    /// Device instance paths heka added to the hidden devices.
     pub hidden_devices: Vec<String>,
 }
 
@@ -140,15 +104,11 @@ impl Journal {
     }
 }
 
-/// Where the journal survives a crash.
 pub trait JournalStore: Send {
-    /// The saved journal, or an empty one when nothing is saved.
     fn load(&self) -> std::io::Result<Journal>;
-    /// Saves the journal durably before returning.
     fn save(&self, journal: &Journal) -> std::io::Result<()>;
 }
 
-/// A journal kept in one small text file. An empty journal removes the file.
 pub struct FileJournal {
     path: PathBuf,
 }
@@ -217,7 +177,6 @@ impl JournalStore for FileJournal {
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir)?;
         }
-        // Written aside and renamed over, so a kill mid-write never leaves half a journal.
         let partial = self.path.with_extension("partial");
         let mut file = fs::File::create(&partial)?;
         file.write_all(text.as_bytes())?;
@@ -227,11 +186,9 @@ impl JournalStore for FileJournal {
     }
 }
 
-/// Why hiding or restoring failed.
 #[derive(Debug)]
 pub enum HidingError {
     HidHide(HidHideError),
-    /// The journal could not be saved or read, so no change was made.
     Journal(std::io::Error),
 }
 
@@ -258,7 +215,6 @@ impl From<std::io::Error> for HidingError {
     }
 }
 
-/// Hides Controllers for any number of Bridges. Safe to share between threads.
 pub struct Hiding {
     inner: Mutex<Inner>,
 }
@@ -267,17 +223,12 @@ struct Inner {
     hidhide: Box<dyn HidHide>,
     store: Box<dyn JournalStore>,
     journal: Journal,
-    /// heka's own full image name, allowed so that heka still sees hidden Controllers.
     app: String,
-    /// The Links each owner wants Hidden, by owner key.
     wanted: BTreeMap<String, BTreeSet<String>>,
-    /// heka wants to stay allowed until [`Hiding::restore_all`], whether or not
-    /// anything is Hidden, so it can see Controllers that other tools hid.
     stay_allowed: bool,
 }
 
 impl Hiding {
-    /// `app` is heka's own full image name, as HidHide lists allowed applications.
     pub fn new(hidhide: Box<dyn HidHide>, store: Box<dyn JournalStore>, app: String) -> Self {
         Self {
             inner: Mutex::new(Inner {
@@ -291,10 +242,6 @@ impl Hiding {
         }
     }
 
-    /// Adds heka to HidHide's allowed applications, so that it can find and open a
-    /// Controller another tool left hidden. Call at start, after [`Hiding::recover`]
-    /// and before looking for Controllers; on failure, call again later. heka stays
-    /// allowed until [`Hiding::restore_all`], which removes it only if heka added it.
     pub fn allow_heka(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner.stay_allowed = true;
@@ -302,10 +249,6 @@ impl Hiding {
         inner.allow(&config)
     }
 
-    /// Hides one Link of a Controller. `owner` is any stable key for the Controller;
-    /// a Controller with several Links calls this once per Link. Calling it again for
-    /// a Link that is already Hidden changes nothing, so a returning Link can always
-    /// be passed again.
     pub fn hide(&self, owner: &str, device: &DeviceInstancePath) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner
@@ -316,15 +259,12 @@ impl Hiding {
         inner.hide(device)
     }
 
-    /// Ends hiding for every Link of this owner. A Link another owner still wants stays
-    /// Hidden. When no owner wants anything Hidden, everything heka changed is undone.
     pub fn release(&self, owner: &str) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner.wanted.remove(owner);
         inner.undo()
     }
 
-    /// Ends hiding for every owner and undoes everything heka changed. Call on stop and quit.
     pub fn restore_all(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
         inner.wanted.clear();
@@ -332,8 +272,6 @@ impl Hiding {
         inner.undo()
     }
 
-    /// Undoes what an earlier run journalled but never restored, for example because it
-    /// was killed. Call once at start, before the first [`Hiding::hide`].
     pub fn recover(&self) -> Result<(), HidingError> {
         let mut inner = self.lock();
         let saved = inner.store.load()?;
@@ -350,11 +288,8 @@ impl Inner {
     fn hide(&mut self, device: &DeviceInstancePath) -> Result<(), HidingError> {
         let config = self.hidhide.read()?;
 
-        // heka is allowed first, so it never loses sight of a Controller it Hides.
         self.allow(&config)?;
 
-        // A device that is already hidden belongs to the player or another tool: it is
-        // not journalled, so heka never removes it.
         if !contains(&config.hidden_devices, device.as_str()) {
             if !contains(&self.journal.hidden_devices, device.as_str()) {
                 self.journal.hidden_devices.push(device.as_str().to_owned());
@@ -373,8 +308,6 @@ impl Inner {
         Ok(())
     }
 
-    /// Adds heka to the allowed applications unless it is already there. With an
-    /// inverted list, listing heka would deny it instead, so heka stays off the list.
     fn allow(&mut self, config: &HidHideConfig) -> Result<(), HidingError> {
         if config.inverse || contains(&config.allowed_apps, &self.app) {
             return Ok(());
@@ -387,9 +320,6 @@ impl Inner {
         Ok(())
     }
 
-    /// Undoes every journalled change no owner still needs, in the reverse order of
-    /// [`Inner::hide`]. Each change is made before it leaves the journal, so a crash in
-    /// between leaves an entry whose undo finds nothing left to do.
     fn undo(&mut self) -> Result<(), HidingError> {
         let still_wanted: BTreeSet<&String> = self.wanted.values().flatten().collect();
         let nothing_wanted = still_wanted.is_empty();

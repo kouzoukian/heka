@@ -1,8 +1,3 @@
-//! DualSense Bluetooth input report in, Controller state out.
-//!
-//! No Bluetooth capture exists yet, so every report here is DERIVED from the
-//! captured USB reports (see `common::bluetooth_from_usb` for the layout source).
-
 mod common;
 
 use heka_core::calibration::Calibration;
@@ -12,7 +7,6 @@ use heka_core::dualsense::{
 use heka_core::link::{ReportError, ReportFormat};
 use heka_core::state::{Buttons, ControllerState};
 
-/// CAPTURED: the calibration of the DualSense the USB reports came from.
 fn calibration() -> Calibration {
     let report = common::reports(include_str!("fixtures/dualsense_usb_calibration.hex")).remove(0);
     parse_calibration(&report).unwrap()
@@ -50,9 +44,6 @@ fn a_bluetooth_report_with_a_wrong_crc_is_refused() {
 
 #[test]
 fn the_simple_bluetooth_report_and_short_reads_are_refused() {
-    // Before full reports are enabled the DualSense sends report 0x01 over
-    // Bluetooth (`dualsense_parse_report`: "Bluetooth uses a minimal HID report for
-    // reportID 1").
     let full = common::bluetooth_from_usb(&common::captured_baseline());
     let mut simple = full.clone();
     simple[0] = 0x01;

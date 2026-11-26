@@ -1,3 +1,7 @@
+## No code comments
+
+Write code without comments, doc comments included; `cargo run -p heka-lint` fails on one. A non-obvious decision goes into `docs/adr/`, owed work into a GitHub issue. See `docs/adr/0003-no-code-comments.md`.
+
 ## Agent skills
 
 ### Issue tracker

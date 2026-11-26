@@ -1,6 +1,3 @@
-//! Links arriving and leaving, the player's Stop and Start, and time passing go
-//! in; Virtual Controllers plugged, updated and removed come out.
-
 mod common;
 
 use std::collections::VecDeque;
@@ -23,18 +20,13 @@ use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::Supervisor;
 use heka_core::virtual_controller::{OutputType, VirtualBus, VirtualController, VirtualError};
 
-// ---- Fakes ----------------------------------------------------------------
-
 #[derive(Default)]
 struct Script {
     reports: VecDeque<Vec<u8>>,
     lost: bool,
-    /// The output reports sent to the Controller.
     written: Vec<Vec<u8>>,
 }
 
-/// A Link the test feeds reports to and can pull out. A DualSense on USB unless
-/// made another way.
 #[derive(Clone)]
 struct LinkHandle(Arc<Mutex<Script>>, ReportFormat);
 
@@ -53,7 +45,6 @@ impl LinkHandle {
         Self::delivering(ReportFormat::DualSenseBluetooth(Calibration::UNCALIBRATED))
     }
 
-    /// Sends this USB report in the Link's own format.
     fn send_input(&self, usb: Vec<u8>) {
         match self.1 {
             ReportFormat::DualSenseBluetooth(_) => self.send(common::bluetooth_from_usb(&usb)),
@@ -120,7 +111,6 @@ impl LinkWriter for FakeWriter {
     }
 }
 
-/// A game that never sends Feedback.
 struct QuietGame;
 
 impl FeedbackSource for QuietGame {
@@ -130,7 +120,6 @@ impl FeedbackSource for QuietGame {
     }
 }
 
-/// What one Virtual Controller was shown.
 #[derive(Default)]
 struct Shown {
     output_type: OutputType,
@@ -207,8 +196,6 @@ impl VirtualController for FakeController {
     }
 }
 
-// ---- Helpers --------------------------------------------------------------
-
 fn mac(n: u8) -> MacAddress {
     MacAddress([0xA0, 0, 0, 0, 0, n])
 }
@@ -221,7 +208,6 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-/// Polls until the Bridges' input threads have reported something.
 fn poll_until_changed(supervisor: &mut Supervisor, now: Instant) -> Vec<Change> {
     let mut changes = Vec::new();
     wait_until(|| {
@@ -232,7 +218,6 @@ fn poll_until_changed(supervisor: &mut Supervisor, now: Instant) -> Vec<Change> 
 }
 
 fn cross() -> Vec<u8> {
-    // DERIVED: captured baseline with Cross pressed (buttons[0] bit 5).
     common::derived(&[(8, 0x28)])
 }
 
@@ -243,8 +228,6 @@ fn setup() -> (Supervisor, FakeBus) {
         bus,
     )
 }
-
-// ---- Tests ----------------------------------------------------------------
 
 #[test]
 fn an_arriving_controller_is_bridged_to_a_new_virtual_controller() {
@@ -287,7 +270,6 @@ fn four_controllers_bridge_independently_and_a_fifth_waits() {
     assert_eq!(bus.plugged(), 4);
     assert_eq!(supervisor.controllers()[4].phase, Phase::Waiting);
 
-    // Input on the second Controller reaches only the second Virtual Controller.
     links[1].send(cross());
     wait_until(|| bus.last_state(1).is_some());
     for other in [0, 2, 3] {
@@ -357,7 +339,6 @@ fn a_link_reported_gone_before_its_bridge_notices_is_held_too() {
     assert_eq!(supervisor.link_gone(id, t0), [Change::Held { mac: mac(1) }]);
     assert_eq!(bus.last_state(0), Some(ControllerState::NEUTRAL));
     assert!(!bus.unplugged(0));
-    // A late report for the same Link changes nothing.
     assert_eq!(supervisor.link_gone(id, t0), []);
 }
 
@@ -476,8 +457,6 @@ fn changing_the_output_type_bridges_the_same_link_to_a_new_virtual_controller() 
 
 #[test]
 fn heka_never_bridges_its_own_ps4_virtual_controller() {
-    // ViGEmBus gives every virtual DualShock 4 a MAC address under its own
-    // vendor prefix C0:13:37 (`GenerateRandomMacAddress` in `sys/Ds4Pdo.cpp`).
     let t0 = Instant::now();
     let (mut supervisor, bus) = setup();
     let ours = MacAddress([0xC0, 0x13, 0x37, 0x12, 0x34, 0x56]);
@@ -488,14 +467,10 @@ fn heka_never_bridges_its_own_ps4_virtual_controller() {
     assert!(supervisor.controllers().is_empty());
 }
 
-// ---- Several Links --------------------------------------------------------
-
 #[test]
 fn a_dualshock_4_on_both_links_is_one_controller_that_stays_a_dualshock_4_while_held() {
     let t0 = Instant::now();
     let (mut supervisor, bus) = setup();
-    // The two ways a DualShock 4 gives its address: the serial number over
-    // Bluetooth and the pairing-info report (0x12, address reversed) over USB.
     let by_bluetooth = parse_bluetooth_serial("a4ae11020304").unwrap();
     let by_usb = parse_pairing_info(&[0x12, 0x04, 0x03, 0x02, 0x11, 0xAE, 0xA4]).unwrap();
     let bluetooth =
@@ -505,7 +480,6 @@ fn a_dualshock_4_on_both_links_is_one_controller_that_stays_a_dualshock_4_while_
     supervisor.link_arrived(by_bluetooth, bluetooth.reader(), t0);
     let model = |supervisor: &Supervisor| supervisor.controllers()[0].model;
     assert_eq!(model(&supervisor), ControllerModel::DualShock4);
-    // DERIVED: a resting DualShock 4 report with Cross pressed (byte 5 bit 5).
     bluetooth.send_input(common::ds4_usb(&[(5, 0x28)]));
     wait_until(|| bus.last_state(0).map(|s| s.buttons) == Some(Buttons::CROSS));
 
@@ -528,12 +502,9 @@ fn a_dualshock_4_on_both_links_is_one_controller_that_stays_a_dualshock_4_while_
 }
 
 fn square() -> Vec<u8> {
-    // DERIVED: captured baseline with Square pressed (buttons[0] bit 4).
     common::derived(&[(8, 0x18)])
 }
 
-/// Sends Cross then Square on `from` and waits until Virtual Controller `index`
-/// shows each in turn.
 fn shows_input_from(bus: &FakeBus, index: usize, from: &LinkHandle) {
     from.send_input(cross());
     wait_until(|| bus.last_state(index).map(|s| s.buttons) == Some(Buttons::CROSS));
@@ -575,7 +546,6 @@ fn plugging_in_usb_makes_it_the_active_link_on_the_same_virtual_controller() {
     assert_eq!(changes, []);
     assert_eq!(supervisor.controllers()[0].active_link, Some(LinkKind::Usb));
     shows_input_from(&bus, 0, &usb);
-    // Bluetooth input is no longer read.
     bluetooth.send_input(cross());
     std::thread::sleep(Duration::from_millis(30));
     assert_eq!(bus.last_state(0).unwrap().buttons, Buttons::SQUARE);
@@ -592,7 +562,6 @@ fn unplugging_usb_falls_back_to_bluetooth_without_a_hold() {
     supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
     supervisor.link_arrived(mac(1), usb.reader(), t0);
 
-    // The Bridge notices first.
     usb.pull_out();
     wait_until(|| {
         assert_eq!(supervisor.poll(t0), []);
@@ -603,7 +572,6 @@ fn unplugging_usb_falls_back_to_bluetooth_without_a_hold() {
     assert_eq!(bus.plugged(), 1);
     assert!(!bus.unplugged(0));
 
-    // Only losing the last Link Holds the Controller.
     bluetooth.pull_out();
     assert_eq!(
         poll_until_changed(&mut supervisor, t0),
@@ -646,7 +614,6 @@ fn an_idle_bluetooth_link_leaving_changes_nothing() {
 
     assert_eq!(supervisor.link_gone(bluetooth_id, t0), []);
     shows_input_from(&bus, 0, &usb);
-    // Losing USB, now the only Link, Holds the Controller.
     usb.pull_out();
     assert_eq!(
         poll_until_changed(&mut supervisor, t0),
@@ -693,7 +660,6 @@ fn without_a_bus_the_active_link_is_read_and_follows_usb() {
     bluetooth.send_input(cross());
     wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::CROSS));
 
-    // With a bus, the Controller is Bridged once, from Bluetooth.
     let bus = FakeBus::default();
     let changes = supervisor.connect_bus(Box::new(bus.clone()), t0);
     assert_eq!(
@@ -719,7 +685,6 @@ fn pink() -> Preferences {
     }
 }
 
-/// True once the Controller at the end of this Link has been told to turn pink.
 fn turned_pink(link: &LinkHandle) -> bool {
     let report = usb_output_report(
         &Feedback {

@@ -1,4 +1,3 @@
-// Release builds open no console window. Debug builds keep it, to show messages.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridging;
@@ -19,7 +18,6 @@ use heka_windows::single_instance::{self, Instance};
 use bridging::Bridging;
 use window_backend::WindowBackend;
 
-/// Focuses the window, or opens it again after it was closed to the tray.
 fn show_main_window(cx: &mut App, bridging: &Arc<Bridging>) {
     if let Some(window) = cx.windows().first() {
         let _ = window.update(cx, |_, window, _| window.activate_window());
@@ -30,7 +28,6 @@ fn show_main_window(cx: &mut App, bridging: &Arc<Bridging>) {
 }
 
 fn main() {
-    // A second copy only asks the running one to show its window.
     let instance = match single_instance::claim() {
         Ok(Instance::Second) => return,
         Ok(Instance::First(instance)) => Some(instance),
@@ -41,7 +38,6 @@ fn main() {
     };
     let in_tray = autostart::opens_in_tray(std::env::args_os());
 
-    // Closing the window leaves heka running in the tray; only Quit ends it.
     let application = gpui_platform::application()
         .with_assets(Assets)
         .with_quit_mode(QuitMode::Explicit);
@@ -49,8 +45,6 @@ fn main() {
         view::init(cx);
 
         let bridging = Arc::new(Bridging::start());
-        // Quitting removes every Virtual Controller and restores every Hidden
-        // Controller before the process ends.
         cx.on_app_quit({
             let bridging = Arc::clone(&bridging);
             move |_| {
@@ -71,7 +65,6 @@ fn main() {
             move |cx| show_main_window(cx, &bridging)
         });
         if let Err(error) = &tray {
-            // Without a tray icon, closing the window must quit as before.
             eprintln!("heka: cannot add the tray icon: {error}");
             cx.set_quit_mode(QuitMode::Default);
         }
@@ -81,7 +74,6 @@ fn main() {
     });
 }
 
-/// Start with Windows for this copy, pointed at wherever this copy now lives.
 fn autostart() -> Autostart<RunKey> {
     let exe = std::env::current_exe().unwrap_or_else(|_| "heka.exe".into());
     let mut autostart = Autostart::new(RunKey, &exe);

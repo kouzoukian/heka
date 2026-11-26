@@ -1,8 +1,3 @@
-//! `cargo run -p heka-package` builds the release zip in `target/dist`. It builds
-//! heka.exe and reads it, but never runs it.
-//!
-//! `--tag v1.2.3` also requires that tag to name the version being built.
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::{env, fs};
@@ -10,7 +5,6 @@ use std::{env, fs};
 use heka_package::release::{Release, check_tag};
 use heka_package::{Error, binary, crates};
 
-/// The workspace version, which heka.exe shares.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TARGET: &str = "x86_64-pc-windows-msvc";
 
@@ -42,7 +36,6 @@ fn package(args: &[String]) -> Result<PathBuf, Error> {
         let output = Command::new(program)
             .args(args)
             .current_dir(workspace)
-            // Progress and errors go straight to the terminal.
             .stderr(std::process::Stdio::inherit())
             .output()?;
         if !output.status.success() {

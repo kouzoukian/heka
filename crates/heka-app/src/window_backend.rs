@@ -1,5 +1,3 @@
-//! Connects the window to the supervisor thread.
-
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,8 +10,6 @@ use crate::bridging::{Bridging, Status};
 pub struct WindowBackend(pub Arc<Bridging>);
 
 impl Backend for WindowBackend {
-    /// A copy of what the supervisor thread last published and of each Bridge's
-    /// latest input. It never waits for either thread's work.
     fn screen(&self, now: Instant) -> Screen {
         let snapshot = self.0.snapshot();
         let status = match &snapshot.status {

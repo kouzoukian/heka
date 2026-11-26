@@ -1,6 +1,3 @@
-//! A segmented control: a few choices side by side in one box, the chosen one
-//! filled.
-
 use std::rc::Rc;
 
 use gpui::{
@@ -13,20 +10,16 @@ use gpui_component::{Selectable, Theme};
 use crate::ui::metrics::{CONTROL, GAP, SMALL_TEXT};
 use crate::ui::model::{Command, SendCommand};
 
-/// One choice.
 pub struct Segment {
     id: SharedString,
-    /// What names it to a screen reader, and in its tooltip if it shows no words.
     label: SharedString,
     content: AnyElement,
     tooltip: bool,
     selected: bool,
-    /// What choosing it asks for, `None` when it is already chosen.
     command: Option<Command>,
 }
 
 impl Segment {
-    /// A choice that shows its words.
     pub fn words(
         id: impl Into<SharedString>,
         words: impl Into<SharedString>,
@@ -44,7 +37,6 @@ impl Segment {
         }
     }
 
-    /// A choice that shows a picture, with `label` in its tooltip.
     pub fn picture(
         id: impl Into<SharedString>,
         label: impl Into<SharedString>,
@@ -63,7 +55,6 @@ impl Segment {
     }
 }
 
-/// The segments in one box, as high as a control.
 pub fn segmented(
     segments: impl IntoIterator<Item = Segment>,
     send: &SendCommand,
@@ -75,7 +66,6 @@ pub fn segmented(
         Button::new(segment.id)
             .ghost()
             .selected(segment.selected)
-            // The switch's border and padding bring it to a control's height.
             .h(CONTROL - px(6.))
             .px(GAP)
             .rounded(px(3.))
