@@ -146,6 +146,11 @@ impl Render for MainView {
             .text_color(theme.foreground)
             .text_sm()
             .child(div().child(status_text(&snapshot.status, rows.len())))
+            .children(
+                snapshot
+                    .hiding_note
+                    .map(|note| div().text_color(theme.warning).child(note)),
+            )
             .children(rows)
     }
 }

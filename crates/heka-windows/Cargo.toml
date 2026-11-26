@@ -12,3 +12,15 @@ publish.workspace = true
 heka-core.workspace = true
 hidapi.workspace = true
 vigem-rust.workspace = true
+
+[dependencies.windows-sys]
+workspace = true
+features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+]

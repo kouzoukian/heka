@@ -5,6 +5,7 @@
 pub mod bridge;
 pub mod dualsense;
 pub mod feedback;
+pub mod hiding;
 pub mod lifecycle;
 pub mod link;
 pub mod mac;
