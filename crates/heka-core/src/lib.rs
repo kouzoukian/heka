@@ -2,6 +2,7 @@
 //!
 //! This crate makes no Windows calls and takes no Windows-only dependencies.
 
+pub mod autostart;
 pub mod bridge;
 pub mod dualsense;
 pub mod feedback;
