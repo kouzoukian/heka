@@ -121,8 +121,20 @@ pub fn drawing(pad: Option<PadModel>, cx: &App) -> impl IntoElement {
         .h(px(HEIGHT))
         .when(!live, |this| this.opacity(0.45))
         .child(body(palette))
-        .child(trigger(L2, text::L2, pad.left_trigger, pad.pressed(Buttons::L2), palette))
-        .child(trigger(R2, text::R2, pad.right_trigger, pad.pressed(Buttons::R2), palette))
+        .child(trigger(
+            L2,
+            text::L2,
+            pad.left_trigger,
+            pad.pressed(Buttons::L2),
+            palette,
+        ))
+        .child(trigger(
+            R2,
+            text::R2,
+            pad.right_trigger,
+            pad.pressed(Buttons::R2),
+            palette,
+        ))
         .child(button(L1, Buttons::L1, text::L1).rounded(px(5.)))
         .child(button(R1, Buttons::R1, text::R1).rounded(px(5.)))
         .child(touchpad(&pad, palette))
@@ -166,13 +178,7 @@ fn control((left, top, width, height): Place, palette: Palette) -> Div {
 }
 
 /// A bar that fills with the trigger's travel, outlined once it clicks.
-fn trigger(
-    place: Place,
-    label: &'static str,
-    travel: u8,
-    clicked: bool,
-    palette: Palette,
-) -> Div {
+fn trigger(place: Place, label: &'static str, travel: u8, clicked: bool, palette: Palette) -> Div {
     control(place, palette)
         .rounded(px(5.))
         .overflow_hidden()
@@ -231,17 +237,13 @@ fn stick((x, y): (f32, f32), at: Stick, clicked: bool, palette: Palette) -> [Div
     };
     let (dx, dy) = stick_offset(at);
     let moved = at != Stick::CENTER;
-    let knob = centred(
-        x + dx * STICK_TRAVEL,
-        y + dy * STICK_TRAVEL,
-        STICK_KNOB,
-    )
-    .bg(palette.body)
-    .border_2()
-    .when(moved, |this| this.border_color(palette.label))
-    .when(clicked, |this| {
-        this.bg(palette.pressed).border_color(palette.pressed)
-    });
+    let knob = centred(x + dx * STICK_TRAVEL, y + dy * STICK_TRAVEL, STICK_KNOB)
+        .bg(palette.body)
+        .border_2()
+        .when(moved, |this| this.border_color(palette.label))
+        .when(clicked, |this| {
+            this.bg(palette.pressed).border_color(palette.pressed)
+        });
     [centred(x, y, STICK_RING), knob]
 }
 
@@ -251,12 +253,7 @@ fn body(palette: Palette) -> impl IntoElement {
         |_, _, _| (),
         move |bounds, (), window, _| {
             paint_silhouette(bounds, PathBuilder::fill(), palette.body, window);
-            paint_silhouette(
-                bounds,
-                PathBuilder::stroke(px(1.)),
-                palette.outline,
-                window,
-            );
+            paint_silhouette(bounds, PathBuilder::stroke(px(1.)), palette.outline, window);
         },
     )
     .absolute()

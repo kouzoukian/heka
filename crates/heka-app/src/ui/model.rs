@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::lifecycle::Phase;
 use heka_core::mac::MacAddress;
+use heka_core::setup::Missing;
 use heka_core::supervisor::ControllerView;
 use heka_core::virtual_controller::OutputType;
 
@@ -31,6 +32,8 @@ pub enum Command {
     Start(MacAddress),
     /// Replaces the Controller's Virtual Controller with one of this Output Type.
     SetOutputType(MacAddress, OutputType),
+    /// Look for the drivers again.
+    CheckDrivers,
 }
 
 /// Everything the window shows.
@@ -38,6 +41,8 @@ pub enum Command {
 pub struct Screen {
     /// heka has not looked for Controllers yet.
     pub starting: bool,
+    /// The drivers the setup screen shows, none when heka has them all.
+    pub missing: Vec<Missing>,
     /// Problems that concern heka as a whole.
     pub notices: Vec<Notice>,
     /// One per listed Controller, in arrival order.
@@ -124,6 +129,8 @@ pub struct CardModel {
     pub battery: Option<Battery>,
     pub output_type: OutputType,
     pub state: CardState,
+    /// ViGEmBus is missing, so no Controller can be Bridged.
+    pub bus_missing: bool,
     /// Why the last Bridge attempt failed.
     pub error: Option<String>,
     /// The live input, `None` while heka reads none.
@@ -132,7 +139,7 @@ pub struct CardModel {
 
 impl CardModel {
     /// The card for one of the Supervisor's Controllers at this moment.
-    pub fn from_view(view: &ControllerView, now: Instant) -> Self {
+    pub fn from_view(view: &ControllerView, now: Instant, bus_missing: bool) -> Self {
         // Taken apart so that a new field cannot go unnoticed here.
         let ControllerView {
             mac,
@@ -162,6 +169,7 @@ impl CardModel {
             battery: None,
             output_type: *output_type,
             state,
+            bus_missing,
             error: error.clone(),
             pad: live.latest().map(|state| PadModel::from_state(&state)),
         }
@@ -182,6 +190,12 @@ impl CardModel {
 
     /// The line under the drawing that explains the state, if it needs one.
     pub fn detail(&self) -> Option<String> {
+        if self.bus_missing && self.state == CardState::NotBridged {
+            return Some(match &self.error {
+                None => text::setup::NOT_BRIDGED.into(),
+                Some(error) => text::with_error(text::setup::NOT_BRIDGED, error),
+            });
+        }
         if let Some(error) = &self.error {
             return Some(text::bridge_failed(error));
         }

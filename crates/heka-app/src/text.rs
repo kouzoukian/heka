@@ -39,6 +39,10 @@ pub fn bridge_failed(error: &str) -> String {
     format!("Could not Bridge: {error}")
 }
 
+pub fn with_error(state: &str, error: &str) -> String {
+    format!("{state} ({error})")
+}
+
 pub fn all_bridges_taken() -> String {
     format!("{MAX_BRIDGES} Controllers are already Bridged.")
 }
@@ -59,6 +63,49 @@ pub const STARTING: &str = "Looking for Controllers";
 pub const NO_CONTROLLER: &str = "No Controller connected";
 pub const CONNECT_HINT: &str = "Connect a DualSense with a USB cable.";
 
+// Tray menu.
+pub const TRAY_OPEN: &str = "Open heka";
+pub const START_WITH_WINDOWS: &str = "Start with Windows";
+pub const QUIT: &str = "Quit";
+
+/// The setup screen: which drivers are missing, what that costs and where to get
+/// them.
+pub mod setup {
+    use heka_core::setup::{Driver, Missing};
+
+    pub const CHECK_AGAIN: &str = "Check again";
+    pub const AFTER_INSTALLING: &str =
+        "Run the installer yourself, restart Windows if it asks, then check again.";
+    /// A Controller's state while ViGEmBus is missing.
+    pub const NOT_BRIDGED: &str = "Not Bridged: ViGEmBus is missing";
+
+    pub fn heading(missing: &Missing) -> String {
+        let name = name(missing.driver);
+        match &missing.error {
+            None => format!("{name} is not installed or not running"),
+            Some(error) => format!("{name} cannot be used: {error}"),
+        }
+    }
+
+    pub fn consequence(driver: Driver) -> &'static str {
+        match driver {
+            Driver::ViGEmBus => {
+                "Controllers are listed and show live input, but none is Bridged until it is installed."
+            }
+            Driver::HidHide => {
+                "Bridges work, but games may see each Controller twice (double input): the Controller and its Virtual Controller."
+            }
+        }
+    }
+
+    pub fn name(driver: Driver) -> &'static str {
+        match driver {
+            Driver::ViGEmBus => "ViGEmBus",
+            Driver::HidHide => "HidHide",
+        }
+    }
+}
+
 // Status bar.
 pub fn summary(controllers: usize, bridged: usize) -> String {
     match controllers {
@@ -69,10 +116,6 @@ pub fn summary(controllers: usize, bridged: usize) -> String {
 }
 
 // Notices.
-pub fn no_bus(error: &str) -> String {
-    format!("ViGEmBus is not available: {error}")
-}
-
 pub fn hid_error(error: &str) -> String {
     format!("Cannot look for Controllers: {error}")
 }

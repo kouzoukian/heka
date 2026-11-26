@@ -41,9 +41,15 @@ pub fn battery_icon(battery: Option<Battery>) -> IconName {
     match battery {
         None => IconName::Battery,
         Some(Battery { charging: true, .. }) => IconName::BatteryCharging,
-        Some(Battery { percent: 0..=10, .. }) => IconName::BatteryWarning,
-        Some(Battery { percent: 11..=35, .. }) => IconName::BatteryLow,
-        Some(Battery { percent: 36..=75, .. }) => IconName::BatteryMedium,
+        Some(Battery {
+            percent: 0..=10, ..
+        }) => IconName::BatteryWarning,
+        Some(Battery {
+            percent: 11..=35, ..
+        }) => IconName::BatteryLow,
+        Some(Battery {
+            percent: 36..=75, ..
+        }) => IconName::BatteryMedium,
         Some(_) => IconName::BatteryFull,
     }
 }

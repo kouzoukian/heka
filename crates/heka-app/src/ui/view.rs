@@ -18,6 +18,7 @@ use gpui_kit_assets::IconName;
 
 use crate::ui::card;
 use crate::ui::model::{Backend, Command, Level, Notice, Screen};
+use crate::ui::setup_screen::setup_screen;
 use crate::{text, theme};
 
 /// How often the window samples the screen, about 60 times a second.
@@ -88,29 +89,45 @@ impl MainView {
         }
     }
 
-    fn cards(&self, cx: &App) -> impl IntoElement + use<> {
+    /// What scrolls: the setup screen if a driver is missing, then the cards or
+    /// the empty state.
+    fn body(&self, cx: &App) -> impl IntoElement + use<> {
         let backend = Rc::clone(&self.backend);
         let send: card::Send = Rc::new(move |command: Command| backend.command(command));
+        let setup = setup_screen(&self.screen.missing, &send, cx)
+            .map(|setup| setup.flex_none().px_4().pt_4());
         let cards: Vec<Div> = self
             .screen
             .cards
             .iter()
             .map(|model| card::card(model, &send, cx))
             .collect();
+        let list = if cards.is_empty() {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(empty_state(self.screen.starting, cx))
+        } else {
+            div()
+                .flex()
+                .flex_none()
+                .flex_wrap()
+                .items_start()
+                .justify_center()
+                .gap_3()
+                .p_4()
+                .children(cards)
+        };
         div()
             .id("controllers")
             .size_full()
+            .flex()
+            .flex_col()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_start()
-                    .justify_center()
-                    .gap_3()
-                    .p_4()
-                    .children(cards),
-            )
+            .children(setup)
+            .child(list)
     }
 }
 
@@ -162,17 +179,7 @@ fn empty_state(starting: bool, cx: &App) -> Empty {
 
 impl Render for MainView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if self.screen.cards.is_empty() {
-            div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(empty_state(self.screen.starting, cx))
-                .into_any_element()
-        } else {
-            self.cards(cx).into_any_element()
-        };
+        let body = self.body(cx);
         let theme = cx.theme();
         div()
             .size_full()
