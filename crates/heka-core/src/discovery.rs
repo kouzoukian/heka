@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use crate::lifecycle::Change;
-use crate::link::{ControllerModel, LinkReader};
+use crate::link::{ControllerModel, LinkReader, ReportError};
 use crate::mac::MacAddress;
 use crate::supervisor::{LinkId, Supervisor};
 
@@ -26,9 +26,17 @@ pub struct FoundLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenError {
+    Hid(String),
+    Address(ReportError),
+    SerialNumber,
+    NotAController,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unopened {
     pub model: ControllerModel,
-    pub error: String,
+    pub error: OpenError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

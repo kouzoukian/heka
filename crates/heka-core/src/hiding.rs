@@ -36,6 +36,18 @@ impl fmt::Display for DeviceInstancePath {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentifyError {
+    Status(u32),
+    NotText,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HidingUnavailable {
+    NoLocalAppData,
+    NoImageName(String),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HidHideConfig {
     pub active: bool,
@@ -48,24 +60,10 @@ pub struct HidHideConfig {
 pub enum HidHideError {
     NotInstalled,
     InUse,
+    UnexpectedSize(usize),
+    TooLarge,
     Failed(String),
 }
-
-impl fmt::Display for HidHideError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotInstalled => {
-                f.write_str("HidHide is not installed or its driver is not running")
-            }
-            Self::InUse => {
-                f.write_str("HidHide is busy: close the HidHide Configuration Client or HidHideCLI")
-            }
-            Self::Failed(message) => write!(f, "HidHide failed: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for HidHideError {}
 
 pub trait HidHide: Send {
     fn read(&self) -> Result<HidHideConfig, HidHideError>;
@@ -79,7 +77,7 @@ pub enum HidHideStatus {
     Ready,
     NotInstalled,
     InUse,
-    Failed(String),
+    Failed(HidHideError),
 }
 
 impl HidHideStatus {
@@ -88,7 +86,7 @@ impl HidHideStatus {
             Ok(_) => Self::Ready,
             Err(HidHideError::NotInstalled) => Self::NotInstalled,
             Err(HidHideError::InUse) => Self::InUse,
-            Err(HidHideError::Failed(message)) => Self::Failed(message),
+            Err(error) => Self::Failed(error),
         }
     }
 }
@@ -106,9 +104,21 @@ impl Journal {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JournalError {
+    Io(String),
+    UnexpectedLine { path: PathBuf, line: String },
+}
+
+impl From<std::io::Error> for JournalError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error.to_string())
+    }
+}
+
 pub trait JournalStore: Send {
-    fn load(&self) -> std::io::Result<Journal>;
-    fn save(&self, journal: &Journal) -> std::io::Result<()>;
+    fn load(&self) -> Result<Journal, JournalError>;
+    fn save(&self, journal: &Journal) -> Result<(), JournalError>;
 }
 
 pub struct FileJournal {
@@ -127,17 +137,15 @@ impl FileJournal {
 }
 
 impl JournalStore for FileJournal {
-    fn load(&self) -> std::io::Result<Journal> {
+    fn load(&self) -> Result<Journal, JournalError> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Journal::default()),
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         };
-        let invalid = |line: &str| {
-            std::io::Error::new(
-                ErrorKind::InvalidData,
-                format!("{}: unexpected line {line:?}", self.path.display()),
-            )
+        let invalid = |line: &str| JournalError::UnexpectedLine {
+            path: self.path.clone(),
+            line: line.to_owned(),
         };
         let mut lines = text.lines();
         match lines.next() {
@@ -159,10 +167,10 @@ impl JournalStore for FileJournal {
         Ok(journal)
     }
 
-    fn save(&self, journal: &Journal) -> std::io::Result<()> {
+    fn save(&self, journal: &Journal) -> Result<(), JournalError> {
         if journal.is_empty() {
             return match fs::remove_file(&self.path) {
-                Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
+                Err(error) if error.kind() != ErrorKind::NotFound => Err(error.into()),
                 _ => Ok(()),
             };
         }
@@ -184,26 +192,15 @@ impl JournalStore for FileJournal {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&partial, &self.path)
+        Ok(fs::rename(&partial, &self.path)?)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HidingError {
     HidHide(HidHideError),
-    Journal(std::io::Error),
+    Journal(JournalError),
 }
-
-impl fmt::Display for HidingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::HidHide(error) => error.fmt(f),
-            Self::Journal(error) => write!(f, "cannot save heka's HidHide journal: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for HidingError {}
 
 impl From<HidHideError> for HidingError {
     fn from(error: HidHideError) -> Self {
@@ -211,8 +208,8 @@ impl From<HidHideError> for HidingError {
     }
 }
 
-impl From<std::io::Error> for HidingError {
-    fn from(error: std::io::Error) -> Self {
+impl From<JournalError> for HidingError {
+    fn from(error: JournalError) -> Self {
         Self::Journal(error)
     }
 }

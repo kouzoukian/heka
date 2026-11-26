@@ -133,10 +133,7 @@ impl Drop for Bridging {
 
 fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let settings = settings_file::load();
-    let mut hider = Hider::new(
-        hidhide::hiding().map_err(|error| error.to_string()),
-        settings.never_hidden(),
-    );
+    let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
     let mut supervisor = Supervisor::without_bus(settings);
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     follow(&mut hider, &changes);
@@ -229,7 +226,10 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     follow(&mut hider, &supervisor.quit());
     report_failures(&mut supervisor, &mut not_unplugged);
     if let Err(error) = hider.restore_all() {
-        log::line(&format!("could not restore HidHide: {error}"));
+        log::line(&format!(
+            "could not restore HidHide: {}",
+            text::hiding_error(&error)
+        ));
     }
 }
 
@@ -248,8 +248,7 @@ fn act_on(found: Vec<Found<CString>>, hider: &mut Hider<CString>) {
     for found in found {
         match found {
             Found::Seen { mac, path } => {
-                let device =
-                    hidhide::device_instance_path(&path).map_err(|error| error.to_string());
+                let device = hidhide::device_instance_path(&path);
                 hider.link_seen(mac, path, device);
             }
             Found::Gone { mac, path } => hider.link_gone(mac, &path),
@@ -302,17 +301,14 @@ impl Finder for HidFinder<'_> {
                 reader: Box::new(link),
             }),
             Err(OpenError::VirtualController) => Err(OpenFailure::VirtualController),
-            Err(error) => {
+            Err(OpenError::Refused(error)) => {
                 let model = self
                     .0
                     .device_list()
                     .find(|info| info.path() == path.as_c_str())
                     .and_then(|info| controller_model(info.vendor_id(), info.product_id()))
                     .unwrap_or_default();
-                Err(OpenFailure::Refused(Unopened {
-                    model,
-                    error: error.to_string(),
-                }))
+                Err(OpenFailure::Refused(Unopened { model, error }))
             }
         }
     }

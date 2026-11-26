@@ -36,14 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for path in dualsense_usb_paths(&api) {
         match ControllerLink::open_path(&api, &path) {
             Ok((_, mac)) => eprintln!("MAC address {mac}"),
-            Err(error) => eprintln!("cannot open {path:?}: {error}"),
+            Err(error) => eprintln!("cannot open {path:?}: {error:?}"),
         }
     }
 
     let Some(path) = dualsense_usb_paths(&api).into_iter().next() else {
         return Err("no DualSense on USB".into());
     };
-    let (mut link, _) = ControllerLink::open_path(&api, &path)?;
+    let (mut link, _) = ControllerLink::open_path(&api, &path)
+        .map_err(|error| format!("cannot open the DualSense: {error:?}"))?;
     let device = api.open_path(link.hid_path())?;
     match read_firmware_info(&device) {
         Some(info) => {

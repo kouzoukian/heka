@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use heka_core::calibration::Calibration;
 use heka_core::discovery::{
-    Discovery, Finder, Found, FoundLink, LONGEST_RETRY_DELAY, OpenFailure, STEADY_LINK_TIME,
-    Unopened,
+    Discovery, Finder, Found, FoundLink, LONGEST_RETRY_DELAY, OpenError, OpenFailure,
+    STEADY_LINK_TIME, Unopened,
 };
 use heka_core::lifecycle::{Change, Phase};
 use heka_core::link::{ControllerModel, LinkRead, LinkReader, ReportFormat};
@@ -91,7 +91,7 @@ impl Finder for Ports {
 fn refusal(error: &str) -> Unopened {
     Unopened {
         model: ControllerModel::DualSense,
-        error: error.into(),
+        error: OpenError::Hid(error.into()),
     }
 }
 

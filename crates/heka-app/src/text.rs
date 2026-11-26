@@ -1,8 +1,12 @@
-use heka_core::discovery::Unopened;
+use heka_core::discovery::{OpenError, Unopened};
 use heka_core::hider::{HideError, HidingWarning};
+use heka_core::hiding::{
+    HidHideError, HidingError, HidingUnavailable, IdentifyError, JournalError,
+};
 use heka_core::lifecycle::MAX_BRIDGES;
-use heka_core::link::{ControllerModel, LinkKind};
+use heka_core::link::{ControllerModel, LinkKind, ReportError};
 use heka_core::state::{Battery, Charge};
+use heka_core::supervisor::BridgeError;
 
 pub const APP_NAME: &str = "heka";
 
@@ -145,7 +149,7 @@ pub const START_WITH_WINDOWS: &str = "Start with Windows";
 pub const QUIT: &str = "Quit";
 
 pub mod setup {
-    use heka_core::setup::{Driver, Missing};
+    use heka_core::setup::{Driver, DriverError, Missing};
 
     pub const CHECK_AGAIN: &str = "Check again";
     pub const SEPARATOR: &str = "·";
@@ -162,7 +166,15 @@ pub mod setup {
         let name = name(missing.driver);
         match &missing.error {
             None => format!("{name} is not installed or not running"),
-            Some(error) => format!("{name} cannot be used: {error}"),
+            Some(error) => format!("{name} cannot be used: {}", reason(error)),
+        }
+    }
+
+    fn reason(error: &DriverError) -> String {
+        match error {
+            DriverError::Bus(error)
+            | DriverError::HidHide(heka_core::hiding::HidHideError::Failed(error)) => error.clone(),
+            DriverError::HidHide(error) => super::hidhide_error(error),
         }
     }
 
@@ -236,16 +248,98 @@ pub const HIDHIDE_INVERTED: &str = "Games may see each Controller twice. Turn of
 
 pub fn hiding_warning(warning: &HidingWarning) -> String {
     match warning {
-        HidingWarning::Unavailable(error) => cannot_hide_at_all(error),
-        HidingWarning::EarlierRunNotRestored(error) => cannot_restore_earlier_run(error),
-        HidingWarning::NotRestored(error) => cannot_restore(error),
-        HidingWarning::NotAllowed(error) => not_allowed(error),
+        HidingWarning::Unavailable(error) => cannot_hide_at_all(&hiding_unavailable(error)),
+        HidingWarning::EarlierRunNotRestored(error) => {
+            cannot_restore_earlier_run(&hiding_error(error))
+        }
+        HidingWarning::NotRestored(error) => cannot_restore(&hiding_error(error)),
+        HidingWarning::NotAllowed(error) => not_allowed(&hiding_error(error)),
         HidingWarning::NotHidden(HideError::NoLink) => not_hidden(NO_LINK_TO_HIDE),
         HidingWarning::NotHidden(HideError::Unidentified(error)) => {
-            not_hidden(&cannot_identify_for_hiding(error))
+            not_hidden(&cannot_identify_for_hiding(&identify_error(*error)))
         }
-        HidingWarning::NotHidden(HideError::Failed(error)) => not_hidden(error),
+        HidingWarning::NotHidden(HideError::Failed(error)) => not_hidden(&hiding_error(error)),
         HidingWarning::Inverted => HIDHIDE_INVERTED.into(),
+    }
+}
+
+pub fn hidhide_error(error: &HidHideError) -> String {
+    match error {
+        HidHideError::NotInstalled => {
+            "HidHide is not installed or its driver is not running".into()
+        }
+        HidHideError::InUse => {
+            "HidHide is busy: close the HidHide Configuration Client or HidHideCLI".into()
+        }
+        HidHideError::UnexpectedSize(bytes) => {
+            format!("HidHide failed: HidHide returned {bytes} bytes for a BOOLEAN")
+        }
+        HidHideError::TooLarge => "HidHide failed: buffer too large".into(),
+        HidHideError::Failed(error) => format!("HidHide failed: {error}"),
+    }
+}
+
+pub fn hiding_error(error: &HidingError) -> String {
+    match error {
+        HidingError::HidHide(error) => hidhide_error(error),
+        HidingError::Journal(error) => {
+            format!(
+                "cannot use heka's HidHide journal: {}",
+                journal_error(error)
+            )
+        }
+    }
+}
+
+fn journal_error(error: &JournalError) -> String {
+    match error {
+        JournalError::Io(error) => error.clone(),
+        JournalError::UnexpectedLine { path, line } => {
+            format!("{}: unexpected line {line:?}", path.display())
+        }
+    }
+}
+
+fn hiding_unavailable(error: &HidingUnavailable) -> String {
+    match error {
+        HidingUnavailable::NoLocalAppData => "LOCALAPPDATA is not set".into(),
+        HidingUnavailable::NoImageName(error) => error.clone(),
+    }
+}
+
+fn identify_error(error: IdentifyError) -> String {
+    match error {
+        IdentifyError::Status(status) => {
+            format!("cannot read the device instance ID (CONFIGRET {status})")
+        }
+        IdentifyError::NotText => "the device instance ID is not text".into(),
+    }
+}
+
+pub fn bridge_error(error: &BridgeError) -> String {
+    match error {
+        BridgeError::NoBus => "ViGEmBus is not connected".into(),
+        BridgeError::NoThread(error) => format!("cannot start a thread: {error}"),
+        BridgeError::VirtualController(error) => error.clone(),
+    }
+}
+
+pub fn report_error(error: ReportError) -> String {
+    match error {
+        ReportError::TooShort { len } => format!("report too short ({len} bytes)"),
+        ReportError::UnexpectedId { id } => format!("unexpected report ID {id:#04x}"),
+        ReportError::BadCrc => "report CRC does not match".into(),
+    }
+}
+
+pub fn open_error(error: &OpenError) -> String {
+    match error {
+        OpenError::Hid(error) => error.clone(),
+        OpenError::Address(error) => {
+            format!("cannot read the MAC address: {}", report_error(*error))
+        }
+        OpenError::SerialNumber => "the serial number is not a MAC address".into(),
+        OpenError::NotAController => "no Controller is there".into(),
     }
 }
 
@@ -257,7 +351,7 @@ pub fn cannot_open(unopened: &Unopened) -> String {
     format!(
         "A {} was found but cannot be opened: {}",
         controller(unopened.model),
-        unopened.error
+        open_error(&unopened.error)
     )
 }
 

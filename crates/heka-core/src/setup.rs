@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::hiding::HidHideStatus;
+use crate::hiding::{HidHideError, HidHideStatus};
 use crate::lifecycle::Change;
 use crate::supervisor::Supervisor;
 use crate::virtual_controller::VirtualBus;
@@ -27,9 +27,15 @@ impl Driver {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverError {
+    Bus(String),
+    HidHide(HidHideError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Missing {
     pub driver: Driver,
-    pub error: Option<String>,
+    pub error: Option<DriverError>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,13 +50,13 @@ impl Setup {
             driver: Driver::ViGEmBus,
             error: match why {
                 BusUnavailable::NotInstalled => None,
-                BusUnavailable::Failed(message) => Some(message.clone()),
+                BusUnavailable::Failed(message) => Some(DriverError::Bus(message.clone())),
             },
         });
         let hidhide = match &self.hidhide {
             HidHideStatus::Ready | HidHideStatus::InUse => None,
             HidHideStatus::NotInstalled => Some(None),
-            HidHideStatus::Failed(message) => Some(Some(message.clone())),
+            HidHideStatus::Failed(error) => Some(Some(DriverError::HidHide(error.clone()))),
         }
         .map(|error| Missing {
             driver: Driver::HidHide,

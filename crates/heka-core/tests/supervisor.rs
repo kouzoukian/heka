@@ -17,7 +17,7 @@ use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange, Preferences, RumbleStrength};
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
-use heka_core::supervisor::Supervisor;
+use heka_core::supervisor::{BridgeError, Supervisor};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
     OutputType, VirtualBus, VirtualController, VirtualError, VirtualFailure,
@@ -207,6 +207,14 @@ impl VirtualController for FakeController {
     fn feedback(&mut self) -> Option<Box<dyn FeedbackSource>> {
         Some(Box::new(QuietGame))
     }
+}
+
+fn no_free_slot() -> BridgeError {
+    BridgeError::VirtualController("no free slot".into())
+}
+
+fn bus_gone() -> BridgeError {
+    BridgeError::VirtualController("the bus went away".into())
 }
 
 fn mac(n: u8) -> MacAddress {
@@ -409,7 +417,7 @@ fn a_virtual_controller_that_cannot_be_created_is_tried_again_later() {
     );
     let view = &supervisor.controllers()[0];
     assert_eq!(view.phase, Phase::Waiting);
-    assert_eq!(view.error.as_deref(), Some("no free slot"));
+    assert_eq!(view.error, Some(no_free_slot()));
 
     supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
     assert_eq!(bus.plugged(), 1);
@@ -777,7 +785,7 @@ fn a_virtual_controller_failing_as_its_link_goes_is_bridged_again_from_the_other
     );
     let view = &supervisor.controllers()[0];
     assert_eq!(view.phase, Phase::Waiting);
-    assert_eq!(view.error.as_deref(), Some("the bus went away"));
+    assert_eq!(view.error, Some(bus_gone()));
 
     supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
     assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
@@ -889,10 +897,7 @@ fn a_controller_whose_bridge_failed_shows_live_input_until_it_is_bridged() {
 
     shows_live_input(&supervisor, 0, &link);
     assert!(sent_nothing(&link));
-    assert_eq!(
-        supervisor.controllers()[0].error.as_deref(),
-        Some("no free slot")
-    );
+    assert_eq!(supervisor.controllers()[0].error, Some(no_free_slot()));
 
     supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
     shows_input_from(&bus, 0, &link);
@@ -1032,7 +1037,9 @@ fn flaky() -> (Supervisor, FakeBus, Arc<FlakyThreads>) {
     (supervisor, bus, threads)
 }
 
-const NO_THREAD: &str = "cannot start a thread: no more threads";
+fn no_thread() -> BridgeError {
+    BridgeError::NoThread("no more threads".into())
+}
 
 #[test]
 fn a_bridge_that_cannot_start_a_thread_is_tried_again_on_the_same_link() {
@@ -1045,10 +1052,7 @@ fn a_bridge_that_cannot_start_a_thread_is_tried_again_on_the_same_link() {
 
     assert!(bus.unplugged(0));
     assert_eq!(supervisor.controllers()[0].phase, Phase::Waiting);
-    assert_eq!(
-        supervisor.controllers()[0].error.as_deref(),
-        Some(NO_THREAD)
-    );
+    assert_eq!(supervisor.controllers()[0].error, Some(no_thread()));
     supervisor.poll(t0 + BRIDGE_RETRY_DELAY);
     assert_eq!(supervisor.controllers()[0].error, None);
     shows_input_from(&bus, 1, &link);
@@ -1096,10 +1100,7 @@ fn a_watch_that_cannot_start_a_thread_is_tried_again_at_the_next_poll() {
         .spawning_with(Arc::clone(&threads) as Arc<dyn Threads>);
     let link = LinkHandle::default();
     supervisor.link_arrived(mac(1), link.reader(), t0);
-    assert_eq!(
-        supervisor.controllers()[0].error.as_deref(),
-        Some(NO_THREAD)
-    );
+    assert_eq!(supervisor.controllers()[0].error, Some(no_thread()));
 
     supervisor.poll(t0);
 

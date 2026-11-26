@@ -5,17 +5,18 @@ use heka_app::text;
 use heka_app::ui::model::{Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
-use heka_core::discovery::Unopened;
+use heka_core::discovery::{OpenError, Unopened};
 use heka_core::feedback::PlayerLights;
 use heka_core::hider::{HideError, HidingWarning};
+use heka_core::hiding::{HidHideError, HidingError};
 use heka_core::lifecycle::Phase;
-use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportError, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{PreferenceChange, Preferences, RumbleStrength};
 use heka_core::settings::Settings;
-use heka_core::setup::{Driver, Missing};
+use heka_core::setup::{Driver, DriverError, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
-use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::supervisor::{BridgeError, ControllerView, Supervisor};
 use heka_core::virtual_controller::OutputType;
 
 const MAC: MacAddress = MacAddress([0x02, 0, 0, 0, 0, 1]);
@@ -85,7 +86,7 @@ fn a_held_entry_counts_down_in_whole_seconds_rounded_up() {
 #[test]
 fn an_entry_names_its_controller_and_says_why_a_bridge_failed() {
     let mut failed = view(Phase::Waiting);
-    failed.error = Some("no free slot".into());
+    failed.error = Some(BridgeError::VirtualController("no free slot".into()));
 
     let entry = entry_of(&failed, Instant::now());
 
@@ -150,13 +151,13 @@ fn without_vigem_bus_an_entry_says_so_and_still_shows_live_input() {
 #[test]
 fn without_vigem_bus_an_entry_also_says_why_input_cannot_be_read() {
     let mut waiting = view(Phase::Waiting);
-    waiting.error = Some("no thread".into());
+    waiting.error = Some(BridgeError::NoThread("no thread".into()));
 
     let entry = ControllerEntry::from_view(&waiting, Instant::now(), true);
 
     assert_eq!(
         entry.detail().as_deref(),
-        Some("Not Bridged: ViGEmBus is missing (no thread)")
+        Some("Not Bridged: ViGEmBus is missing (cannot start a thread: no thread)")
     );
 }
 
@@ -354,17 +355,17 @@ fn changes_made_from_one_sample_are_all_kept() {
 #[test]
 fn hiding_warnings_say_what_failed_and_what_to_change() {
     let busy = "HidHide is busy: close the HidHide Configuration Client or HidHideCLI";
+    let error = || HidingError::HidHide(HidHideError::InUse);
     let words = |warning| text::hiding_warning(&warning);
 
+    assert!(!busy.to_lowercase().contains("hide the controller"));
     assert_eq!(
-        words(HidingWarning::NotRestored(busy.into())),
+        words(HidingWarning::NotRestored(error())),
         format!("Could not restore a Controller, trying again: {busy}.")
     );
-    assert!(
-        words(HidingWarning::EarlierRunNotRestored(busy.into())).starts_with("Could not restore")
-    );
+    assert!(words(HidingWarning::EarlierRunNotRestored(error())).starts_with("Could not restore"));
     assert_eq!(
-        words(HidingWarning::NotHidden(HideError::Failed(busy.into()))),
+        words(HidingWarning::NotHidden(HideError::Failed(error()))),
         format!("Could not Hide a Controller, so games may see it twice: {busy}.")
     );
     let inverted = words(HidingWarning::Inverted);
@@ -376,11 +377,43 @@ fn hiding_warnings_say_what_failed_and_what_to_change() {
 fn a_controller_that_cannot_be_opened_is_named_with_the_reason() {
     let unopened = Unopened {
         model: ControllerModel::DualShock4,
-        error: "access is denied".into(),
+        error: OpenError::Hid("access is denied".into()),
     };
 
     assert_eq!(
         text::cannot_open(&unopened),
         "A DualShock 4 was found but cannot be opened: access is denied"
+    );
+}
+
+#[test]
+fn the_errors_heka_core_returns_are_worded_for_the_player() {
+    assert_eq!(
+        text::open_error(&OpenError::Address(ReportError::UnexpectedId { id: 5 })),
+        "cannot read the MAC address: unexpected report ID 0x05"
+    );
+    let heading = |driver, error| {
+        text::setup::heading(&Missing {
+            driver,
+            error: Some(error),
+        })
+    };
+    assert_eq!(
+        heading(Driver::ViGEmBus, DriverError::Bus("access denied".into())),
+        "ViGEmBus cannot be used: access denied"
+    );
+    assert_eq!(
+        heading(
+            Driver::HidHide,
+            DriverError::HidHide(HidHideError::Failed("bad reply".into()))
+        ),
+        "HidHide cannot be used: bad reply"
+    );
+    assert_eq!(
+        heading(
+            Driver::HidHide,
+            DriverError::HidHide(HidHideError::UnexpectedSize(0))
+        ),
+        "HidHide cannot be used: HidHide failed: HidHide returned 0 bytes for a BOOLEAN"
     );
 }

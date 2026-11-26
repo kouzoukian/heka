@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use heka_core::hiding::{
     DeviceInstancePath, FileJournal, HidHide, HidHideConfig, HidHideError, HidHideStatus, Hiding,
-    Journal, JournalStore,
+    HidingError, Journal, JournalError, JournalStore,
 };
 
 const HEKA: &str = r"\Device\HarddiskVolume3\Tools\heka\heka.exe";
@@ -80,11 +80,11 @@ impl HidHide for FakeHidHide {
 struct MemoryJournal(Shared);
 
 impl JournalStore for MemoryJournal {
-    fn load(&self) -> std::io::Result<Journal> {
+    fn load(&self) -> Result<Journal, JournalError> {
         Ok(self.0.lock().unwrap().journal.clone())
     }
 
-    fn save(&self, journal: &Journal) -> std::io::Result<()> {
+    fn save(&self, journal: &Journal) -> Result<(), JournalError> {
         let mut world = self.0.lock().unwrap();
         world.journal = journal.clone();
         world.journal_saves += 1;
@@ -297,12 +297,7 @@ fn a_busy_hidhide_is_reported_and_hiding_works_once_it_is_free() {
     world.lock().unwrap().fail_with = Some(HidHideError::InUse);
 
     let error = hiding.hide("pad-1", &path(USB_LINK)).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("close the HidHide Configuration Client"),
-        "{error}"
-    );
+    assert_eq!(error, HidingError::HidHide(HidHideError::InUse));
     assert_eq!(config(&world), dev_pc());
 
     world.lock().unwrap().fail_with = None;
@@ -351,7 +346,13 @@ fn the_file_journal_survives_a_restart() {
     );
 
     std::fs::write(&file, "not a journal").unwrap();
-    assert!(FileJournal::new(file.clone()).load().is_err());
+    assert_eq!(
+        FileJournal::new(file.clone()).load(),
+        Err(JournalError::UnexpectedLine {
+            path: file.clone(),
+            line: "not a journal".into()
+        })
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 

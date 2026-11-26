@@ -178,7 +178,7 @@ impl ControllerEntry {
             output_type: *output_type,
             state,
             bus_missing,
-            error: error.clone(),
+            error: error.as_ref().map(text::bridge_error),
             pad: input.map(|input| PadModel::from_state(&input)),
         }
     }

@@ -12,6 +12,7 @@ use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
+use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
 
 const REPORT_EVERY: Duration = Duration::from_secs(2);
@@ -76,7 +77,8 @@ impl Fake {
         controllers[2].experimental = true;
         controllers[2].has_player_lights = false;
         controllers[1].nickname = Some("Sofa".into());
-        controllers[3].error = Some("made-up error for the preview".into());
+        let error = BridgeError::VirtualController("made-up error for the preview".into());
+        controllers[3].error = Some(text::bridge_error(&error));
         if missing {
             for entry in &mut controllers {
                 entry.state = EntryState::NotBridged;
