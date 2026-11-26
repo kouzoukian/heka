@@ -2821,7 +2821,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heka-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gpui-component",
  "gpui-kit-assets",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "heka-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2845,11 +2845,11 @@ dependencies = [
 
 [[package]]
 name = "heka-lint"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "heka-package"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "heka-windows"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "heka-core",
  "hidapi",
