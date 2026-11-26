@@ -5,6 +5,7 @@
 //! into the USB report as read from HID, so they are one more than the struct offsets
 //! because byte 0 is the report ID (the kernel reads the struct from `&data[1]`).
 
+use crate::link::ReportError;
 use crate::state::{Buttons, ControllerState, Stick};
 
 /// Sony's USB vendor ID.
@@ -73,15 +74,6 @@ fn hat_to_dpad(hat: u8) -> Buttons {
         7 => Buttons::DPAD_UP | Buttons::DPAD_LEFT,
         _ => Buttons::NONE,
     }
-}
-
-/// Why a report could not be read as a DualSense USB input report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportError {
-    /// The report is shorter than [`USB_INPUT_REPORT_LEN`].
-    TooShort { len: usize },
-    /// The report is not report [`USB_INPUT_REPORT_ID`].
-    UnexpectedId { id: u8 },
 }
 
 /// Reads a DualSense USB input report, report ID byte included.

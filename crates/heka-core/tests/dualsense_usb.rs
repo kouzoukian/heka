@@ -2,7 +2,8 @@
 
 mod common;
 
-use heka_core::dualsense::{ReportError, parse_usb_input_report};
+use heka_core::dualsense::parse_usb_input_report;
+use heka_core::link::ReportError;
 use heka_core::state::{Buttons, Stick};
 
 #[test]
