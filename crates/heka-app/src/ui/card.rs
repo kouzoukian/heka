@@ -11,12 +11,13 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme, Icon, Selectable, Sizable};
 use gpui_kit_assets::IconName;
+use heka_core::link::LinkKind;
 use heka_core::virtual_controller::OutputType;
 
 use crate::text;
 use crate::ui::assets::{battery_icon, link_icon};
 use crate::ui::drawing::{self, drawing};
-use crate::ui::model::{ActiveLink, CardModel, CardState, Command};
+use crate::ui::model::{CardModel, CardState, Command};
 
 /// The drawing and a margin on each side.
 pub const WIDTH: f32 = drawing::WIDTH + 2. * PADDING + 2.;
@@ -128,14 +129,11 @@ fn facts(model: &CardModel, id: SharedString, send: &Send, cx: &App) -> Div {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     let link = match model.active_link {
-        Some(ActiveLink::Usb) => text::USB,
-        Some(ActiveLink::Bluetooth) => text::BLUETOOTH,
+        Some(LinkKind::Usb) => text::USB,
+        Some(LinkKind::Bluetooth) => text::BLUETOOTH,
         None => text::NO_LINK,
     };
-    let battery = match model.battery {
-        Some(battery) => text::battery(battery.percent, battery.charging),
-        None => text::BATTERY_UNKNOWN.into(),
-    };
+    let battery = text::battery(model.battery);
     div()
         .flex()
         .items_center()

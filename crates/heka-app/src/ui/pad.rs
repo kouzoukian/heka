@@ -65,7 +65,9 @@ impl PadModel {
             left_trigger,
             right_trigger,
             touch,
-            // Not drawn, and left out so that it alone never redraws the window.
+            // Not drawn: the card shows the battery, and motion is left out so
+            // that it alone never redraws the window.
+            battery: _,
             motion: _,
         } = *state;
         Self {

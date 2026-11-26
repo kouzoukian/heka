@@ -4,14 +4,19 @@
 //! and calls [`Supervisor::poll`] regularly with the current time. Every call
 //! returns the [`Change`]s it carried out, in order, so that per-Controller side
 //! effects such as hiding can follow them (see [`crate::lifecycle`]).
+//!
+//! A Controller may have several Links, for example USB and Bluetooth at once.
+//! It is listed once, by MAC address, and only its Active Link is read (see
+//! [`active_link`]). When the Active Link changes, the Bridge moves to the new
+//! one and keeps its Virtual Controller.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
-use crate::link::LinkReader;
+use crate::link::{LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
 use crate::settings::Settings;
 use crate::virtual_controller::{OutputType, VirtualBus};
@@ -27,26 +32,82 @@ pub struct ControllerView {
     pub mac: MacAddress,
     pub phase: Phase,
     pub output_type: OutputType,
+    /// The Link heka reads, `None` while Held.
+    pub active_link: Option<LinkKind>,
     /// The latest input while Bridged, or while connected and there is no bus.
     pub live: Arc<LiveInput>,
     /// Why the last Bridge attempt failed, until one succeeds.
     pub error: Option<String>,
 }
 
+/// One of a Controller's Links.
+struct LinkSlot {
+    id: LinkId,
+    kind: LinkKind,
+    /// The Link while nothing reads it. `None` while a Bridge or Watch reads it,
+    /// or if an input thread could not be started and took it along.
+    open: Option<OpenLink>,
+}
+
 /// What heka holds for one listed Controller.
 #[derive(Default)]
 struct Slot {
     live: Arc<LiveInput>,
-    /// The Controller's current Link, if it has one.
-    link_id: Option<LinkId>,
-    /// The Link while no Bridge reads it (Stopped, waiting, or between steps).
-    link: Option<OpenLink>,
+    /// Every Link, in arrival order.
+    links: Vec<LinkSlot>,
+    /// The Link the Bridge or Watch reads.
+    reading: Option<LinkId>,
     bridge: Option<Bridge>,
-    /// Reads the Link while there is no bus.
+    /// Reads the Active Link while there is no bus.
     watch: Option<Watch>,
     /// The Virtual Controller while Held.
     held: Option<Plugged>,
     error: Option<String>,
+}
+
+impl Slot {
+    /// The Link to read: the first USB Link, otherwise the first Link.
+    fn active(&self) -> Option<&LinkSlot> {
+        let kinds: Vec<LinkKind> = self.links.iter().map(|link| link.kind).collect();
+        active_link(&kinds).map(|index| &self.links[index])
+    }
+
+    fn active_id(&self) -> Option<LinkId> {
+        self.active().map(|link| link.id)
+    }
+
+    /// True when something reads a Link that is no longer the Active Link.
+    fn reads_inactive_link(&self) -> bool {
+        (self.bridge.is_some() || self.watch.is_some()) && self.reading != self.active_id()
+    }
+
+    /// Takes the Active Link out to be read, and remembers that it is.
+    fn take_active(&mut self) -> Option<OpenLink> {
+        let id = self.active_id()?;
+        let link = self
+            .links
+            .iter_mut()
+            .find(|link| link.id == id)?
+            .open
+            .take()?;
+        self.reading = Some(id);
+        Some(link)
+    }
+
+    /// The Link that was being read is idle again.
+    fn put_back(&mut self, link: OpenLink) {
+        let id = self.reading.take();
+        if let Some(slot) = self.links.iter_mut().find(|slot| Some(slot.id) == id) {
+            slot.open = Some(link);
+        }
+    }
+
+    /// The Link that was being read is gone.
+    fn forget_read(&mut self) {
+        if let Some(id) = self.reading.take() {
+            self.links.retain(|link| link.id != id);
+        }
+    }
 }
 
 pub struct Supervisor {
@@ -93,10 +154,12 @@ impl Supervisor {
         let mut lost = Vec::new();
         for (&mac, slot) in &mut self.slots {
             if let Some(watch) = slot.watch.take() {
-                slot.link = watch.stop();
-                if slot.link.is_none() {
-                    slot.link_id = None;
-                    lost.push(mac);
+                match watch.stop() {
+                    Some(link) => slot.put_back(link),
+                    None => {
+                        slot.forget_read();
+                        lost.push(mac);
+                    }
                 }
             }
         }
@@ -128,6 +191,7 @@ impl Supervisor {
                     mac,
                     phase,
                     output_type: self.settings().controller(mac).output_type,
+                    active_link: slot.and_then(Slot::active).map(|link| link.kind),
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone()),
                 }
@@ -135,11 +199,12 @@ impl Supervisor {
             .collect()
     }
 
-    /// A Link to the Controller with this MAC address appeared.
+    /// A Link to the Controller with this MAC address appeared. A Controller
+    /// already listed keeps its place and its Virtual Controller; if the new
+    /// Link becomes its Active Link, the Controller is read from it from now on.
     ///
-    /// A second Link to a Controller that already has one is closed (ticket #8
-    /// adds several Links per Controller). A Link to a Virtual Controller, heka's
-    /// own or another ViGEmBus client's, is closed and never listed.
+    /// A Link to a Virtual Controller, heka's own or another ViGEmBus client's,
+    /// is closed and never listed.
     pub fn link_arrived(
         &mut self,
         mac: MacAddress,
@@ -151,34 +216,47 @@ impl Supervisor {
         if mac.is_virtual_controller() {
             return (id, Vec::new());
         }
-        let slot = self.slots.entry(mac).or_default();
-        if slot.link_id.is_some() {
-            return (id, Vec::new());
-        }
-        slot.link_id = Some(id);
-        slot.link = Some(OpenLink::new(link));
+        let link = OpenLink::new(link);
+        self.slot(mac).links.push(LinkSlot {
+            id,
+            kind: link.format().kind(),
+            open: Some(link),
+        });
         let changes = self.lifecycle.link_arrived(mac, now);
-        (id, self.apply(changes, now))
+        let mut done = self.apply(changes, now);
+        done.extend(self.follow_active_link(mac, now));
+        (id, done)
     }
 
-    /// The Link went away, as seen by whoever found it. A Link that is no
-    /// longer its Controller's current one is ignored.
+    /// The Link went away, as seen by whoever found it. A Link heka has already
+    /// seen go is ignored.
     pub fn link_gone(&mut self, id: LinkId, now: Instant) -> Vec<Change> {
-        let Some((&mac, _)) = self.slots.iter().find(|(_, slot)| slot.link_id == Some(id)) else {
+        let Some((&mac, _)) = self
+            .slots
+            .iter()
+            .find(|(_, slot)| slot.links.iter().any(|link| link.id == id))
+        else {
             return Vec::new();
         };
         let slot = self.slots.get_mut(&mac).expect("found above");
-        slot.link_id = None;
-        slot.link = None;
-        slot.watch = None;
-        if let Some(bridge) = slot.bridge.take() {
-            match bridge.stop() {
-                BridgeEnd::Stopped { controller, .. } => slot.held = Some(release(controller)),
-                BridgeEnd::LinkLost { controller } => slot.held = Some(controller),
-                BridgeEnd::VirtualControllerFailed { .. } => {}
+        let mut moving = None;
+        if slot.reading == Some(id) {
+            slot.watch = None;
+            if let Some(bridge) = slot.bridge.take() {
+                match bridge.stop() {
+                    BridgeEnd::Stopped { controller, .. } | BridgeEnd::LinkLost { controller } => {
+                        moving = Some(controller)
+                    }
+                    BridgeEnd::VirtualControllerFailed { .. } => {}
+                }
             }
+            slot.reading = None;
         }
-        let changes = self.lifecycle.link_lost(mac, now);
+        slot.links.retain(|link| link.id != id);
+        let changes = match moving {
+            Some(controller) => self.lost_read_link(mac, controller, now),
+            None => self.lifecycle.link_lost(mac, now),
+        };
         self.apply(changes, now)
     }
 
@@ -196,18 +274,17 @@ impl Supervisor {
             let bridge = slot.bridge.take().expect("finished above");
             let changes = match bridge.stop() {
                 BridgeEnd::LinkLost { controller } => {
-                    slot.held = Some(controller);
-                    slot.link_id = None;
-                    self.lifecycle.link_lost(mac, now)
+                    slot.forget_read();
+                    self.lost_read_link(mac, controller, now)
                 }
                 BridgeEnd::VirtualControllerFailed { link, error } => {
-                    slot.link = Some(link);
+                    slot.put_back(link);
                     slot.error = Some(error.to_string());
                     self.lifecycle.bridge_failed(mac, now)
                 }
                 // Not asked to stop; keep the parts and wait for the lifecycle.
                 BridgeEnd::Stopped { link, controller } => {
-                    slot.link = Some(link);
+                    slot.put_back(link);
                     let _ = controller.unplug();
                     self.lifecycle.bridge_failed(mac, now)
                 }
@@ -223,7 +300,7 @@ impl Supervisor {
         for mac in unread {
             let slot = self.slots.get_mut(&mac).expect("listed above");
             slot.watch = None;
-            slot.link_id = None;
+            slot.forget_read();
             let changes = self.lifecycle.link_lost(mac, now);
             done.extend(self.apply(changes, now));
         }
@@ -265,9 +342,70 @@ impl Supervisor {
         done
     }
 
+    /// The Link a Bridge read is gone and the Bridge handed back its Virtual
+    /// Controller: the Bridge moves to the Controller's next Link, or the
+    /// Controller is Held if it has none.
+    fn lost_read_link(
+        &mut self,
+        mac: MacAddress,
+        controller: Plugged,
+        now: Instant,
+    ) -> Vec<Change> {
+        let mut changes = self.lifecycle.link_lost(mac, now);
+        if self.slot(mac).links.is_empty() {
+            self.slot(mac).held = Some(release(controller));
+        } else if let Err(error) = self.bridge_to(mac, controller) {
+            self.slot(mac).error = Some(error);
+            changes.extend(self.lifecycle.bridge_failed(mac, now));
+        }
+        changes
+    }
+
+    /// Moves whatever reads the Controller to its Active Link, if it reads another.
+    fn follow_active_link(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let Some(slot) = self.slots.get_mut(&mac) else {
+            return Vec::new();
+        };
+        if !slot.reads_inactive_link() {
+            return Vec::new();
+        }
+        let mut changes = Vec::new();
+        if let Some(watch) = slot.watch.take() {
+            match watch.stop() {
+                Some(link) => slot.put_back(link),
+                None => {
+                    slot.forget_read();
+                    changes.extend(self.lifecycle.link_lost(mac, now));
+                }
+            }
+        }
+        let slot = self.slot(mac);
+        if let Some(bridge) = slot.bridge.take() {
+            match bridge.stop() {
+                BridgeEnd::Stopped { link, controller } => {
+                    slot.put_back(link);
+                    if let Err(error) = self.bridge_to(mac, controller) {
+                        self.slot(mac).error = Some(error);
+                        changes.extend(self.lifecycle.bridge_failed(mac, now));
+                    }
+                }
+                BridgeEnd::LinkLost { controller } => {
+                    slot.forget_read();
+                    changes.extend(self.lost_read_link(mac, controller, now));
+                }
+                BridgeEnd::VirtualControllerFailed { link, error } => {
+                    slot.put_back(link);
+                    slot.error = Some(error.to_string());
+                    changes.extend(self.lifecycle.bridge_failed(mac, now));
+                }
+            }
+        }
+        self.apply(changes, now)
+    }
+
     /// Carries out changes, and any the lifecycle answers with, in order.
     fn apply(&mut self, changes: Vec<Change>, now: Instant) -> Vec<Change> {
-        let mut queue = std::collections::VecDeque::from(changes);
+        let mut queue = VecDeque::from(changes);
         let mut done = Vec::new();
         while let Some(change) = queue.pop_front() {
             done.push(change);
@@ -288,7 +426,7 @@ impl Supervisor {
                         queue.extend(self.lifecycle.bridge_failed(mac, now));
                     }
                 }
-                Change::Removed { mac, why } => self.remove(mac, why),
+                Change::Removed { mac, why } => queue.extend(self.remove(mac, why, now)),
             }
         }
         let listed: Vec<MacAddress> = self.lifecycle.controllers().map(|(mac, _)| mac).collect();
@@ -299,10 +437,14 @@ impl Supervisor {
         done
     }
 
-    /// Reads every Link that nothing reads, so its input still shows without a bus.
+    /// Reads the Active Link of every Controller that nothing reads, so its
+    /// input still shows without a bus.
     fn watch_idle_links(&mut self) {
         for slot in self.slots.values_mut() {
-            let Some(link) = slot.link.take() else {
+            if slot.watch.is_some() || slot.bridge.is_some() {
+                continue;
+            }
+            let Some(link) = slot.take_active() else {
                 continue;
             };
             match Watch::start(link, Arc::clone(&slot.live)) {
@@ -312,7 +454,7 @@ impl Supervisor {
         }
     }
 
-    /// Starts a Bridge from the Controller's idle Link, to its Held Virtual
+    /// Starts a Bridge from the Controller's Active Link, to its Held Virtual
     /// Controller when `resume` and there is one, otherwise to a new one.
     fn bridge(
         &mut self,
@@ -320,7 +462,11 @@ impl Supervisor {
         output_type: OutputType,
         resume: bool,
     ) -> Result<(), String> {
-        if self.slot(mac).link.is_none() {
+        let ready = self
+            .slot(mac)
+            .active()
+            .is_some_and(|link| link.open.is_some());
+        if !ready {
             // Only if the input thread could not be started last time, taking the Link with it.
             return Err("the Link was closed; reconnect the Controller".into());
         }
@@ -336,8 +482,15 @@ impl Supervisor {
                 Plugged::new(bus.plug(output_type).map_err(|e| e.to_string())?)
             }
         };
+        self.bridge_to(mac, controller)
+    }
+
+    /// Starts a Bridge from the Controller's Active Link to this Virtual Controller.
+    fn bridge_to(&mut self, mac: MacAddress, controller: Plugged) -> Result<(), String> {
         let slot = self.slot(mac);
-        let link = slot.link.take().expect("checked above");
+        let link = slot
+            .take_active()
+            .ok_or("the Link was closed; reconnect the Controller")?;
         let bridge = Bridge::resume(link, controller, Arc::clone(&slot.live))
             .map_err(|e| format!("cannot start the input thread: {e}"))?;
         slot.bridge = Some(bridge);
@@ -345,29 +498,38 @@ impl Supervisor {
         Ok(())
     }
 
-    fn remove(&mut self, mac: MacAddress, why: Removal) {
+    /// Removes the Controller's Virtual Controller, and answers with what the
+    /// lifecycle says if its Link turns out to be gone.
+    fn remove(&mut self, mac: MacAddress, why: Removal, now: Instant) -> Vec<Change> {
         let slot = self.slot(mac);
+        let mut link_lost = false;
         // Best effort throughout: ViGEmBus also removes Virtual Controllers when
         // heka's bus handle closes.
         if let Some(bridge) = slot.bridge.take() {
             match bridge.stop() {
                 BridgeEnd::Stopped { link, controller } => {
-                    slot.link = Some(link);
+                    slot.put_back(link);
                     let _ = controller.unplug();
                 }
                 BridgeEnd::LinkLost { controller } => {
-                    slot.link_id = None;
+                    slot.forget_read();
+                    link_lost = true;
                     let _ = controller.unplug();
                 }
-                BridgeEnd::VirtualControllerFailed { link, .. } => slot.link = Some(link),
+                BridgeEnd::VirtualControllerFailed { link, .. } => slot.put_back(link),
             }
         }
         if let Some(controller) = slot.held.take() {
             let _ = controller.unplug();
         }
         if why == Removal::Quit {
-            slot.link = None;
-            slot.link_id = None;
+            slot.links.clear();
+            slot.reading = None;
+        }
+        if link_lost {
+            self.lifecycle.link_lost(mac, now)
+        } else {
+            Vec::new()
         }
     }
 

@@ -14,14 +14,13 @@ use std::time::{Duration, Instant};
 
 use heka_app::text;
 use heka_app::ui::assets::Assets;
-use heka_app::ui::model::{
-    ActiveLink, Backend, Battery, CardModel, CardState, Command, Notice, Screen,
-};
+use heka_app::ui::model::{Backend, CardModel, CardState, Command, Notice, Screen};
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view;
+use heka_core::link::LinkKind;
 use heka_core::mac::MacAddress;
 use heka_core::setup::{Driver, Missing};
-use heka_core::state::{Buttons, Stick};
+use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::virtual_controller::OutputType;
 
 /// How often the sampling rate is printed.
@@ -49,13 +48,13 @@ impl Fake {
             error: None,
             pad: None,
         };
-        let level = |percent, charging| Some(Battery { percent, charging });
+        let level = |percent, charge| Some(Battery { percent, charge });
         let mut cards = vec![
             card(
                 1,
                 CardState::Bridged,
-                Some(ActiveLink::Usb),
-                level(80, true),
+                Some(LinkKind::Usb),
+                level(85, Charge::Charging),
                 OutputType::Xbox,
             ),
             card(
@@ -68,14 +67,14 @@ impl Fake {
             card(
                 3,
                 CardState::Stopped,
-                Some(ActiveLink::Bluetooth),
-                level(25, false),
+                Some(LinkKind::Bluetooth),
+                level(25, Charge::Discharging),
                 OutputType::Ps4,
             ),
             card(
                 4,
                 CardState::NotBridged,
-                Some(ActiveLink::Usb),
+                Some(LinkKind::Usb),
                 None,
                 OutputType::Xbox,
             ),

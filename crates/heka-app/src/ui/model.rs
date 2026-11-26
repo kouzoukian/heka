@@ -6,8 +6,10 @@
 use std::time::{Duration, Instant};
 
 use heka_core::lifecycle::Phase;
+use heka_core::link::LinkKind;
 use heka_core::mac::MacAddress;
 use heka_core::setup::Missing;
+use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
 use heka_core::virtual_controller::OutputType;
 
@@ -103,29 +105,14 @@ pub enum CardState {
     NotBridged,
 }
 
-/// The Link heka reads a Controller from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveLink {
-    Usb,
-    Bluetooth,
-}
-
-/// A Controller's battery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Battery {
-    /// `0..=100`.
-    pub percent: u8,
-    pub charging: bool,
-}
-
 /// One Controller's card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardModel {
     pub mac: MacAddress,
     pub name: &'static str,
     /// `None` when the Controller has no Link.
-    pub active_link: Option<ActiveLink>,
-    /// `None` while unknown.
+    pub active_link: Option<LinkKind>,
+    /// As the Controller last reported it, `None` while heka reads no input.
     pub battery: Option<Battery>,
     pub output_type: OutputType,
     pub state: CardState,
@@ -145,6 +132,7 @@ impl CardModel {
             mac,
             phase,
             output_type,
+            active_link,
             live,
             error,
         } = view;
@@ -156,22 +144,17 @@ impl CardModel {
             Phase::Stopped => CardState::Stopped,
             Phase::Waiting => CardState::NotBridged,
         };
-        // heka reads only DualSense Controllers over USB so far (ticket #8 adds
-        // Bluetooth and the battery level).
-        let active_link = match state {
-            CardState::Held { .. } => None,
-            _ => Some(ActiveLink::Usb),
-        };
+        let input = live.latest();
         Self {
             mac: *mac,
             name: text::DUALSENSE,
-            active_link,
-            battery: None,
+            active_link: *active_link,
+            battery: input.and_then(|input| input.battery),
             output_type: *output_type,
             state,
             bus_missing,
             error: error.clone(),
-            pad: live.latest().map(|state| PadModel::from_state(&state)),
+            pad: input.map(|input| PadModel::from_state(&input)),
         }
     }
 

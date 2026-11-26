@@ -4,7 +4,8 @@ use gpui::{AssetSource, Rgba};
 use gpui_component::ThemeSet;
 use heka_app::theme::{ONE_DARK, ONE_DARK_JSON};
 use heka_app::ui::assets::{Assets, battery_icon, link_icon};
-use heka_app::ui::model::{ActiveLink, Battery};
+use heka_core::link::LinkKind;
+use heka_core::state::{Battery, Charge};
 use serde_json::Value;
 
 #[test]
@@ -38,15 +39,18 @@ fn gpui_component_knows_every_colour_the_theme_sets() {
 
 #[test]
 fn every_link_and_battery_icon_ships_with_the_binary() {
-    let links = [None, Some(ActiveLink::Usb), Some(ActiveLink::Bluetooth)];
-    let level = |percent, charging| Some(Battery { percent, charging });
+    let links = [None, Some(LinkKind::Usb), Some(LinkKind::Bluetooth)];
+    let battery = |percent, charge| Some(Battery { percent, charge });
     let batteries = [
         None,
-        level(5, false),
-        level(30, false),
-        level(60, false),
-        level(100, false),
-        level(60, true),
+        battery(5, Charge::Discharging),
+        battery(35, Charge::Discharging),
+        battery(65, Charge::Discharging),
+        battery(95, Charge::Discharging),
+        battery(65, Charge::Charging),
+        battery(100, Charge::Full),
+        battery(0, Charge::NotCharging),
+        battery(0, Charge::Unknown),
     ];
 
     let icons = links

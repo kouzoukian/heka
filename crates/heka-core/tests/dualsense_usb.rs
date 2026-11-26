@@ -5,7 +5,7 @@ mod common;
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::parse_usb_input_report;
 use heka_core::link::ReportError;
-use heka_core::state::{Buttons, ControllerState, Stick};
+use heka_core::state::{Battery, Buttons, Charge, ControllerState, Stick};
 
 fn parse(report: &[u8]) -> Result<ControllerState, ReportError> {
     parse_usb_input_report(report, &Calibration::UNCALIBRATED)
@@ -125,4 +125,42 @@ fn captured_baseline_shows_the_resting_sticks() {
     // The first captured line starts `01 7e 7d 7f 7c`.
     assert_eq!(state.left_stick, Stick { x: 0x7e, y: 0x7d });
     assert_eq!(state.right_stick, Stick { x: 0x7f, y: 0x7c });
+}
+
+// Battery. `status[0]` of `struct dualsense_input_report` is at struct offset 52,
+// byte 53 of the USB report: capacity in the low nibble (each unit 10%, reported
+// as `min(capacity * 10 + 5, 100)`), charging state in the high nibble (0
+// discharging, 1 charging, 2 full) (`dualsense_parse_report`).
+
+#[test]
+fn the_captured_dualsense_on_usb_reports_a_full_battery() {
+    // The captured byte 53 is 0x29: charging state 2, full.
+    let state = parse(&common::captured_baseline()).unwrap();
+    assert_eq!(
+        state.battery,
+        Some(Battery {
+            percent: 100,
+            charge: Charge::Full
+        })
+    );
+}
+
+#[test]
+fn derived_reports_show_the_battery_level_and_charging_state() {
+    let cases = [
+        (0x05, 55, Charge::Discharging),
+        (0x00, 5, Charge::Discharging),
+        (0x0A, 100, Charge::Discharging),
+        (0x13, 35, Charge::Charging),
+        (0xA0, 0, Charge::NotCharging),
+        (0xF3, 0, Charge::Unknown),
+    ];
+    for (status, percent, charge) in cases {
+        let state = parse(&common::derived(&[(53, status)])).unwrap();
+        assert_eq!(
+            state.battery,
+            Some(Battery { percent, charge }),
+            "status {status:#04x}"
+        );
+    }
 }

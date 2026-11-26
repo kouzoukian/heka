@@ -5,6 +5,7 @@
 pub mod autostart;
 pub mod bridge;
 pub mod calibration;
+pub mod crc;
 pub mod dualsense;
 pub mod feedback;
 pub mod hiding;

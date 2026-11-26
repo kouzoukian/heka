@@ -106,6 +106,26 @@ impl Stick {
     pub const CENTER: Self = Self { x: 0x80, y: 0x80 };
 }
 
+/// Whether a Controller's battery is charging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Charge {
+    Discharging,
+    Charging,
+    Full,
+    /// Plugged in but not charging, for example because it is too hot or too cold.
+    NotCharging,
+    /// The Controller reports a charging error or a state heka does not know.
+    Unknown,
+}
+
+/// A Controller's battery as it last reported it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Battery {
+    /// `0..=100`. Controllers report it in steps of 10%.
+    pub percent: u8,
+    pub charge: Charge,
+}
+
 /// One finger on the touchpad, in DualSense touchpad units: `x` runs `0..=1919`
 /// left to right and `y` runs `0..=1079` top to bottom (`DS_TOUCHPAD_WIDTH` and
 /// `DS_TOUCHPAD_HEIGHT` in Linux `hid-playstation.c`).
@@ -141,6 +161,8 @@ pub struct ControllerState {
     pub left_trigger: u8,
     /// R2 travel, `0` released to `255` fully pressed.
     pub right_trigger: u8,
+    /// `None` when the report carries no battery level.
+    pub battery: Option<Battery>,
     /// Up to two fingers on the touchpad, in the Controller's order.
     pub touch: [Option<Finger>; 2],
     pub motion: Motion,
@@ -154,6 +176,7 @@ impl ControllerState {
         right_stick: Stick::CENTER,
         left_trigger: 0,
         right_trigger: 0,
+        battery: None,
         touch: [None, None],
         motion: Motion {
             gyro: [0; 3],

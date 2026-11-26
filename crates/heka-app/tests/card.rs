@@ -3,14 +3,15 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use heka_app::ui::model::{ActiveLink, CardModel, CardState, Command, Notice, Screen};
+use heka_app::text;
+use heka_app::ui::model::{CardModel, CardState, Command, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
 use heka_core::lifecycle::Phase;
-use heka_core::link::{LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
-use heka_core::state::Buttons;
+use heka_core::state::{Battery, Buttons, Charge};
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::virtual_controller::OutputType;
 
@@ -21,6 +22,7 @@ fn view(phase: Phase) -> ControllerView {
         mac: MAC,
         phase,
         output_type: OutputType::Xbox,
+        active_link: Some(LinkKind::Usb),
         live: Arc::new(LiveInput::default()),
         error: None,
     }
@@ -31,7 +33,7 @@ fn card_of(view: &ControllerView, now: Instant) -> CardModel {
     CardModel::from_view(view, now, false)
 }
 
-/// A DualSense at rest but for Cross held down.
+/// A DualSense at rest but for Cross held down, charging at 85%.
 struct CrossPressed;
 
 impl LinkReader for CrossPressed {
@@ -47,6 +49,8 @@ impl LinkReader for CrossPressed {
         report[0] = 0x01;
         report[1..5].fill(0x80);
         report[8] = 0x28;
+        // status[0]: charging (high nibble 1), capacity step 8.
+        report[53] = 0x18;
         buf[..report.len()].copy_from_slice(&report);
         LinkRead::Report(report.len())
     }
@@ -144,13 +148,53 @@ fn without_vigem_bus_a_card_also_says_why_input_cannot_be_read() {
 }
 
 #[test]
-fn a_held_controller_has_no_active_link() {
+fn a_card_shows_the_active_link_the_supervisor_reads() {
     let now = Instant::now();
-    let link = |phase| card_of(&view(phase), now).active_link;
+    let link = |active_link| {
+        let mut shown = view(Phase::Bridged);
+        shown.active_link = active_link;
+        card_of(&shown, now).active_link
+    };
 
-    assert_eq!(link(Phase::Bridged), Some(ActiveLink::Usb));
-    assert_eq!(link(Phase::Stopped), Some(ActiveLink::Usb));
-    assert_eq!(link(Phase::Held { until: now }), None);
+    assert_eq!(link(Some(LinkKind::Bluetooth)), Some(LinkKind::Bluetooth));
+    assert_eq!(link(Some(LinkKind::Usb)), Some(LinkKind::Usb));
+    // A Held Controller has none.
+    assert_eq!(link(None), None);
+}
+
+#[test]
+fn a_card_shows_the_battery_the_controller_reports_and_none_without_input() {
+    let mut supervisor = Supervisor::without_bus(Settings::default());
+    supervisor.link_arrived(MAC, Box::new(CrossPressed), Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while supervisor.controllers()[0].live.latest().is_none() {
+        assert!(Instant::now() < deadline, "no input");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let card = card_of(&supervisor.controllers()[0], Instant::now());
+
+    assert_eq!(
+        card.battery,
+        Some(Battery {
+            percent: 85,
+            charge: Charge::Charging
+        })
+    );
+    assert_eq!(card_of(&view(Phase::Stopped), Instant::now()).battery, None);
+}
+
+#[test]
+fn a_battery_is_worded_without_a_level_the_controller_does_not_give() {
+    let words = |percent, charge| text::battery(Some(Battery { percent, charge }));
+
+    assert_eq!(words(75, Charge::Discharging), "75%");
+    assert_eq!(words(85, Charge::Charging), "85%, charging");
+    assert_eq!(words(100, Charge::Full), "100%, full");
+    // Both come with a level of 0 that means nothing.
+    assert_eq!(words(0, Charge::NotCharging), "Battery not charging");
+    assert_eq!(words(0, Charge::Unknown), "Battery unknown");
+    assert_eq!(text::battery(None), "Battery unknown");
 }
 
 #[test]

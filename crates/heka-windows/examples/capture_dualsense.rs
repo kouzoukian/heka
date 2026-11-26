@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::link::{LinkRead, LinkReader};
 use heka_windows::hid::{
-    DualSenseUsbLink, dualsense_usb_devices, dualsense_usb_paths, read_calibration_report,
+    DualSenseLink, dualsense_usb_devices, dualsense_usb_paths, read_calibration_report,
 };
 use hidapi::HidApi;
 
@@ -45,13 +45,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dualsense_usb_devices(&api).count()
     );
     for path in dualsense_usb_paths(&api) {
-        match DualSenseUsbLink::open_path(&api, &path) {
+        match DualSenseLink::open_path(&api, &path) {
             Ok((_, mac)) => eprintln!("MAC address {mac}"),
             Err(error) => eprintln!("cannot open {path:?}: {error}"),
         }
     }
 
-    let Some(mut link) = DualSenseUsbLink::open_first(&api)? else {
+    let Some(mut link) = DualSenseLink::open_first(&api)? else {
         return Err("no DualSense on USB".into());
     };
     match link.firmware_info() {

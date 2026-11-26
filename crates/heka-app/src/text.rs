@@ -4,6 +4,7 @@
 //! and are shown as they arrive.
 
 use heka_core::lifecycle::MAX_BRIDGES;
+use heka_core::state::{Battery, Charge};
 
 pub const APP_NAME: &str = "heka";
 
@@ -18,6 +19,7 @@ pub const USB: &str = "USB";
 pub const BLUETOOTH: &str = "Bluetooth";
 pub const NO_LINK: &str = "No Link";
 pub const BATTERY_UNKNOWN: &str = "Battery unknown";
+pub const BATTERY_NOT_CHARGING: &str = "Battery not charging";
 pub const OUTPUT_TYPE: &str = "Output";
 pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
@@ -27,11 +29,16 @@ pub fn held(seconds_left: u64) -> String {
     format!("Held, {seconds_left} s left")
 }
 
-pub fn battery(percent: u8, charging: bool) -> String {
-    if charging {
-        format!("{percent}%, charging")
-    } else {
-        format!("{percent}%")
+pub fn battery(battery: Option<Battery>) -> String {
+    let Some(Battery { percent, charge }) = battery else {
+        return BATTERY_UNKNOWN.into();
+    };
+    match charge {
+        Charge::Discharging => format!("{percent}%"),
+        Charge::Charging => format!("{percent}%, charging"),
+        Charge::Full => format!("{percent}%, full"),
+        Charge::NotCharging => BATTERY_NOT_CHARGING.into(),
+        Charge::Unknown => BATTERY_UNKNOWN.into(),
     }
 }
 
@@ -61,7 +68,7 @@ pub const TRIANGLE_SYMBOL: &str = "△";
 // Empty window.
 pub const STARTING: &str = "Looking for Controllers";
 pub const NO_CONTROLLER: &str = "No Controller connected";
-pub const CONNECT_HINT: &str = "Connect a DualSense with a USB cable.";
+pub const CONNECT_HINT: &str = "Connect a DualSense with a USB cable or over Bluetooth.";
 
 // Tray menu.
 pub const TRAY_OPEN: &str = "Open heka";

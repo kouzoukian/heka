@@ -63,6 +63,8 @@ impl OpenLink {
 pub struct Plugged {
     controller: Box<dyn VirtualController>,
     feedback: Option<Box<dyn FeedbackSource>>,
+    /// The Feedback games last sent, shown again when a Bridge moves to another Link.
+    asked: Feedback,
 }
 
 impl Plugged {
@@ -71,6 +73,7 @@ impl Plugged {
         Self {
             controller,
             feedback,
+            asked: Feedback::OFF,
         }
     }
 
@@ -116,7 +119,7 @@ enum InputEnd {
     Failed(Box<dyn LinkReader>, VirtualError),
 }
 
-type FeedbackParts = (Box<dyn FeedbackSource>, Box<dyn LinkWriter>);
+type FeedbackParts = (Box<dyn FeedbackSource>, Box<dyn LinkWriter>, Feedback);
 
 /// A running Bridge. Dropping it, rather than calling [`Bridge::stop`], also
 /// removes its Virtual Controller.
@@ -127,6 +130,8 @@ pub struct Bridge {
     /// Feedback halves with no counterpart, kept for whatever follows this Bridge.
     spare_source: Option<Box<dyn FeedbackSource>>,
     spare_writer: Option<Box<dyn LinkWriter>>,
+    /// The Feedback games last sent, while no Feedback thread runs.
+    asked: Feedback,
 }
 
 impl Bridge {
@@ -142,8 +147,9 @@ impl Bridge {
     /// Starts the input thread. Until it ends, it owns the Link and the Virtual Controller.
     ///
     /// When both carry Feedback, a Feedback thread passes it from the Virtual
-    /// Controller to the Link, so a slow write never holds up input. It stops the
-    /// rumble when the Bridge ends.
+    /// Controller to the Link, so a slow write never holds up input. It first
+    /// shows the Feedback games last sent, so a Controller that moves to another
+    /// Link keeps its rumble and lightbar, and it stops the rumble when the Bridge ends.
     pub fn resume(
         link: OpenLink,
         controller: Plugged,
@@ -151,11 +157,12 @@ impl Bridge {
     ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let (mut spare_source, mut spare_writer) = (None, None);
+        let asked = controller.asked;
         let feedback = match (controller.feedback, link.writer) {
             (Some(source), Some(writer)) => {
                 Some(thread::Builder::new().name("heka-feedback".into()).spawn({
                     let stop = Arc::clone(&stop);
-                    move || run_feedback(source, writer, &stop)
+                    move || run_feedback(source, writer, asked, &stop)
                 })?)
             }
             (source, writer) => {
@@ -190,6 +197,7 @@ impl Bridge {
             feedback,
             spare_source,
             spare_writer,
+            asked,
         })
     }
 
@@ -206,10 +214,14 @@ impl Bridge {
 
     fn join(&mut self) -> Option<BridgeEnd> {
         self.stop.store(true, Ordering::Relaxed);
-        let (source, writer) = match self.feedback.take().map(JoinHandle::join) {
-            Some(Ok((source, writer))) => (Some(source), Some(writer)),
+        let (source, writer, asked) = match self.feedback.take().map(JoinHandle::join) {
+            Some(Ok((source, writer, asked))) => (Some(source), Some(writer), asked),
             Some(Err(panic)) => std::panic::resume_unwind(panic),
-            None => (self.spare_source.take(), self.spare_writer.take()),
+            None => (
+                self.spare_source.take(),
+                self.spare_writer.take(),
+                self.asked,
+            ),
         };
         let end = match self.thread.take()?.join() {
             Ok(end) => end,
@@ -218,6 +230,7 @@ impl Bridge {
         let plugged = |controller| Plugged {
             controller,
             feedback: source,
+            asked,
         };
         Some(match end {
             InputEnd::Stopped(reader, controller) => BridgeEnd::Stopped {
@@ -295,21 +308,31 @@ const FEEDBACK_POLL: Duration = Duration::from_millis(50);
 fn run_feedback(
     mut source: Box<dyn FeedbackSource>,
     mut writer: Box<dyn LinkWriter>,
+    mut asked: Feedback,
     stop: &AtomicBool,
 ) -> FeedbackParts {
-    let format = writer.format();
+    let mut format = writer.format();
     // What the Controller shows. It is at rest until heka first sends Feedback,
     // so a Bridge no game rumbles never sends an output report.
     let mut shown = Feedback::OFF;
     let mut show = |writer: &mut Box<dyn LinkWriter>, feedback: Feedback| {
         // Kept unchanged on a failed write, so the next Feedback is sent again.
-        if feedback != shown && writer.write(&format.report(&feedback)).is_ok() {
+        if feedback != shown
+            && format
+                .reports(&feedback)
+                .iter()
+                .all(|report| writer.write(report).is_ok())
+        {
             shown = feedback;
         }
     };
+    show(&mut writer, asked);
     while !stop.load(Ordering::Relaxed) {
         match source.next(FEEDBACK_POLL) {
-            FeedbackEvent::Feedback(feedback) => show(&mut writer, feedback),
+            FeedbackEvent::Feedback(feedback) => {
+                asked = feedback;
+                show(&mut writer, feedback);
+            }
             FeedbackEvent::Timeout => {}
             FeedbackEvent::Closed => break,
         }
@@ -317,5 +340,5 @@ fn run_feedback(
     // The Bridge is ending, or the Virtual Controller is gone: nothing will stop
     // the motors after this. On a lost Link the write fails, which is harmless.
     show(&mut writer, Feedback::OFF);
-    (source, writer)
+    (source, writer, asked)
 }
