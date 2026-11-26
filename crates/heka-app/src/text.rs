@@ -38,7 +38,13 @@ pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Contro
 
 pub const CONTROLLER_SETTINGS: &str = "Controller settings";
 pub const ROW_NAME: &str = "Name";
-pub const ROW_RUMBLE: &str = "Rumble";
+pub const GROUP_RUMBLE: &str = "Rumble";
+pub const ROW_STRENGTH: &str = "Strength";
+pub const ROW_SWAP_MOTORS: &str = "Swap motors";
+pub const ROW_RUMBLE_TEST: &str = "Test";
+pub const LARGE_MOTOR: &str = "Large motor";
+pub const SMALL_MOTOR: &str = "Small motor";
+pub const GROUP_LIGHTS: &str = "Lights";
 pub const ROW_LIGHTBAR: &str = "Light bar";
 pub const ROW_PLAYER_LIGHTS: &str = "Player lights";
 pub const ROW_HIDE: &str = "Hide from games";
@@ -57,7 +63,9 @@ pub const HUE: &str = "Hue";
 pub const SATURATION: &str = "Saturation";
 pub const LIGHTNESS: &str = "Lightness";
 pub const NAME_TIP: &str = "Shown in place of the Controller's model.";
-pub const RUMBLE_TIP: &str = "How strongly the Controller rumbles when a game asks it to.";
+pub const STRENGTH_TIP: &str = "How strongly the Controller rumbles when a game asks it to.";
+pub const SWAP_MOTORS_TIP: &str = "Exchanges the large and small motor of a game's rumble.";
+pub const RUMBLE_TEST_TIP: &str = "Runs a motor for a second at the chosen strength.";
 pub const LIGHTBAR_TIP: &str =
     "The colour while no game sets one. Default leaves the light bar to the Controller.";
 pub const PLAYER_LIGHTS_TIP: &str = "The white lights under the touchpad.";

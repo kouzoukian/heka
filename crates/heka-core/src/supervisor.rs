@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
+use crate::feedback::Motor;
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
@@ -361,6 +362,18 @@ impl Supervisor {
         preferences
     }
 
+    pub fn test_rumble(&self, mac: MacAddress, motor: Motor) {
+        if let Some(bridge) = self.bridge_of(mac) {
+            bridge.test_rumble(motor);
+        }
+    }
+
+    pub fn end_rumble_test(&self, mac: MacAddress) {
+        if let Some(bridge) = self.bridge_of(mac) {
+            bridge.end_rumble_test();
+        }
+    }
+
     pub fn quit(&mut self) -> Vec<Change> {
         let changes = self.lifecycle.quit();
         let done = self.apply(changes, Instant::now());
@@ -583,6 +596,10 @@ impl Supervisor {
         } else {
             Vec::new()
         }
+    }
+
+    fn bridge_of(&self, mac: MacAddress) -> Option<&Bridge> {
+        self.slots.get(&mac)?.bridge.as_ref()
     }
 
     fn slot(&mut self, mac: MacAddress) -> &mut Slot {

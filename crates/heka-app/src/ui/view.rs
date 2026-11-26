@@ -160,6 +160,8 @@ impl MainView {
             },
         )
         .detach();
+        cx.on_release(|this: &mut Self, _| this.leave_settings())
+            .detach();
         cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
             if let Some(placement) = placement::current(window, cx) {
                 this.backend.command(Command::RememberWindow(placement));
@@ -202,8 +204,14 @@ impl MainView {
 
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
-        self.filled = None;
+        self.leave_settings();
         cx.notify();
+    }
+
+    fn leave_settings(&mut self) {
+        if let Some(mac) = self.filled.take() {
+            self.backend.command(Command::EndRumbleTest(mac));
+        }
     }
 
     fn choose_colour(&mut self, colour: Lightbar) {
@@ -218,10 +226,16 @@ impl MainView {
         if self.page != Page::ControllerSettings {
             return;
         }
-        let entry = self.selection.shown(&self.screen.controllers);
-        let another = entry.map(|entry| entry.mac) != self.filled;
-        self.filled = entry.map(|entry| entry.mac);
-        let Some(entry) = entry else {
+        let mac = self
+            .selection
+            .shown(&self.screen.controllers)
+            .map(|entry| entry.mac);
+        let another = mac != self.filled;
+        if another {
+            self.leave_settings();
+        }
+        self.filled = mac;
+        let Some(entry) = self.selection.shown(&self.screen.controllers) else {
             return;
         };
         let chosen = match entry.preferences.lightbar {

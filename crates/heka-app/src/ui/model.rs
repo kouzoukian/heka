@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use heka_core::app_settings::{AppChange, CloseAction};
+use heka_core::feedback::Motor;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
@@ -33,6 +34,8 @@ pub enum Command {
     SetOutputType(MacAddress, OutputType),
     SetNickname(MacAddress, String),
     ChangePreference(MacAddress, PreferenceChange),
+    TestRumble(MacAddress, Motor),
+    EndRumbleTest(MacAddress),
     CheckDrivers,
     OpenLogFolder,
     SetStartWithWindows(bool),
@@ -208,6 +211,10 @@ impl ControllerEntry {
 
     pub fn prefer(&self, change: PreferenceChange) -> Command {
         Command::ChangePreference(self.mac, change)
+    }
+
+    pub fn test_rumble(&self, motor: Motor) -> Option<Command> {
+        (self.state == EntryState::Bridged).then_some(Command::TestRumble(self.mac, motor))
     }
 
     pub fn short_mac(&self) -> String {

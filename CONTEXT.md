@@ -32,7 +32,7 @@ Rumble and lightbar colour that a game sends to a Virtual Controller and that re
 _Avoid_: output, notification
 
 **Preferences**:
-What the player chose for one Controller: how strongly it rumbles, the lightbar colour while no game sets one, its player lights and whether it is Hidden. They shape the Feedback on its way to the Controller.
+What the player chose for one Controller: how strongly it rumbles, whether its motors are swapped, the lightbar colour while no game sets one, its player lights and whether it is Hidden. They shape the Feedback on its way to the Controller.
 _Avoid_: profile, configuration
 
 **Held**:

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Div, Hsla, InteractiveElement, ParentElement, SharedString, Stateful,
+    App, Div, ElementId, Hsla, InteractiveElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, div,
 };
 use gpui_component::button::Button;
@@ -76,7 +76,7 @@ pub fn setup_banners(missing: &[Missing], send: &SendCommand, cx: &App) -> Optio
     )
 }
 
-pub fn text_button(id: &'static str, name: IconName, words: &'static str) -> Button {
+pub fn text_button(id: impl Into<ElementId>, name: IconName, words: &'static str) -> Button {
     Button::new(id)
         .outline()
         .h(CONTROL)

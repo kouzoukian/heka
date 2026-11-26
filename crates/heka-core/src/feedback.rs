@@ -2,6 +2,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub const RUMBLE_TEST_TIME: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Motor {
+    Large,
+    Small,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Rumble {
     pub large: u8,
@@ -10,6 +18,26 @@ pub struct Rumble {
 
 impl Rumble {
     pub const OFF: Self = Self { large: 0, small: 0 };
+
+    pub fn only(motor: Motor) -> Self {
+        match motor {
+            Motor::Large => Self {
+                large: u8::MAX,
+                ..Self::OFF
+            },
+            Motor::Small => Self {
+                small: u8::MAX,
+                ..Self::OFF
+            },
+        }
+    }
+
+    pub fn swapped(self) -> Self {
+        Self {
+            large: self.small,
+            small: self.large,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

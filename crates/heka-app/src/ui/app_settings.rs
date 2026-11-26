@@ -8,11 +8,9 @@ use heka_core::app_settings::{AppChange, CloseAction};
 use crate::text;
 use crate::ui::banners::text_button;
 use crate::ui::detail::row;
-use crate::ui::metrics::SMALL_TEXT;
 use crate::ui::model::{AppEntry, Command, SendCommand};
-use crate::ui::panel::faint;
 use crate::ui::segmented::{Segment, on_off, segmented};
-use crate::ui::settings::explained;
+use crate::ui::settings::{explained, group};
 
 pub fn app_settings(app: AppEntry, send: &SendCommand, cx: &App) -> Div {
     let theme = cx.theme();
@@ -59,15 +57,6 @@ pub fn app_settings(app: AppEntry, send: &SendCommand, cx: &App) -> Div {
                 .on_click(move |_, _, _| open(Command::OpenSettingsFolder)),
             ),
         )
-}
-
-fn group(words: &'static str, theme: &Theme) -> Div {
-    row(theme)
-        .justify_start()
-        .bg(theme.sidebar)
-        .text_size(SMALL_TEXT)
-        .text_color(faint(theme))
-        .child(words)
 }
 
 fn closing_switch(chosen: CloseAction, send: &SendCommand, theme: &Theme) -> Div {

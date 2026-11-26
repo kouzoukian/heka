@@ -57,6 +57,30 @@ fn rumble_strength_scales_both_motors_to_the_nearest_step() {
 }
 
 #[test]
+fn swapping_the_motors_exchanges_the_games_large_and_small_rumble() {
+    let preferences = Preferences {
+        rumble: RumbleStrength::percent(50),
+        swap_motors: true,
+        ..Preferences::default()
+    };
+    let asked = Feedback {
+        rumble: Rumble {
+            large: 200,
+            small: 64,
+        },
+        ..Feedback::OFF
+    };
+
+    assert_eq!(
+        preferences.apply(asked, Duration::ZERO).rumble,
+        Rumble {
+            large: 32,
+            small: 100
+        }
+    );
+}
+
+#[test]
 fn the_chosen_colour_shows_while_no_game_has_set_one() {
     let preferences = Preferences {
         lightbar: Some(LightbarChoice::Colour(PINK)),

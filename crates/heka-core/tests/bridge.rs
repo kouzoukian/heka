@@ -9,7 +9,8 @@ use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, is_bluetooth_lightbar_setup_report, usb_output_report};
 use heka_core::feedback::{
-    Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights, Rumble,
+    Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
+    Rumble,
 };
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
@@ -765,6 +766,139 @@ fn a_bridge_keeps_following_its_preferences_when_it_moves_to_another_link() {
         })
     );
     bridge.stop();
+}
+
+#[test]
+fn a_rumble_test_runs_one_motor_at_the_chosen_strength_and_stops_by_itself() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        rumble: RumbleStrength::percent(50),
+        ..Preferences::default()
+    });
+
+    let started = Instant::now();
+    bridge.test_rumble(Motor::Large);
+    wait_until(|| written.lock().unwrap().reports.len() == 2);
+
+    assert!(started.elapsed() >= RUMBLE_TEST_TIME);
+    assert_eq!(
+        reports(&written),
+        [output_report(rumble(128, 0)), output_report(Feedback::OFF)]
+    );
+    bridge.stop();
+}
+
+#[test]
+fn a_rumble_test_runs_the_named_motor_also_with_the_motors_swapped() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        swap_motors: true,
+        ..Preferences::default()
+    });
+
+    bridge.test_rumble(Motor::Small);
+    wait_until(|| !reports(&written).is_empty());
+
+    assert_eq!(reports(&written)[0], output_report(rumble(0, 255)));
+    bridge.stop();
+}
+
+#[test]
+fn a_rumble_test_stands_in_for_the_games_rumble_until_it_is_over() {
+    let Following {
+        bridge,
+        written,
+        game,
+        _steps,
+        ..
+    } = following(Preferences::default());
+    game.send(rumble(40, 40)).unwrap();
+    wait_until(|| reports(&written).len() == 1);
+
+    bridge.test_rumble(Motor::Large);
+    wait_until(|| reports(&written).len() == 2);
+    let green = Some(Lightbar {
+        red: 0,
+        green: 255,
+        blue: 0,
+    });
+    game.send(Feedback {
+        lightbar: green,
+        ..rumble(60, 60)
+    })
+    .unwrap();
+    wait_until(|| reports(&written).len() == 4);
+
+    assert_eq!(
+        reports(&written)[1..],
+        [
+            output_report(rumble(255, 0)),
+            output_report(Feedback {
+                lightbar: green,
+                ..rumble(255, 0)
+            }),
+            output_report(Feedback {
+                lightbar: green,
+                ..rumble(60, 60)
+            }),
+        ]
+    );
+    bridge.stop();
+}
+
+#[test]
+fn an_ended_rumble_test_stops_the_motors_at_once() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences::default());
+    bridge.test_rumble(Motor::Large);
+    wait_until(|| reports(&written).len() == 1);
+
+    let ended = Instant::now();
+    bridge.end_rumble_test();
+    wait_until(|| reports(&written).len() == 2);
+
+    assert!(ended.elapsed() < RUMBLE_TEST_TIME / 2);
+    assert_eq!(reports(&written)[1], output_report(Feedback::OFF));
+    bridge.stop();
+}
+
+#[test]
+fn a_rumble_test_ends_with_its_bridge() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences::default());
+    bridge.test_rumble(Motor::Large);
+    wait_until(|| reports(&written).len() == 1);
+    let BridgeEnd::Stopped { controller, .. } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+    assert_eq!(reports(&written)[1], output_report(Feedback::OFF));
+
+    let (other, _steps, on_other) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    bridge.stop();
+
+    assert!(reports(&on_other).is_empty());
 }
 
 fn fail_writes(written: &Arc<Mutex<Written>>, count: usize) {

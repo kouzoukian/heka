@@ -191,7 +191,10 @@ impl Backend for Fake {
                 self.app.borrow_mut().window = Some(placement.clone());
                 return;
             }
-            Command::OpenLogFolder | Command::OpenSettingsFolder => return,
+            Command::TestRumble(..)
+            | Command::EndRumbleTest(_)
+            | Command::OpenLogFolder
+            | Command::OpenSettingsFolder => return,
             Command::CheckDrivers => {
                 self.missing.borrow_mut().clear();
                 for entry in controllers.iter_mut() {

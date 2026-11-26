@@ -8,6 +8,7 @@ use heka_app::report::Reporter;
 use heka_app::{log, text};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
+use heka_core::feedback::Motor;
 use heka_core::hider::{Hider, HidingWarning};
 use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
@@ -50,6 +51,8 @@ enum Command {
     SetOutputType(MacAddress, OutputType),
     SetNickname(MacAddress, String),
     ChangePreference(MacAddress, PreferenceChange),
+    TestRumble(MacAddress, Motor),
+    EndRumbleTest(MacAddress),
     CheckDrivers,
     SetAppSettings(AppSettings),
     Quit,
@@ -113,6 +116,14 @@ impl Bridging {
         let _ = self.commands.send(Command::ChangePreference(mac, change));
     }
 
+    pub fn test_rumble(&self, mac: MacAddress, motor: Motor) {
+        let _ = self.commands.send(Command::TestRumble(mac, motor));
+    }
+
+    pub fn end_rumble_test(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::EndRumbleTest(mac));
+    }
+
     pub fn check_drivers(&self) {
         let _ = self.commands.send(Command::CheckDrivers);
     }
@@ -161,6 +172,8 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
             command,
             Ok(Command::SetNickname(..)
                 | Command::ChangePreference(..)
+                | Command::TestRumble(..)
+                | Command::EndRumbleTest(..)
                 | Command::SetAppSettings(..))
         );
         let changes = match command {
@@ -186,6 +199,14 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
                 unsaved = true;
                 let preferences = supervisor.change_preference(mac, change);
                 hider.set_hide(mac, preferences.hide);
+                Vec::new()
+            }
+            Ok(Command::TestRumble(mac, motor)) => {
+                supervisor.test_rumble(mac, motor);
+                Vec::new()
+            }
+            Ok(Command::EndRumbleTest(mac)) => {
+                supervisor.end_rumble_test(mac);
                 Vec::new()
             }
             Ok(Command::SetAppSettings(app)) => {

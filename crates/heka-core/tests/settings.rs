@@ -18,6 +18,7 @@ fn a_missing_settings_file_gives_defaults() {
             nickname: None,
             preferences: Preferences {
                 rumble: RumbleStrength::FULL,
+                swap_motors: false,
                 lightbar: None,
                 player_lights: None,
                 hide: true,
@@ -94,6 +95,7 @@ fn a_nickname_and_preferences_survive_a_save_and_load() {
         MAC,
         Preferences {
             rumble: RumbleStrength::percent(25),
+            swap_motors: true,
             lightbar: Some(LightbarChoice::Colour(Lightbar {
                 red: 1,
                 green: 2,
@@ -112,7 +114,7 @@ fn a_nickname_and_preferences_survive_a_save_and_load() {
 #[test]
 fn preferences_are_written_beside_the_other_fields() {
     let text = r#"{"controllers": {"11:22:33:44:55:66": {
-        "stopped": true, "nickname": "Sofa", "rumble": 50,
+        "stopped": true, "nickname": "Sofa", "rumble": 50, "swap_motors": true,
         "lightbar": {"red": 9, "green": 8, "blue": 7},
         "player_lights": "two", "hide": false
     }}}"#;
@@ -135,6 +137,7 @@ fn preferences_are_written_beside_the_other_fields() {
         Some(PlayerLights::Two)
     );
     assert!(!controller.preferences.hide);
+    assert!(controller.preferences.swap_motors);
 }
 
 #[test]

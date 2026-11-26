@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::{
     App, Div, Entity, InteractiveElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, div, px,
@@ -5,14 +7,17 @@ use gpui::{
 use gpui_component::color_picker::ColorPickerState;
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Sizable, Theme};
-use heka_core::feedback::{Lightbar, PlayerLights};
+use gpui_component::{ActiveTheme, Disableable, Sizable, Theme};
+use gpui_kit_assets::IconName;
+use heka_core::feedback::{Lightbar, Motor, PlayerLights};
 use heka_core::preferences::{LightbarChoice, PreferenceChange, RumbleStrength};
 
 use crate::text;
-use crate::ui::banners::{clamped, strip};
+use crate::ui::banners::{clamped, strip, text_button};
 use crate::ui::detail::row;
+use crate::ui::metrics::{GAP, SMALL_TEXT};
 use crate::ui::model::{ControllerEntry, SendCommand};
+use crate::ui::panel::faint;
 use crate::ui::picker::{picker, rainbow_swatch, swatch};
 use crate::ui::segmented::{Segment, on_off, segmented};
 
@@ -59,7 +64,17 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
                     .child(Input::new(fields.name).small()),
             ),
         )
-        .child(line(text::ROW_RUMBLE, text::RUMBLE_TIP).child(rumble_switch(entry, send, theme)))
+        .child(line(text::ROW_HIDE, text::HIDE_TIP).child(hide_switch(entry, send, theme)))
+        .child(group(text::GROUP_RUMBLE, theme))
+        .child(
+            line(text::ROW_STRENGTH, text::STRENGTH_TIP).child(strength_switch(entry, send, theme)),
+        )
+        .child(
+            line(text::ROW_SWAP_MOTORS, text::SWAP_MOTORS_TIP)
+                .child(swap_switch(entry, send, theme)),
+        )
+        .child(line(text::ROW_RUMBLE_TEST, text::RUMBLE_TEST_TIP).child(test_buttons(entry, send)))
+        .child(group(text::GROUP_LIGHTS, theme))
         .child(
             line(text::ROW_LIGHTBAR, text::LIGHTBAR_TIP).child(lightbar_switch(
                 entry,
@@ -69,8 +84,16 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
             )),
         )
         .children(player_lights)
-        .child(line(text::ROW_HIDE, text::HIDE_TIP).child(hide_switch(entry, send, theme)))
         .child(strip("settings-note", 1, theme).child(clamped(text::SETTINGS_NOTE.into())))
+}
+
+pub(super) fn group(words: &'static str, theme: &Theme) -> Div {
+    row(theme)
+        .justify_start()
+        .bg(theme.sidebar)
+        .text_size(SMALL_TEXT)
+        .text_color(faint(theme))
+        .child(words)
 }
 
 pub(super) fn explained(label: &'static str, tip: &'static str, theme: &Theme) -> Stateful<Div> {
@@ -88,7 +111,7 @@ fn id(entry: &ControllerEntry, row: &str, choice: impl std::fmt::Display) -> Sha
     format!("{row}-{choice}-{}", entry.mac).into()
 }
 
-fn rumble_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+fn strength_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
     let segments = STRENGTHS.map(|percent| {
         let strength = RumbleStrength::percent(percent);
         let words: SharedString = if percent == 0 {
@@ -104,6 +127,35 @@ fn rumble_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> 
         )
     });
     segmented(segments, send, theme)
+}
+
+fn swap_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+    on_off(
+        format!("swap-{}", entry.mac),
+        entry.preferences.swap_motors,
+        |swap| entry.prefer(PreferenceChange::SwapMotors(swap)),
+        send,
+        theme,
+    )
+}
+
+fn test_buttons(entry: &ControllerEntry, send: &SendCommand) -> Div {
+    let motors = [
+        (text::LARGE_MOTOR, Motor::Large),
+        (text::SMALL_MOTOR, Motor::Small),
+    ];
+    let buttons = motors.map(|(words, motor)| {
+        let command = entry.test_rumble(motor);
+        let send = Rc::clone(send);
+        text_button(id(entry, "test", words), IconName::Play, words)
+            .disabled(command.is_none())
+            .on_click(move |_, _, _| {
+                if let Some(command) = &command {
+                    send(command.clone());
+                }
+            })
+    });
+    div().flex().gap(GAP).children(buttons)
 }
 
 fn lightbar_switch(

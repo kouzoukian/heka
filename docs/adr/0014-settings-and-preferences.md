@@ -24,10 +24,11 @@ What concerns heka as a whole is under `app` in the same file: whether it starts
 
 ## Preferences
 
-The defaults keep full rumble, leave the lights to the Controller and Hide it.
+The defaults keep full rumble, leave the motors as games address them, leave the lights to the Controller and Hide it.
 
 - The window sends only the preference the player changed, and the Supervisor applies it to what it remembers, so a change made from an older sample never undoes another.
 - Rumble strength is a percentage, rounded per motor. A running Bridge follows changes through shared `LivePreferences`.
+- Swapping the motors exchanges the large and small motor of the rumble a game asks for. A rumble test names a motor of the Controller, so it is not swapped.
 - The player's lightbar choice is a colour or an effect, saved as a colour object or a name (`"rainbow"`). An effect moves in 50 ms steps, so it adds at most 20 output reports a second, and the Feedback thread draws it from the time since its Bridge started.
 - A colour a game set wins over the player's. A dark lightbar counts as no colour, because a PS4 Virtual Controller reports one with every rumble, also for games that never set a colour.
 - `Feedback` with no lightbar leaves the Controller's as it is (an Xbox Virtual Controller has none). Player lights are only ever chosen by the player, never by a game; a DualShock 4 has none.

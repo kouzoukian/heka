@@ -6,7 +6,7 @@ use heka_app::ui::model::{Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
 use heka_core::discovery::{OpenError, Unopened};
-use heka_core::feedback::PlayerLights;
+use heka_core::feedback::{Motor, PlayerLights};
 use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{HidHideError, HidingError};
 use heka_core::lifecycle::Phase;
@@ -329,6 +329,20 @@ fn only_a_dualsense_has_player_lights() {
 
     other.model = ControllerModel::DualShock4;
     assert!(!entry_of(&other, now).has_player_lights);
+}
+
+#[test]
+fn only_a_bridged_controller_can_have_its_rumble_tested() {
+    let now = Instant::now();
+    let test = |phase| entry_of(&view(phase), now).test_rumble(Motor::Small);
+
+    assert_eq!(
+        test(Phase::Bridged),
+        Some(Command::TestRumble(MAC, Motor::Small))
+    );
+    assert_eq!(test(Phase::Stopped), None);
+    assert_eq!(test(Phase::Waiting), None);
+    assert_eq!(test(Phase::Held { until: now }), None);
 }
 
 #[test]

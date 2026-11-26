@@ -71,6 +71,7 @@ impl LightbarChoice {
 #[serde(default)]
 pub struct Preferences {
     pub rumble: RumbleStrength,
+    pub swap_motors: bool,
     pub lightbar: Option<LightbarChoice>,
     pub player_lights: Option<PlayerLights>,
     pub hide: bool,
@@ -79,6 +80,7 @@ pub struct Preferences {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PreferenceChange {
     Rumble(RumbleStrength),
+    SwapMotors(bool),
     Lightbar(Option<LightbarChoice>),
     PlayerLights(Option<PlayerLights>),
     Hide(bool),
@@ -88,6 +90,7 @@ impl Preferences {
     pub fn change(&mut self, change: PreferenceChange) {
         match change {
             PreferenceChange::Rumble(rumble) => self.rumble = rumble,
+            PreferenceChange::SwapMotors(swap) => self.swap_motors = swap,
             PreferenceChange::Lightbar(lightbar) => self.lightbar = lightbar,
             PreferenceChange::PlayerLights(lights) => self.player_lights = lights,
             PreferenceChange::Hide(hide) => self.hide = hide,
@@ -102,8 +105,13 @@ impl Preferences {
                 .map(|choice| choice.colour(elapsed))
                 .or(dark_or_none),
         };
+        let rumble = if self.swap_motors {
+            asked.rumble.swapped()
+        } else {
+            asked.rumble
+        };
         Feedback {
-            rumble: self.rumble.scale(asked.rumble),
+            rumble: self.rumble.scale(rumble),
             lightbar,
             player_lights: self.player_lights,
         }
@@ -114,6 +122,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             rumble: RumbleStrength::FULL,
+            swap_motors: false,
             lightbar: None,
             player_lights: None,
             hide: true,

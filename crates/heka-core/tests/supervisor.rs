@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
-use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar};
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
 use heka_core::link::{
     ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
@@ -1131,4 +1131,61 @@ fn two_preference_changes_are_both_kept() {
     assert_eq!(preferences, expected);
     assert_eq!(supervisor.controllers()[0].preferences, expected);
     wait_until(|| turned_pink(&link));
+}
+
+fn rumble_report(large: u8, small: u8) -> Vec<u8> {
+    let feedback = Feedback {
+        rumble: Rumble { large, small },
+        ..Feedback::OFF
+    };
+    usb_output_report(&feedback, RumbleMode::CompatibleV2).to_vec()
+}
+
+fn written(link: &LinkHandle) -> Vec<Vec<u8>> {
+    link.0.lock().unwrap().written.clone()
+}
+
+#[test]
+fn a_rumble_test_reaches_a_bridged_controller_until_it_is_ended() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.test_rumble(mac(1), Motor::Small);
+    wait_until(|| written(&link) == [rumble_report(0, 255)]);
+
+    supervisor.end_rumble_test(mac(1));
+    wait_until(|| written(&link) == [rumble_report(0, 255), rumble_report(0, 0)]);
+}
+
+#[test]
+fn stopping_a_controller_ends_its_rumble_test() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.test_rumble(mac(1), Motor::Large);
+    wait_until(|| written(&link) == [rumble_report(255, 0)]);
+
+    supervisor.stop(mac(1), t0);
+
+    assert_eq!(written(&link), [rumble_report(255, 0), rumble_report(0, 0)]);
+}
+
+#[test]
+fn a_controller_without_a_bridge_is_not_rumble_tested() {
+    let t0 = Instant::now();
+    let mut settings = Settings::default();
+    settings.set_stopped(mac(1), true);
+    let mut supervisor = Supervisor::new(Box::new(FakeBus::default()), settings);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.test_rumble(mac(1), Motor::Large);
+    supervisor.start(mac(1), t0);
+    shows_live_input(&supervisor, 0, &link);
+    std::thread::sleep(Duration::from_millis(150));
+
+    assert!(sent_nothing(&link));
 }

@@ -1,12 +1,15 @@
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights};
+use crate::feedback::{
+    Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
+    Rumble,
+};
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
-use crate::preferences::{LightbarChoice, LivePreferences};
+use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
 use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
@@ -161,10 +164,35 @@ type FeedbackEnd = (
     Feedback,
 );
 
+#[derive(Clone, Copy)]
+struct RumbleTest {
+    motor: Motor,
+    until: Instant,
+}
+
 #[derive(Default)]
 struct Flags {
     stop: AtomicBool,
     link_lost: AtomicBool,
+    rumble_test: Mutex<Option<RumbleTest>>,
+}
+
+impl Flags {
+    fn tested_motor(&self) -> Option<Motor> {
+        self.rumble_test()
+            .filter(|test| Instant::now() < test.until)
+            .map(|test| test.motor)
+    }
+
+    fn set_rumble_test(&self, test: Option<RumbleTest>) {
+        *self.rumble_test() = test;
+    }
+
+    fn rumble_test(&self) -> MutexGuard<'_, Option<RumbleTest>> {
+        self.rumble_test
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 pub struct Bridge {
@@ -267,6 +295,16 @@ impl Bridge {
 
     pub fn is_finished(&self) -> bool {
         self.input.as_ref().is_none_or(Worker::is_finished)
+    }
+
+    pub fn test_rumble(&self, motor: Motor) {
+        let until = Instant::now() + RUMBLE_TEST_TIME;
+        self.flags
+            .set_rumble_test(Some(RumbleTest { motor, until }));
+    }
+
+    pub fn end_rumble_test(&self) {
+        self.flags.set_rumble_test(None);
     }
 
     pub fn stop(mut self) -> BridgeEnd {
@@ -470,6 +508,19 @@ impl Output {
     }
 }
 
+fn shaped(
+    preferences: Preferences,
+    testing: Option<Motor>,
+    asked: Feedback,
+    elapsed: Duration,
+) -> Feedback {
+    let mut feedback = preferences.apply(asked, elapsed);
+    if let Some(motor) = testing {
+        feedback.rumble = preferences.rumble.scale(Rumble::only(motor));
+    }
+    feedback
+}
+
 fn run_feedback(
     mut source: Box<dyn FeedbackSource>,
     writer: Box<dyn LinkWriter>,
@@ -481,12 +532,14 @@ fn run_feedback(
     let mut output = Output::new(writer);
     let started = Instant::now();
     let mut applied = preferences.get();
-    output.show(applied.apply(asked, started.elapsed()));
+    let mut testing = None;
+    output.show(shaped(applied, testing, asked, started.elapsed()));
     while !stopping() {
         let event = source.next(FEEDBACK_POLL);
+        let motor = flags.tested_motor();
         let chosen = preferences.get();
-        if chosen != applied {
-            let mut next = chosen.apply(asked, started.elapsed());
+        if chosen != applied || motor != testing {
+            let mut next = shaped(chosen, motor, asked, started.elapsed());
             if applied.lightbar.is_some() {
                 next.lightbar = next.lightbar.or(Some(Lightbar::DEFAULT));
             }
@@ -494,18 +547,19 @@ fn run_feedback(
                 next.player_lights = next.player_lights.or(Some(PlayerLights::Off));
             }
             applied = chosen;
+            testing = motor;
             output.show(next);
         }
         match event {
             FeedbackEvent::Feedback(feedback) => {
                 asked = feedback;
-                output.show(applied.apply(feedback, started.elapsed()));
+                output.show(shaped(applied, testing, asked, started.elapsed()));
             }
             FeedbackEvent::Timeout
                 if applied.lightbar.is_some_and(LightbarChoice::moves)
                     && output.shown.is_some() =>
             {
-                output.show(applied.apply(asked, started.elapsed()));
+                output.show(shaped(applied, testing, asked, started.elapsed()));
             }
             FeedbackEvent::Timeout => {}
             FeedbackEvent::Closed => {

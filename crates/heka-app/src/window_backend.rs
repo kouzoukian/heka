@@ -117,6 +117,8 @@ impl Backend for WindowBackend {
             Command::SetOutputType(mac, output_type) => bridging.set_output_type(mac, output_type),
             Command::SetNickname(mac, name) => bridging.set_nickname(mac, name),
             Command::ChangePreference(mac, change) => bridging.change_preference(mac, change),
+            Command::TestRumble(mac, motor) => bridging.test_rumble(mac, motor),
+            Command::EndRumbleTest(mac) => bridging.end_rumble_test(mac),
             Command::CheckDrivers => bridging.check_drivers(),
             Command::OpenLogFolder => open_log_folder(),
             Command::SetStartWithWindows(enabled) => self.set_start_with_windows(enabled),
