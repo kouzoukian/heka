@@ -317,6 +317,13 @@ pub fn bluetooth_lightbar_setup_report(seq: u8) -> [u8; BT_OUTPUT_REPORT_LEN] {
     bluetooth_from_usb(&usb, seq)
 }
 
+pub fn is_bluetooth_lightbar_setup_report(report: &[u8]) -> bool {
+    const FLAG2: usize = OUT_BT_COMMON + OUT_VALID_FLAG2 - 1;
+    report.len() == BT_OUTPUT_REPORT_LEN
+        && report[0] == BT_OUTPUT_REPORT_ID
+        && report[FLAG2] & FLAG2_LIGHTBAR_SETUP_CONTROL_ENABLE != 0
+}
+
 fn bluetooth_from_usb(usb: &[u8; USB_OUTPUT_REPORT_LEN], seq: u8) -> [u8; BT_OUTPUT_REPORT_LEN] {
     let mut report = [0u8; BT_OUTPUT_REPORT_LEN];
     report[0] = BT_OUTPUT_REPORT_ID;

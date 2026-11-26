@@ -6,9 +6,10 @@ use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
-use crate::preferences::{LivePreferences, Preferences};
+use crate::preferences::{LivePreferences, PreferenceChange, Preferences};
 use crate::settings::Settings;
-use crate::virtual_controller::{OutputType, VirtualBus};
+use crate::threads::{SystemThreads, Threads};
+use crate::virtual_controller::{OutputType, VirtualBus, VirtualFailure, VirtualFailures};
 use crate::watch::Watch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +45,7 @@ struct Slot {
     watch: Option<Watch>,
     held: Option<Plugged>,
     error: Option<String>,
+    watch_error: Option<String>,
 }
 
 impl Slot {
@@ -79,10 +81,10 @@ impl Slot {
         }
     }
 
-    fn forget_read(&mut self) {
-        if let Some(id) = self.reading.take() {
-            self.links.retain(|link| link.id != id);
-        }
+    fn forget_read(&mut self) -> Option<LinkId> {
+        let id = self.reading.take()?;
+        self.links.retain(|link| link.id != id);
+        Some(id)
     }
 }
 
@@ -91,25 +93,35 @@ pub struct Supervisor {
     lifecycle: Lifecycle,
     slots: HashMap<MacAddress, Slot>,
     next_link_id: u64,
+    threads: Arc<dyn Threads>,
+    failures: Arc<VirtualFailures>,
+    dropped: Vec<LinkId>,
 }
 
 impl Supervisor {
     pub fn new(bus: Box<dyn VirtualBus>, settings: Settings) -> Self {
-        Self {
-            bus: Some(bus),
-            lifecycle: Lifecycle::new(settings),
-            slots: HashMap::new(),
-            next_link_id: 0,
-        }
+        Self::with(Some(bus), Lifecycle::new(settings))
     }
 
     pub fn without_bus(settings: Settings) -> Self {
+        Self::with(None, Lifecycle::paused(settings))
+    }
+
+    fn with(bus: Option<Box<dyn VirtualBus>>, lifecycle: Lifecycle) -> Self {
         Self {
-            bus: None,
-            lifecycle: Lifecycle::paused(settings),
+            bus,
+            lifecycle,
             slots: HashMap::new(),
             next_link_id: 0,
+            threads: Arc::new(SystemThreads),
+            failures: Arc::default(),
+            dropped: Vec::new(),
         }
+    }
+
+    pub fn spawning_with(mut self, threads: Arc<dyn Threads>) -> Self {
+        self.threads = threads;
+        self
     }
 
     pub fn has_bus(&self) -> bool {
@@ -121,22 +133,11 @@ impl Supervisor {
             return Vec::new();
         }
         self.bus = Some(bus);
-        let mut lost = Vec::new();
-        for (&mac, slot) in &mut self.slots {
-            if let Some(watch) = slot.watch.take() {
-                match watch.stop() {
-                    Some(link) => slot.put_back(link),
-                    None => {
-                        slot.forget_read();
-                        lost.push(mac);
-                    }
-                }
-            }
-        }
-        let mut changes = Vec::new();
-        for mac in lost {
-            changes.extend(self.lifecycle.link_lost(mac, now));
-        }
+        let watched: Vec<MacAddress> = self.slots.keys().copied().collect();
+        let mut changes: Vec<Change> = watched
+            .into_iter()
+            .flat_map(|mac| self.stop_watch(mac, now))
+            .collect();
         changes.extend(self.lifecycle.resume_bridging(now));
         self.apply(changes, now)
     }
@@ -147,6 +148,14 @@ impl Supervisor {
 
     pub fn next_deadline(&self) -> Option<Instant> {
         self.lifecycle.next_deadline()
+    }
+
+    pub fn take_dropped_links(&mut self) -> Vec<LinkId> {
+        std::mem::take(&mut self.dropped)
+    }
+
+    pub fn take_virtual_failures(&mut self) -> Vec<VirtualFailure> {
+        self.failures.take()
     }
 
     pub fn controllers(&self) -> Vec<ControllerView> {
@@ -164,7 +173,7 @@ impl Supervisor {
                     preferences: settings.preferences,
                     active_link: slot.and_then(Slot::active).map(|link| link.kind),
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
-                    error: slot.and_then(|slot| slot.error.clone()),
+                    error: slot.and_then(|slot| slot.error.clone().or(slot.watch_error.clone())),
                 }
             })
             .collect()
@@ -206,6 +215,7 @@ impl Supervisor {
         };
         let slot = self.slots.get_mut(&mac).expect("found above");
         let mut moving = None;
+        let mut failed = false;
         if slot.reading == Some(id) {
             slot.watch = None;
             if let Some(bridge) = slot.bridge.take() {
@@ -213,7 +223,10 @@ impl Supervisor {
                     BridgeEnd::Stopped { controller, .. } | BridgeEnd::LinkLost { controller } => {
                         moving = Some(controller)
                     }
-                    BridgeEnd::VirtualControllerFailed { .. } => {}
+                    BridgeEnd::VirtualControllerFailed { error, .. } => {
+                        slot.error = Some(error.to_string());
+                        failed = true;
+                    }
                 }
             }
             slot.reading = None;
@@ -221,7 +234,14 @@ impl Supervisor {
         slot.links.retain(|link| link.id != id);
         let changes = match moving {
             Some(controller) => self.lost_read_link(mac, controller, now),
-            None => self.lifecycle.link_lost(mac, now),
+            None => {
+                let mut changes = Vec::new();
+                if failed {
+                    changes.extend(self.lifecycle.bridge_failed(mac, now));
+                }
+                changes.extend(self.lifecycle.link_lost(mac, now));
+                changes
+            }
         };
         self.apply(changes, now)
     }
@@ -235,11 +255,15 @@ impl Supervisor {
             .collect();
         let mut done = Vec::new();
         for mac in ended {
-            let slot = self.slots.get_mut(&mac).expect("listed above");
-            let bridge = slot.bridge.take().expect("finished above");
+            let Some(slot) = self.slots.get_mut(&mac) else {
+                continue;
+            };
+            let Some(bridge) = slot.bridge.take() else {
+                continue;
+            };
             let changes = match bridge.stop() {
                 BridgeEnd::LinkLost { controller } => {
-                    slot.forget_read();
+                    self.dropped.extend(slot.forget_read());
                     self.lost_read_link(mac, controller, now)
                 }
                 BridgeEnd::VirtualControllerFailed { link, error } => {
@@ -262,9 +286,13 @@ impl Supervisor {
             .map(|(&mac, _)| mac)
             .collect();
         for mac in unread {
-            let slot = self.slots.get_mut(&mac).expect("listed above");
-            slot.watch = None;
-            slot.forget_read();
+            let Some(slot) = self.slots.get_mut(&mac) else {
+                continue;
+            };
+            if slot.watch.take().is_none() {
+                continue;
+            }
+            self.dropped.extend(slot.forget_read());
             let changes = self.lifecycle.link_lost(mac, now);
             done.extend(self.apply(changes, now));
         }
@@ -297,13 +325,16 @@ impl Supervisor {
         self.lifecycle.settings_mut().set_nickname(mac, name);
     }
 
-    pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {
+    pub fn change_preference(&mut self, mac: MacAddress, change: PreferenceChange) -> Preferences {
+        let mut preferences = self.settings().controller(mac).preferences;
+        preferences.change(change);
         self.lifecycle
             .settings_mut()
             .set_preferences(mac, preferences);
         if let Some(slot) = self.slots.get(&mac) {
             slot.preferences.set(preferences);
         }
+        preferences
     }
 
     pub fn quit(&mut self) -> Vec<Change> {
@@ -316,12 +347,17 @@ impl Supervisor {
     fn lost_read_link(
         &mut self,
         mac: MacAddress,
-        controller: Plugged,
+        mut controller: Plugged,
         now: Instant,
     ) -> Vec<Change> {
         let mut changes = self.lifecycle.link_lost(mac, now);
         if self.slot(mac).links.is_empty() {
-            self.slot(mac).held = Some(release(controller));
+            if controller.release().is_ok() {
+                self.slot(mac).held = Some(controller);
+            } else {
+                let _ = controller.unplug();
+                changes.extend(self.lifecycle.release_failed(mac, now));
+            }
         } else if let Err(error) = self.bridge_to(mac, controller) {
             self.slot(mac).error = Some(error);
             changes.extend(self.lifecycle.bridge_failed(mac, now));
@@ -330,23 +366,14 @@ impl Supervisor {
     }
 
     fn follow_active_link(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
-        let Some(slot) = self.slots.get_mut(&mac) else {
+        let Some(slot) = self.slots.get(&mac) else {
             return Vec::new();
         };
         if !slot.reads_inactive_link() {
             return Vec::new();
         }
-        let mut changes = Vec::new();
-        if let Some(watch) = slot.watch.take() {
-            match watch.stop() {
-                Some(link) => slot.put_back(link),
-                None => {
-                    slot.forget_read();
-                    changes.extend(self.lifecycle.link_lost(mac, now));
-                }
-            }
-        }
-        let slot = self.slot(mac);
+        let mut changes = self.stop_watch(mac, now);
+        let slot = self.slots.entry(mac).or_default();
         if let Some(bridge) = slot.bridge.take() {
             match bridge.stop() {
                 BridgeEnd::Stopped { link, controller } => {
@@ -357,7 +384,7 @@ impl Supervisor {
                     }
                 }
                 BridgeEnd::LinkLost { controller } => {
-                    slot.forget_read();
+                    self.dropped.extend(slot.forget_read());
                     changes.extend(self.lost_read_link(mac, controller, now));
                 }
                 BridgeEnd::VirtualControllerFailed { link, error } => {
@@ -370,6 +397,26 @@ impl Supervisor {
         self.apply(changes, now)
     }
 
+    fn stop_watch(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let Some(slot) = self.slots.get_mut(&mac) else {
+            return Vec::new();
+        };
+        let Some(watch) = slot.watch.take() else {
+            return Vec::new();
+        };
+        if let Some(link) = watch.stop() {
+            slot.put_back(link);
+            return Vec::new();
+        }
+        self.dropped.extend(slot.forget_read());
+        let mut changes = Vec::new();
+        if slot.links.is_empty() {
+            changes.extend(self.lifecycle.bridge_failed(mac, now));
+        }
+        changes.extend(self.lifecycle.link_lost(mac, now));
+        changes
+    }
+
     fn apply(&mut self, changes: Vec<Change>, now: Instant) -> Vec<Change> {
         let mut queue = VecDeque::from(changes);
         let mut done = Vec::new();
@@ -377,27 +424,19 @@ impl Supervisor {
             done.push(change);
             match change {
                 Change::Bridged { mac, output_type } => {
-                    if let Err(error) = self.bridge(mac, output_type, false) {
-                        self.slot(mac).error = Some(error);
-                        queue.extend(self.lifecycle.bridge_failed(mac, now));
-                    }
+                    queue.extend(self.carry_out_bridge(mac, output_type, false, now));
                 }
                 Change::Held { .. } => {}
                 Change::Returned { mac } => {
                     let output_type = self.settings().controller(mac).output_type;
-                    if let Err(error) = self.bridge(mac, output_type, true) {
-                        self.slot(mac).error = Some(error);
-                        queue.extend(self.lifecycle.bridge_failed(mac, now));
-                    }
+                    queue.extend(self.carry_out_bridge(mac, output_type, true, now));
                 }
                 Change::Removed { mac, why } => queue.extend(self.remove(mac, why, now)),
             }
         }
         let listed: Vec<MacAddress> = self.lifecycle.controllers().map(|(mac, _)| mac).collect();
         self.slots.retain(|mac, _| listed.contains(mac));
-        if !self.has_bus() {
-            self.watch_idle_links();
-        }
+        self.watch_idle_links();
         done
     }
 
@@ -409,11 +448,35 @@ impl Supervisor {
             let Some(link) = slot.take_active() else {
                 continue;
             };
-            match Watch::start(link, Arc::clone(&slot.live)) {
-                Ok(watch) => slot.watch = Some(watch),
-                Err(error) => slot.error = Some(format!("cannot start the input thread: {error}")),
+            match Watch::start_on(self.threads.as_ref(), link, Arc::clone(&slot.live)) {
+                Ok(watch) => {
+                    slot.watch = Some(watch);
+                    slot.watch_error = None;
+                }
+                Err((error, link)) => {
+                    slot.put_back(link);
+                    slot.watch_error = Some(cannot_start(&error));
+                }
             }
         }
+    }
+
+    fn carry_out_bridge(
+        &mut self,
+        mac: MacAddress,
+        output_type: OutputType,
+        resume: bool,
+        now: Instant,
+    ) -> Vec<Change> {
+        let mut changes = self.stop_watch(mac, now);
+        if self.slot(mac).links.is_empty() {
+            return changes;
+        }
+        if let Err(error) = self.bridge(mac, output_type, resume) {
+            self.slot(mac).error = Some(error);
+            changes.extend(self.lifecycle.bridge_failed(mac, now));
+        }
+        changes
     }
 
     fn bridge(
@@ -422,13 +485,6 @@ impl Supervisor {
         output_type: OutputType,
         resume: bool,
     ) -> Result<(), String> {
-        let ready = self
-            .slot(mac)
-            .active()
-            .is_some_and(|link| link.open.is_some());
-        if !ready {
-            return Err("the Link was closed; reconnect the Controller".into());
-        }
         let held = if resume {
             self.slot(mac).held.take()
         } else {
@@ -438,7 +494,10 @@ impl Supervisor {
             Some(controller) => controller,
             None => {
                 let bus = self.bus.as_ref().ok_or("there is no bus")?;
-                Plugged::new(bus.plug(output_type).map_err(|e| e.to_string())?)
+                let mut controller =
+                    Plugged::new(bus.plug(output_type).map_err(|e| e.to_string())?);
+                controller.report_to(Arc::clone(&self.failures));
+                controller
             }
         };
         self.bridge_to(mac, controller)
@@ -446,21 +505,30 @@ impl Supervisor {
 
     fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), String> {
         let preferences = self.settings().controller(mac).preferences;
+        let threads = Arc::clone(&self.threads);
         let slot = self.slot(mac);
         let link = slot
             .take_active()
-            .ok_or("the Link was closed; reconnect the Controller")?;
+            .expect("an unbridged Controller keeps its Active Link open");
         slot.preferences.set(preferences);
         controller.follow(Arc::clone(&slot.preferences));
-        let bridge = Bridge::resume(link, controller, Arc::clone(&slot.live))
-            .map_err(|e| format!("cannot start the input thread: {e}"))?;
-        slot.bridge = Some(bridge);
-        slot.error = None;
-        Ok(())
+        match Bridge::resume_on(threads.as_ref(), link, controller, Arc::clone(&slot.live)) {
+            Ok(bridge) => {
+                slot.bridge = Some(bridge);
+                slot.error = None;
+                slot.watch_error = None;
+                Ok(())
+            }
+            Err(failed) => {
+                slot.put_back(failed.link);
+                slot.held = Some(failed.controller);
+                Err(cannot_start(&failed.error))
+            }
+        }
     }
 
     fn remove(&mut self, mac: MacAddress, why: Removal, now: Instant) -> Vec<Change> {
-        let slot = self.slot(mac);
+        let slot = self.slots.entry(mac).or_default();
         let mut link_lost = false;
         if let Some(bridge) = slot.bridge.take() {
             match bridge.stop() {
@@ -469,7 +537,7 @@ impl Supervisor {
                     let _ = controller.unplug();
                 }
                 BridgeEnd::LinkLost { controller } => {
-                    slot.forget_read();
+                    self.dropped.extend(slot.forget_read());
                     link_lost = true;
                     let _ = controller.unplug();
                 }
@@ -480,6 +548,7 @@ impl Supervisor {
             let _ = controller.unplug();
         }
         if why == Removal::Quit {
+            slot.watch = None;
             slot.links.clear();
             slot.reading = None;
         }
@@ -495,7 +564,6 @@ impl Supervisor {
     }
 }
 
-fn release(mut controller: Plugged) -> Plugged {
-    let _ = controller.release();
-    controller
+fn cannot_start(error: &std::io::Error) -> String {
+    format!("cannot start a thread: {error}")
 }

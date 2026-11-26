@@ -2,13 +2,20 @@ use std::sync::Arc;
 
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::state::ControllerState;
+use crate::threads::Threads;
 use crate::virtual_controller::{OutputType, VirtualController, VirtualError};
 
 pub struct Watch(Bridge);
 
 impl Watch {
-    pub fn start(link: OpenLink, live: Arc<LiveInput>) -> std::io::Result<Self> {
-        Bridge::resume(link, Plugged::new(Box::new(Nothing)), live).map(Self)
+    pub fn start_on(
+        threads: &dyn Threads,
+        link: OpenLink,
+        live: Arc<LiveInput>,
+    ) -> Result<Self, (std::io::Error, OpenLink)> {
+        Bridge::resume_on(threads, link, Plugged::new(Box::new(Nothing)), live)
+            .map(Self)
+            .map_err(|failed| (failed.error, failed.link))
     }
 
     pub fn is_finished(&self) -> bool {

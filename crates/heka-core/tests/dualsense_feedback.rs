@@ -173,10 +173,31 @@ fn coloured(red: u8, green: u8, blue: u8) -> Feedback {
 }
 
 #[test]
+fn the_lightbar_setup_report_is_sent_until_it_has_been_written() {
+    let mut format = FeedbackFormat::dualsense_bluetooth(RumbleMode::Compatible);
+    let colour = coloured(0xFF, 0x10, 0x80);
+    assert_eq!(format.reports(&colour).len(), 2);
+
+    let again = format.reports(&colour);
+    assert_eq!(again.len(), 2);
+
+    format.written(&again[1]);
+    let still = format.reports(&colour);
+    assert_eq!(still.len(), 2, "only the setup report counts");
+
+    format.written(&still[0]);
+    assert_eq!(format.reports(&colour).len(), 1);
+}
+
+#[test]
 fn the_first_bluetooth_colour_follows_a_lightbar_setup_report() {
     let mut format = FeedbackFormat::dualsense_bluetooth(RumbleMode::Compatible);
+    let first = format.reports(&coloured(0xFF, 0x10, 0x80));
+    for report in &first {
+        format.written(report);
+    }
     assert_eq!(
-        format.reports(&coloured(0xFF, 0x10, 0x80)),
+        first,
         [
             expected_bluetooth(&[(0, 0x31), (2, 0x10), (41, 0x02), (44, 0x02)], 0x3631_E643),
             expected_bluetooth(

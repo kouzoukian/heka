@@ -5,10 +5,13 @@ use heka_app::text;
 use heka_app::ui::model::{Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
+use heka_core::discovery::Unopened;
+use heka_core::feedback::PlayerLights;
+use heka_core::hider::{HideError, HidingWarning};
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
-use heka_core::preferences::{Preferences, RumbleStrength};
+use heka_core::preferences::{PreferenceChange, Preferences, RumbleStrength};
 use heka_core::settings::Settings;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
@@ -322,18 +325,62 @@ fn only_a_dualsense_has_player_lights() {
 }
 
 #[test]
-fn only_a_changed_preference_asks_for_anything() {
+fn changes_made_from_one_sample_are_all_kept() {
     let entry = entry_of(&view(Phase::Bridged), Instant::now());
+    let mut supervisor = Supervisor::without_bus(Settings::default());
 
-    assert_eq!(entry.prefer(|preferences| preferences.hide = true), None);
+    for change in [
+        PreferenceChange::Rumble(RumbleStrength::OFF),
+        PreferenceChange::Hide(false),
+        PreferenceChange::PlayerLights(Some(PlayerLights::Two)),
+        PreferenceChange::Hide(true),
+    ] {
+        let Command::ChangePreference(mac, change) = entry.prefer(change) else {
+            panic!("expected a preference change");
+        };
+        supervisor.change_preference(mac, change);
+    }
+
     assert_eq!(
-        entry.prefer(|preferences| preferences.rumble = RumbleStrength::OFF),
-        Some(Command::SetPreferences(
-            MAC,
-            Preferences {
-                rumble: RumbleStrength::OFF,
-                ..Preferences::default()
-            }
-        ))
+        supervisor.settings().controller(MAC).preferences,
+        Preferences {
+            rumble: RumbleStrength::OFF,
+            player_lights: Some(PlayerLights::Two),
+            ..Preferences::default()
+        }
+    );
+}
+
+#[test]
+fn hiding_warnings_say_what_failed_and_what_to_change() {
+    let busy = "HidHide is busy: close the HidHide Configuration Client or HidHideCLI";
+    let words = |warning| text::hiding_warning(&warning);
+
+    assert_eq!(
+        words(HidingWarning::NotRestored(busy.into())),
+        format!("Could not restore a Controller, trying again: {busy}.")
+    );
+    assert!(
+        words(HidingWarning::EarlierRunNotRestored(busy.into())).starts_with("Could not restore")
+    );
+    assert_eq!(
+        words(HidingWarning::NotHidden(HideError::Failed(busy.into()))),
+        format!("Could not Hide a Controller, so games may see it twice: {busy}.")
+    );
+    let inverted = words(HidingWarning::Inverted);
+    assert!(inverted.contains("twice"));
+    assert!(inverted.contains("Turn off the inverse application cloak"));
+}
+
+#[test]
+fn a_controller_that_cannot_be_opened_is_named_with_the_reason() {
+    let unopened = Unopened {
+        model: ControllerModel::DualShock4,
+        error: "access is denied".into(),
+    };
+
+    assert_eq!(
+        text::cannot_open(&unopened),
+        "A DualShock 4 was found but cannot be opened: access is denied"
     );
 }

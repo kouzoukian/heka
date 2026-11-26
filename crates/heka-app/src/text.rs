@@ -1,3 +1,5 @@
+use heka_core::discovery::Unopened;
+use heka_core::hider::{HideError, HidingWarning};
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::state::{Battery, Charge};
@@ -200,7 +202,10 @@ pub fn cannot_hide_at_all(error: &str) -> String {
 }
 
 pub fn cannot_restore_earlier_run(error: &str) -> String {
-    format!("Could not restore Controllers Hidden by an earlier run: {error}")
+    format!(
+        "Could not restore Controllers Hidden by an earlier run, trying again: {}",
+        sentence(error)
+    )
 }
 
 pub fn cannot_identify_for_hiding(error: &str) -> String {
@@ -210,7 +215,10 @@ pub fn cannot_identify_for_hiding(error: &str) -> String {
 pub const NO_LINK_TO_HIDE: &str = "no Link to Hide";
 
 pub fn not_hidden(error: &str) -> String {
-    format!("{error}. Games may see the Controller twice.")
+    format!(
+        "Could not Hide a Controller, so games may see it twice: {}",
+        sentence(error)
+    )
 }
 
 pub fn not_allowed(error: &str) -> String {
@@ -218,5 +226,52 @@ pub fn not_allowed(error: &str) -> String {
 }
 
 pub fn cannot_restore(error: &str) -> String {
-    format!("Could not restore the Controller: {error}")
+    format!(
+        "Could not restore a Controller, trying again: {}",
+        sentence(error)
+    )
+}
+
+pub const HIDHIDE_INVERTED: &str = "Games may see each Controller twice. Turn off the inverse application cloak in the HidHide Configuration Client, then close it.";
+
+pub fn hiding_warning(warning: &HidingWarning) -> String {
+    match warning {
+        HidingWarning::Unavailable(error) => cannot_hide_at_all(error),
+        HidingWarning::EarlierRunNotRestored(error) => cannot_restore_earlier_run(error),
+        HidingWarning::NotRestored(error) => cannot_restore(error),
+        HidingWarning::NotAllowed(error) => not_allowed(error),
+        HidingWarning::NotHidden(HideError::NoLink) => not_hidden(NO_LINK_TO_HIDE),
+        HidingWarning::NotHidden(HideError::Unidentified(error)) => {
+            not_hidden(&cannot_identify_for_hiding(error))
+        }
+        HidingWarning::NotHidden(HideError::Failed(error)) => not_hidden(error),
+        HidingWarning::Inverted => HIDHIDE_INVERTED.into(),
+    }
+}
+
+fn sentence(words: &str) -> String {
+    format!("{}.", words.trim_end_matches('.'))
+}
+
+pub fn cannot_open(unopened: &Unopened) -> String {
+    format!(
+        "A {} was found but cannot be opened: {}",
+        controller(unopened.model),
+        unopened.error
+    )
+}
+
+pub fn not_released(error: &str) -> String {
+    format!("Could not release a Virtual Controller: {error}")
+}
+
+pub fn not_unplugged(error: &str) -> String {
+    format!(
+        "Could not remove a Virtual Controller, so games may see it until heka quits: {}",
+        sentence(error)
+    )
+}
+
+pub fn cannot_draw(error: &str) -> String {
+    format!("cannot draw a Controller: {error}")
 }

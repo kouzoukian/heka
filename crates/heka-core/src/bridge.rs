@@ -1,14 +1,15 @@
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, PlayerLights};
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::preferences::{LightbarChoice, LivePreferences};
 use crate::state::ControllerState;
-use crate::virtual_controller::{VirtualController, VirtualError};
+use crate::threads::{SystemThreads, Threads, Worker};
+use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
 
 const READ_BUFFER_LEN: usize = 128;
 
@@ -48,6 +49,7 @@ pub struct Plugged {
     feedback: Option<Box<dyn FeedbackSource>>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    failures: Arc<VirtualFailures>,
 }
 
 impl Plugged {
@@ -58,6 +60,7 @@ impl Plugged {
             feedback,
             asked: Feedback::OFF,
             preferences: Arc::default(),
+            failures: Arc::default(),
         }
     }
 
@@ -65,13 +68,35 @@ impl Plugged {
         self.preferences = preferences;
     }
 
+    pub fn report_to(&mut self, failures: Arc<VirtualFailures>) {
+        self.failures = failures;
+    }
+
     pub fn release(&mut self) -> Result<(), VirtualError> {
-        self.controller.update(&ControllerState::NEUTRAL)
+        release(self.controller.as_mut(), &self.failures)
     }
 
     pub fn unplug(self) -> Result<(), VirtualError> {
-        self.controller.unplug()
+        unplug(self.controller, &self.failures)
     }
+}
+
+fn release(
+    controller: &mut dyn VirtualController,
+    failures: &VirtualFailures,
+) -> Result<(), VirtualError> {
+    controller
+        .update(&ControllerState::NEUTRAL)
+        .inspect_err(|error| failures.record(VirtualFailure::NotReleased(error.to_string())))
+}
+
+fn unplug(
+    controller: Box<dyn VirtualController>,
+    failures: &VirtualFailures,
+) -> Result<(), VirtualError> {
+    controller
+        .unplug()
+        .inspect_err(|error| failures.record(VirtualFailure::NotUnplugged(error.to_string())))
 }
 
 pub enum BridgeEnd {
@@ -92,22 +117,57 @@ impl fmt::Debug for BridgeEnd {
     }
 }
 
+pub struct StartError {
+    pub error: std::io::Error,
+    pub link: OpenLink,
+    pub controller: Plugged,
+}
+
+impl fmt::Debug for StartError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StartError({})", self.error)
+    }
+}
+
+impl fmt::Display for StartError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl std::error::Error for StartError {}
+
 enum InputEnd {
     Stopped(Box<dyn LinkReader>, Box<dyn VirtualController>),
     LinkLost(Box<dyn VirtualController>),
     Failed(Box<dyn LinkReader>, VirtualError),
 }
 
+type InputParts = (Box<dyn LinkReader>, Box<dyn VirtualController>);
+
 type FeedbackParts = (Box<dyn FeedbackSource>, Box<dyn LinkWriter>, Feedback);
 
+type FeedbackEnd = (
+    Option<Box<dyn FeedbackSource>>,
+    Option<Box<dyn LinkWriter>>,
+    Feedback,
+);
+
+#[derive(Default)]
+struct Flags {
+    stop: AtomicBool,
+    link_lost: AtomicBool,
+}
+
 pub struct Bridge {
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<InputEnd>>,
-    feedback: Option<JoinHandle<FeedbackParts>>,
+    flags: Arc<Flags>,
+    input: Option<Worker<InputEnd>>,
+    feedback: Option<Worker<FeedbackParts>>,
     spare_source: Option<Box<dyn FeedbackSource>>,
     spare_writer: Option<Box<dyn LinkWriter>>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    failures: Arc<VirtualFailures>,
 }
 
 impl Bridge {
@@ -115,7 +175,7 @@ impl Bridge {
         link: Box<dyn LinkReader>,
         controller: Box<dyn VirtualController>,
         live: Arc<LiveInput>,
-    ) -> std::io::Result<Self> {
+    ) -> Result<Self, Box<StartError>> {
         Self::resume(OpenLink::new(link), Plugged::new(controller), live)
     }
 
@@ -123,57 +183,81 @@ impl Bridge {
         link: OpenLink,
         controller: Plugged,
         live: Arc<LiveInput>,
-    ) -> std::io::Result<Self> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let (mut spare_source, mut spare_writer) = (None, None);
-        let asked = controller.asked;
-        let preferences = controller.preferences;
-        let feedback = match (controller.feedback, link.writer) {
-            (Some(source), Some(writer)) => {
-                Some(thread::Builder::new().name("heka-feedback".into()).spawn({
-                    let stop = Arc::clone(&stop);
-                    let preferences = Arc::clone(&preferences);
-                    move || run_feedback(source, writer, asked, &preferences, &stop)
-                })?)
-            }
-            (source, writer) => {
-                spare_source = source;
-                spare_writer = writer;
-                None
-            }
-        };
-        let (reader, controller) = (link.reader, controller.controller);
-        let thread = thread::Builder::new().name("heka-bridge".into()).spawn({
-            let stop = Arc::clone(&stop);
-            move || {
-                let end = run(reader, controller, &live, &stop);
-                stop.store(true, Ordering::Relaxed);
-                end
-            }
-        });
-        let thread = match thread {
-            Ok(thread) => thread,
-            Err(error) => {
-                stop.store(true, Ordering::Relaxed);
-                if let Some(feedback) = feedback {
-                    let _ = feedback.join();
-                }
-                return Err(error);
-            }
-        };
-        Ok(Self {
-            stop,
-            thread: Some(thread),
-            feedback,
-            spare_source,
-            spare_writer,
+    ) -> Result<Self, Box<StartError>> {
+        Self::resume_on(&SystemThreads, link, controller, live)
+    }
+
+    pub fn resume_on(
+        threads: &dyn Threads,
+        link: OpenLink,
+        controller: Plugged,
+        live: Arc<LiveInput>,
+    ) -> Result<Self, Box<StartError>> {
+        let OpenLink { reader, writer } = link;
+        let Plugged {
+            controller,
+            feedback: source,
             asked,
             preferences,
-        })
+            failures,
+        } = controller;
+        let flags = Arc::new(Flags::default());
+        let mut bridge = Self {
+            flags: Arc::clone(&flags),
+            input: None,
+            feedback: None,
+            spare_source: None,
+            spare_writer: None,
+            asked,
+            preferences: Arc::clone(&preferences),
+            failures: Arc::clone(&failures),
+        };
+        match (source, writer) {
+            (Some(source), Some(writer)) => {
+                let started = Worker::spawn(threads, "heka-feedback", (source, writer), {
+                    let flags = Arc::clone(&flags);
+                    move |(source, writer)| {
+                        run_feedback(source, writer, asked, &preferences, &flags)
+                    }
+                });
+                match started {
+                    Ok(worker) => bridge.feedback = Some(worker),
+                    Err((error, (source, writer))) => {
+                        bridge.spare_source = Some(source);
+                        bridge.spare_writer = Some(writer);
+                        return Err(bridge.hand_back(error, (reader, controller)));
+                    }
+                }
+            }
+            (source, writer) => {
+                bridge.spare_source = source;
+                bridge.spare_writer = writer;
+            }
+        }
+        let started = Worker::spawn(
+            threads,
+            "heka-bridge",
+            (reader, controller),
+            move |(reader, controller): InputParts| {
+                let end = run(reader, controller, &live, &flags.stop, &failures);
+                if matches!(end, InputEnd::LinkLost(_)) {
+                    flags.link_lost.store(true, Ordering::Release);
+                }
+                flags.stop.store(true, Ordering::Release);
+                end
+            },
+        );
+        match started {
+            Ok(worker) => {
+                bridge.input = Some(worker);
+                Ok(bridge)
+            }
+            Err((error, parts)) => Err(bridge.hand_back(error, parts)),
+        }
     }
 
     pub fn is_finished(&self) -> bool {
-        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+        self.input.as_ref().is_none_or(Worker::is_finished)
     }
 
     pub fn stop(mut self) -> BridgeEnd {
@@ -181,35 +265,55 @@ impl Bridge {
             .expect("a Bridge has its threads until stopped or dropped")
     }
 
-    fn join(&mut self) -> Option<BridgeEnd> {
-        self.stop.store(true, Ordering::Relaxed);
-        let (source, writer, asked) = match self.feedback.take().map(JoinHandle::join) {
-            Some(Ok((source, writer, asked))) => (Some(source), Some(writer), asked),
-            Some(Err(panic)) => std::panic::resume_unwind(panic),
+    fn hand_back(
+        mut self,
+        error: std::io::Error,
+        (reader, controller): InputParts,
+    ) -> Box<StartError> {
+        let (source, writer, asked) = self.end_feedback();
+        Box::new(StartError {
+            error,
+            link: OpenLink { reader, writer },
+            controller: self.plugged(controller, source, asked),
+        })
+    }
+
+    fn end_feedback(&mut self) -> FeedbackEnd {
+        self.flags.stop.store(true, Ordering::Release);
+        match self.feedback.take().map(Worker::join) {
+            Some((source, writer, asked)) => (Some(source), Some(writer), asked),
             None => (
                 self.spare_source.take(),
                 self.spare_writer.take(),
                 self.asked,
             ),
-        };
-        let end = match self.thread.take()?.join() {
-            Ok(end) => end,
-            Err(panic) => std::panic::resume_unwind(panic),
-        };
-        let preferences = Arc::clone(&self.preferences);
-        let plugged = |controller| Plugged {
+        }
+    }
+
+    fn plugged(
+        &self,
+        controller: Box<dyn VirtualController>,
+        feedback: Option<Box<dyn FeedbackSource>>,
+        asked: Feedback,
+    ) -> Plugged {
+        Plugged {
             controller,
-            feedback: source,
+            feedback,
             asked,
-            preferences,
-        };
-        Some(match end {
+            preferences: Arc::clone(&self.preferences),
+            failures: Arc::clone(&self.failures),
+        }
+    }
+
+    fn join(&mut self) -> Option<BridgeEnd> {
+        let (source, writer, asked) = self.end_feedback();
+        Some(match self.input.take()?.join() {
             InputEnd::Stopped(reader, controller) => BridgeEnd::Stopped {
                 link: OpenLink { reader, writer },
-                controller: plugged(controller),
+                controller: self.plugged(controller, source, asked),
             },
             InputEnd::LinkLost(controller) => BridgeEnd::LinkLost {
-                controller: plugged(controller),
+                controller: self.plugged(controller, source, asked),
             },
             InputEnd::Failed(reader, error) => BridgeEnd::VirtualControllerFailed {
                 link: OpenLink { reader, writer },
@@ -221,7 +325,7 @@ impl Bridge {
 
 impl Drop for Bridge {
     fn drop(&mut self) {
-        if self.thread.is_none() || thread::panicking() {
+        if self.input.is_none() || thread::panicking() {
             return;
         }
         match self.join() {
@@ -238,11 +342,12 @@ fn run(
     mut controller: Box<dyn VirtualController>,
     live: &LiveInput,
     stop: &AtomicBool,
+    failures: &VirtualFailures,
 ) -> InputEnd {
     let format = link.format();
     let mut buf = [0u8; READ_BUFFER_LEN];
     let end = loop {
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Acquire) {
             break InputEnd::Stopped(link, controller);
         }
         match link.read(&mut buf) {
@@ -252,13 +357,13 @@ fn run(
                 };
                 live.set(Some(state));
                 if let Err(error) = controller.update(&state) {
-                    let _ = controller.unplug();
+                    let _ = unplug(controller, failures);
                     break InputEnd::Failed(link, error);
                 }
             }
             LinkRead::Timeout => {}
             LinkRead::Lost => {
-                let _ = controller.update(&ControllerState::NEUTRAL);
+                let _ = release(controller.as_mut(), failures);
                 break InputEnd::LinkLost(controller);
             }
         }
@@ -269,23 +374,89 @@ fn run(
 
 const FEEDBACK_POLL: Duration = Duration::from_millis(50);
 
+const WRITE_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+const STOP_ATTEMPTS: u32 = 5;
+
+const STOP_RETRY_DELAY: Duration = Duration::from_millis(20);
+
+const STOP_TIME_LIMIT: Duration = Duration::from_millis(500);
+
 struct Output {
     writer: Box<dyn LinkWriter>,
     format: FeedbackFormat,
-    shown: Feedback,
+    wanted: Feedback,
+    shown: Option<Feedback>,
+    retry_at: Instant,
 }
 
 impl Output {
-    fn show(&mut self, feedback: Feedback) {
-        if feedback != self.shown
-            && self
-                .format
-                .reports(&feedback)
-                .iter()
-                .all(|report| self.writer.write(report).is_ok())
-        {
-            self.shown = feedback;
+    fn new(writer: Box<dyn LinkWriter>) -> Self {
+        Self {
+            format: writer.format(),
+            writer,
+            wanted: Feedback::OFF,
+            shown: Some(Feedback::OFF),
+            retry_at: Instant::now(),
         }
+    }
+
+    fn show(&mut self, feedback: Feedback) {
+        let feedback = self.with_unwritten_lights(feedback);
+        let waiting = self.shown.is_none() && feedback == self.wanted;
+        self.wanted = feedback;
+        if !waiting && !self.is_up_to_date() {
+            self.write();
+        }
+    }
+
+    fn retry(&mut self) {
+        if self.shown.is_none() && Instant::now() >= self.retry_at {
+            self.write();
+        }
+    }
+
+    fn stop_motors(&mut self, link_lost: &AtomicBool) {
+        self.wanted = self.with_unwritten_lights(Feedback::OFF);
+        let started = Instant::now();
+        for attempt in 1..=STOP_ATTEMPTS {
+            if self.is_up_to_date() {
+                return;
+            }
+            self.write();
+            let give_up = attempt == STOP_ATTEMPTS
+                || link_lost.load(Ordering::Acquire)
+                || started.elapsed() >= STOP_TIME_LIMIT;
+            if give_up || self.is_up_to_date() {
+                return;
+            }
+            thread::sleep(STOP_RETRY_DELAY);
+        }
+    }
+
+    fn is_up_to_date(&self) -> bool {
+        self.shown == Some(self.wanted)
+    }
+
+    fn with_unwritten_lights(&self, mut feedback: Feedback) -> Feedback {
+        if self.shown.is_none() {
+            feedback.lightbar = feedback.lightbar.or(self.wanted.lightbar);
+            feedback.player_lights = feedback.player_lights.or(self.wanted.player_lights);
+        }
+        feedback
+    }
+
+    fn write(&mut self) {
+        let reports = self.format.reports(&self.wanted);
+        let written = reports.iter().all(|report| {
+            let written = self.writer.write(report).is_ok();
+            if written {
+                self.format.written(report);
+            }
+            written
+        });
+        self.shown = written.then_some(self.wanted);
+        self.retry_at = Instant::now() + WRITE_RETRY_DELAY;
     }
 }
 
@@ -294,17 +465,14 @@ fn run_feedback(
     writer: Box<dyn LinkWriter>,
     mut asked: Feedback,
     preferences: &LivePreferences,
-    stop: &AtomicBool,
+    flags: &Flags,
 ) -> FeedbackParts {
-    let mut output = Output {
-        format: writer.format(),
-        writer,
-        shown: Feedback::OFF,
-    };
+    let stopping = || flags.stop.load(Ordering::Acquire);
+    let mut output = Output::new(writer);
     let started = Instant::now();
     let mut applied = preferences.get();
     output.show(applied.apply(asked, started.elapsed()));
-    while !stop.load(Ordering::Relaxed) {
+    while !stopping() {
         let event = source.next(FEEDBACK_POLL);
         let chosen = preferences.get();
         if chosen != applied {
@@ -323,13 +491,24 @@ fn run_feedback(
                 asked = feedback;
                 output.show(applied.apply(feedback, started.elapsed()));
             }
-            FeedbackEvent::Timeout if applied.lightbar.is_some_and(LightbarChoice::moves) => {
+            FeedbackEvent::Timeout
+                if applied.lightbar.is_some_and(LightbarChoice::moves)
+                    && output.shown.is_some() =>
+            {
                 output.show(applied.apply(asked, started.elapsed()));
             }
             FeedbackEvent::Timeout => {}
-            FeedbackEvent::Closed => break,
+            FeedbackEvent::Closed => {
+                output.show(Feedback::OFF);
+                while !output.is_up_to_date() && !stopping() {
+                    thread::sleep(FEEDBACK_POLL);
+                    output.retry();
+                }
+                break;
+            }
         }
+        output.retry();
     }
-    output.show(Feedback::OFF);
+    output.stop_motors(&flags.link_lost);
     (source, output.writer, asked)
 }

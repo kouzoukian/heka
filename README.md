@@ -82,11 +82,11 @@ battery level and a live drawing of its input, and to choose:
   (DualShock 4). Changing it replaces the Virtual Controller, so a running game may need
   to be restarted.
 - **Stop** and **Start**, the button at the top right. A Stopped Controller is not
-  Bridged, and games see it as it is.
+  Bridged, and games see it as it is. heka still shows its input and battery.
 - Its [settings](#controller-settings), behind the button beside it.
 
 heka remembers all of these for each Controller. Up to 4 can be Bridged at once; a fifth
-is listed but not Bridged.
+is listed, with its input and battery, but not Bridged.
 
 |                                             | Xbox | PS4 |
 | ------------------------------------------- | ---- | --- |
@@ -147,10 +147,11 @@ game or app that needs the Controller itself.
   heka before the game. If you see double input, restart the game, or unplug the
   Controller and plug it back in within 30 seconds.
 - **Close the HidHide Configuration Client.** While it (or HidHideCLI) is open, heka
-  cannot change HidHide and shows that HidHide is busy. heka keeps trying.
+  cannot change HidHide and shows that HidHide is busy. heka keeps trying, both to Hide
+  and to restore.
 - **Applications on HidHide's allowed list still see Hidden Controllers.**
 - Leave HidHide's inverse application cloak off. With it on, a Controller is hidden only
-  from the applications in the list.
+  from the applications in the list, and heka warns you.
 - While hiding is on, everything else in HidHide's hidden devices is hidden too.
 - Do not add the same Controller to HidHide by hand while heka is Bridging it: heka cannot
   tell that entry from its own and removes it afterwards.
@@ -179,10 +180,10 @@ own rumble and light bar colours, and may create their own virtual controllers.
 
 ## Troubleshooting
 
-- **A connected Controller is not listed.** Quit other controller tools, which may hold it
-  exclusively. In the HidHide Configuration Client, check whether the Controller is already
-  hidden: if so, untick it, or add `heka.exe` to the allowed applications. Close the
-  client again.
+- **A connected Controller is not listed.** If heka says it was found but cannot be
+  opened, quit other controller tools, which may hold it exclusively. In the HidHide
+  Configuration Client, check whether the Controller is already hidden: if so, untick it,
+  or add `heka.exe` to the allowed applications. Close the client again.
 - **The game sees two controllers.** See [Hiding Controllers](#hiding-controllers).
 - **The game sees none.** Check that the Controller's state says **Bridged**, and try the
   other Output Type.

@@ -6,8 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::feedback::{Feedback, Lightbar, PlayerLights, Rumble};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(from = "u64")]
 pub struct RumbleStrength(u8);
+
+impl From<u64> for RumbleStrength {
+    fn from(percent: u64) -> Self {
+        Self::percent(u8::try_from(percent).unwrap_or(u8::MAX))
+    }
+}
 
 impl RumbleStrength {
     pub const OFF: Self = Self(0);
@@ -18,7 +24,7 @@ impl RumbleStrength {
     }
 
     pub fn scale(self, rumble: Rumble) -> Rumble {
-        let percent = u16::from(self.0.min(Self::FULL.0));
+        let percent = u16::from(self.0);
         let scaled = |motor: u8| ((u16::from(motor) * percent + 50) / 100) as u8;
         Rumble {
             large: scaled(rumble.large),
@@ -70,7 +76,24 @@ pub struct Preferences {
     pub hide: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PreferenceChange {
+    Rumble(RumbleStrength),
+    Lightbar(Option<LightbarChoice>),
+    PlayerLights(Option<PlayerLights>),
+    Hide(bool),
+}
+
 impl Preferences {
+    pub fn change(&mut self, change: PreferenceChange) {
+        match change {
+            PreferenceChange::Rumble(rumble) => self.rumble = rumble,
+            PreferenceChange::Lightbar(lightbar) => self.lightbar = lightbar,
+            PreferenceChange::PlayerLights(lights) => self.player_lights = lights,
+            PreferenceChange::Hide(hide) => self.hide = hide,
+        }
+    }
+
     pub fn apply(&self, asked: Feedback, elapsed: Duration) -> Feedback {
         let lightbar = match asked.lightbar {
             Some(colour) if colour != Lightbar::DARK => Some(colour),

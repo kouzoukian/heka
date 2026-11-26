@@ -16,7 +16,18 @@ impl Backend for WindowBackend {
             Status::HidError(error) => Some(Notice::error(text::hid_error(error))),
             Status::Starting | Status::Running => None,
         };
-        let hiding = snapshot.hiding_note.map(Notice::warning);
+        let unopened = snapshot
+            .unopened
+            .iter()
+            .map(|unopened| Notice::warning(text::cannot_open(unopened)));
+        let hiding = snapshot
+            .hiding
+            .iter()
+            .map(|warning| Notice::warning(text::hiding_warning(warning)));
+        let not_unplugged = snapshot
+            .not_unplugged
+            .iter()
+            .map(|error| Notice::warning(text::not_unplugged(error)));
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
@@ -27,7 +38,12 @@ impl Backend for WindowBackend {
         Screen {
             starting: snapshot.status == Status::Starting,
             missing,
-            notices: status.into_iter().chain(hiding).collect(),
+            notices: status
+                .into_iter()
+                .chain(unopened)
+                .chain(hiding)
+                .chain(not_unplugged)
+                .collect(),
             controllers: snapshot
                 .controllers
                 .iter()
@@ -43,7 +59,7 @@ impl Backend for WindowBackend {
             Command::Start(mac) => bridging.start_controller(mac),
             Command::SetOutputType(mac, output_type) => bridging.set_output_type(mac, output_type),
             Command::SetNickname(mac, name) => bridging.set_nickname(mac, name),
-            Command::SetPreferences(mac, preferences) => bridging.set_preferences(mac, preferences),
+            Command::ChangePreference(mac, change) => bridging.change_preference(mac, change),
             Command::CheckDrivers => bridging.check_drivers(),
         }
     }

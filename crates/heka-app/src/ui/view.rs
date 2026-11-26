@@ -13,7 +13,7 @@ use gpui_component::{ActiveTheme, Root, TitleBar};
 use gpui_kit_assets::IconName;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
-use heka_core::preferences::LightbarChoice;
+use heka_core::preferences::{LightbarChoice, PreferenceChange};
 use heka_core::settings::MAX_NICKNAME_CHARS;
 
 use crate::ui::detail::{Showing, ToggleSettings};
@@ -162,16 +162,9 @@ impl MainView {
 
     fn choose_colour(&mut self, colour: Lightbar) {
         self.held_colour = colour;
-        let entry = self
-            .screen
-            .controllers
-            .iter()
-            .find(|entry| Some(entry.mac) == self.filled);
-        if let Some(entry) = entry {
-            let mut preferences = entry.preferences;
-            preferences.lightbar = Some(LightbarChoice::Colour(colour));
-            self.backend
-                .command(Command::SetPreferences(entry.mac, preferences));
+        if let Some(mac) = self.filled {
+            let change = PreferenceChange::Lightbar(Some(LightbarChoice::Colour(colour)));
+            self.backend.command(Command::ChangePreference(mac, change));
         }
     }
 

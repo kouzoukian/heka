@@ -144,6 +144,22 @@ fn a_rainbow_lightbar_survives_a_save_and_load() {
 }
 
 #[test]
+fn a_rumble_strength_above_full_loads_as_full() {
+    for percent in [101, 250, 100_000] {
+        let text = format!(
+            r#"{{"controllers": {{"{MAC}": {{"rumble": {percent}, "nickname": "Sofa"}}}}}}"#
+        );
+
+        let settings = Settings::load(Some(&text));
+
+        let controller = settings.controller(MAC);
+        assert_eq!(controller.preferences.rumble, RumbleStrength::FULL);
+        assert_eq!(controller.nickname.as_deref(), Some("Sofa"));
+        assert!(settings.to_json().contains(r#""rumble": 100"#));
+    }
+}
+
+#[test]
 fn a_nickname_is_trimmed_cut_to_length_and_dropped_when_blank() {
     let mut settings = Settings::default();
     let mut named = |name: &str| {

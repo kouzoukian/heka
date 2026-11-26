@@ -9,7 +9,7 @@
 - A Virtual Controller is recognised by its MAC address, and nothing more is asked of it; it is never opened for Feedback.
 - Over Bluetooth these reads also switch a Controller to its full input report (SDL: reading the serial number or firmware version "will also enable enhanced reports over Bluetooth").
 - A device is opened twice so that Feedback is written from another thread than the one reading input (`HidDevice` is not `Sync`). If the second open fails, the Link carries input only.
-- A read waits 100 ms. Output reports go through `WriteFile`, which `hidapi` waits up to a second for. `hidapi` reports an unplugged device as a read error, which is a lost Link (distinguishing passing errors is #18).
+- A read waits 100 ms. Output reports go through `WriteFile`, which `hidapi` waits up to a second for. `hidapi` reports an unplugged device as a read error, which is a lost Link. A passing error looks the same, so a lost Link that is still listed is opened again.
 
 ## ViGEmBus
 

@@ -251,6 +251,23 @@ impl Lifecycle {
         changes
     }
 
+    pub fn release_failed(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let mut changes = Vec::new();
+        let Some(index) = self.index(mac) else {
+            return changes;
+        };
+        if !matches!(self.entries[index].phase, Phase::Held { .. }) {
+            return changes;
+        }
+        self.entries.remove(index);
+        changes.push(Change::Removed {
+            mac,
+            why: Removal::Failed,
+        });
+        self.fill_slots(now, &mut changes);
+        changes
+    }
+
     pub fn tick(&mut self, now: Instant) -> Vec<Change> {
         let mut changes = Vec::new();
         self.entries.retain(|entry| match entry.phase {
