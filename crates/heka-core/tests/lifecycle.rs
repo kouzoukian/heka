@@ -257,3 +257,42 @@ fn quitting_removes_every_virtual_controller() {
     );
     assert_eq!(phases(&lifecycle), []);
 }
+
+#[test]
+fn a_controller_on_two_links_is_listed_once_and_held_only_when_both_are_lost() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    assert_eq!(lifecycle.link_arrived(mac(1), t0), [bridged(1)]);
+    assert_eq!(lifecycle.link_arrived(mac(1), t0), []);
+    assert_eq!(phases(&lifecycle), [(mac(1), Phase::Bridged)]);
+
+    assert_eq!(lifecycle.link_lost(mac(1), t0), []);
+    assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
+    assert_eq!(
+        lifecycle.link_lost(mac(1), t0),
+        [Change::Held { mac: mac(1) }]
+    );
+
+    // Either Link coming back ends the Hold; a second one changes nothing more.
+    assert_eq!(
+        lifecycle.link_arrived(mac(1), t0 + secs(1.0)),
+        [Change::Returned { mac: mac(1) }]
+    );
+    assert_eq!(lifecycle.link_arrived(mac(1), t0 + secs(1.0)), []);
+    assert_eq!(lifecycle.link_lost(mac(1), t0 + secs(2.0)), []);
+    assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
+}
+
+#[test]
+fn a_stopped_controller_on_two_links_stays_listed_until_both_are_lost() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.stop(mac(1), t0);
+
+    assert_eq!(lifecycle.link_lost(mac(1), t0), []);
+    assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Stopped));
+    assert_eq!(lifecycle.link_lost(mac(1), t0), []);
+    assert_eq!(lifecycle.phase(mac(1)), None);
+}
