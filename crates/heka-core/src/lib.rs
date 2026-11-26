@@ -5,3 +5,4 @@
 pub mod dualsense;
 pub mod link;
 pub mod state;
+pub mod xbox;
