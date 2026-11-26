@@ -14,6 +14,7 @@ use gpui_component::button::Button;
 use gpui_component::{ActiveTheme, Root};
 use heka_core::autostart::{self, Autostart};
 use heka_core::lifecycle::Phase;
+use heka_core::link::LinkKind;
 use heka_core::setup::Driver;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
@@ -130,6 +131,11 @@ impl MainView {
             Phase::Waiting if no_bus => setup_screen::text::NOT_BRIDGED.into(),
             phase => phase_text(phase, view.output_type),
         };
+        match view.active_link {
+            Some(LinkKind::Usb) => phase = format!("{phase}, USB").into(),
+            Some(LinkKind::Bluetooth) => phase = format!("{phase}, Bluetooth").into(),
+            None => {}
+        }
         if let Some(error) = &view.error {
             phase = format!("{phase} ({error})").into();
         }

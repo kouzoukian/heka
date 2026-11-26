@@ -1,9 +1,13 @@
 //! Finding Controllers with `hidapi`, reading their input reports and sending Feedback.
 //!
 //! Reading a Link never sends anything: output reports are only sent through a
-//! [`DualSenseUsbWriter`], which the Bridge's Feedback thread owns and uses only
-//! when a game sends Feedback. Opening reads two feature reports: pairing info
-//! for the MAC address and firmware info for the rumble mode.
+//! [`DualSenseWriter`], which the Bridge's Feedback thread owns and uses only
+//! when a game sends Feedback. Opening reads three feature reports: pairing info
+//! for the MAC address, firmware info for the rumble mode and calibration for
+//! motion. Over Bluetooth, reading them is also what switches the DualSense from
+//! its simple input report to the full one (SDL `SDL_hidapi_ps5.c`: reading the
+//! serial number or firmware version "will also enable enhanced reports over
+//! Bluetooth").
 
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -13,7 +17,8 @@ use hidapi::{BusType, DeviceInfo, HidApi, HidDevice, HidError};
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{self, RumbleMode};
 use heka_core::link::{
-    FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportError, ReportFormat,
+    FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportError,
+    ReportFormat,
 };
 use heka_core::mac::MacAddress;
 
@@ -24,27 +29,41 @@ const USAGE_GAMEPAD: u16 = 0x05;
 /// How long one read waits before giving the loop a chance to check for a stop.
 const READ_TIMEOUT_MS: i32 = 100;
 
-/// Every DualSense HID collection reachable over USB, in enumeration order.
-pub fn dualsense_usb_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
+/// Every DualSense gamepad collection on USB or Bluetooth, in enumeration order.
+pub fn dualsense_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
     api.device_list().filter(|info| {
         dualsense::is_dualsense(info.vendor_id(), info.product_id())
-            && matches!(info.bus_type(), BusType::Usb)
+            && link_kind(info.bus_type()).is_some()
             && info.usage_page() == USAGE_PAGE_GENERIC_DESKTOP
             && info.usage() == USAGE_GAMEPAD
     })
 }
 
-/// A USB Link to a DualSense, read on the Bridge's input thread.
-pub struct DualSenseUsbLink {
+/// Every DualSense HID collection reachable over USB, in enumeration order.
+pub fn dualsense_usb_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
+    dualsense_devices(api).filter(|info| matches!(info.bus_type(), BusType::Usb))
+}
+
+fn link_kind(bus: BusType) -> Option<LinkKind> {
+    match bus {
+        BusType::Usb => Some(LinkKind::Usb),
+        BusType::Bluetooth => Some(LinkKind::Bluetooth),
+        _ => None,
+    }
+}
+
+/// A USB or Bluetooth Link to a DualSense, read on the Bridge's input thread.
+pub struct DualSenseLink {
     device: HidDevice,
     path: CString,
+    kind: LinkKind,
     firmware_info: Option<Vec<u8>>,
     calibration: Calibration,
     rumble_mode: RumbleMode,
-    writer: Option<DualSenseUsbWriter>,
+    writer: Option<DualSenseWriter>,
 }
 
-impl DualSenseUsbLink {
+impl DualSenseLink {
     /// Opens the first DualSense found on USB, if any, and reads its firmware info.
     ///
     /// The device is opened twice, so that Feedback can be written from another
@@ -59,9 +78,10 @@ impl DualSenseUsbLink {
         let calibration = read_calibration(&device);
         let rumble_mode = dualsense::rumble_mode(info.product_id(), firmware_info.as_deref());
         let writer = match info.open_device(api) {
-            Ok(device) => Some(DualSenseUsbWriter {
+            Ok(device) => Some(DualSenseWriter {
                 device,
                 rumble_mode,
+                kind: LinkKind::Usb,
             }),
             Err(error) => {
                 eprintln!("heka: no Feedback for this DualSense: {error}");
@@ -71,6 +91,7 @@ impl DualSenseUsbLink {
         Ok(Some(Self {
             device,
             path: info.path().to_owned(),
+            kind: LinkKind::Usb,
             firmware_info,
             calibration,
             rumble_mode,
@@ -78,23 +99,26 @@ impl DualSenseUsbLink {
         }))
     }
 
-    /// Opens the DualSense at this HID path, reads its MAC address and firmware info.
+    /// Opens the DualSense at this HID path, on USB or Bluetooth, and reads its
+    /// MAC address, firmware info and calibration.
     ///
     /// Like [`Self::open_first`], the device is opened a second time for Feedback.
     pub fn open_path(api: &HidApi, path: &CStr) -> Result<(Self, MacAddress), OpenError> {
-        let product_id = api
-            .device_list()
-            .find(|info| info.path() == path)
-            .map_or(dualsense::PRODUCT_ID_DUALSENSE, DeviceInfo::product_id);
+        let info = api.device_list().find(|info| info.path() == path);
+        let product_id = info.map_or(dualsense::PRODUCT_ID_DUALSENSE, DeviceInfo::product_id);
+        let kind = info
+            .and_then(|info| link_kind(info.bus_type()))
+            .unwrap_or(LinkKind::Usb);
         let device = api.open_path(path).map_err(OpenError::Hid)?;
         let mac = read_mac(&device)?;
         let firmware_info = read_firmware_info(&device);
         let calibration = read_calibration(&device);
         let rumble_mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
         let writer = match api.open_path(path) {
-            Ok(device) => Some(DualSenseUsbWriter {
+            Ok(device) => Some(DualSenseWriter {
                 device,
                 rumble_mode,
+                kind,
             }),
             Err(error) => {
                 eprintln!("heka: no Feedback for this DualSense: {error}");
@@ -104,6 +128,7 @@ impl DualSenseUsbLink {
         let link = Self {
             device,
             path: path.to_owned(),
+            kind,
             firmware_info,
             calibration,
             rumble_mode,
@@ -115,6 +140,11 @@ impl DualSenseUsbLink {
     /// The `hidapi` path of this Link, for [`crate::hidhide::device_instance_path`].
     pub fn hid_path(&self) -> &CStr {
         &self.path
+    }
+
+    /// Whether this Link is USB or Bluetooth.
+    pub fn kind(&self) -> LinkKind {
+        self.kind
     }
 
     /// The firmware info feature report as read on open, report ID included.
@@ -177,6 +207,13 @@ pub fn dualsense_usb_paths(api: &HidApi) -> Vec<CString> {
         .collect()
 }
 
+/// HID paths of every DualSense gamepad collection on USB or Bluetooth.
+pub fn dualsense_paths(api: &HidApi) -> Vec<CString> {
+    dualsense_devices(api)
+        .map(|info| info.path().to_owned())
+        .collect()
+}
+
 /// Why a DualSense could not be opened.
 #[derive(Debug)]
 pub enum OpenError {
@@ -196,9 +233,12 @@ impl fmt::Display for OpenError {
 
 impl std::error::Error for OpenError {}
 
-impl LinkReader for DualSenseUsbLink {
+impl LinkReader for DualSenseLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb(self.calibration)
+        match self.kind {
+            LinkKind::Usb => ReportFormat::DualSenseUsb(self.calibration),
+            LinkKind::Bluetooth => ReportFormat::DualSenseBluetooth(self.calibration),
+        }
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -217,19 +257,24 @@ impl LinkReader for DualSenseUsbLink {
     }
 }
 
-/// Sends output reports to a DualSense over USB, on the Bridge's Feedback thread.
-pub struct DualSenseUsbWriter {
+/// Sends output reports to a DualSense over USB or Bluetooth, on the Bridge's
+/// Feedback thread.
+pub struct DualSenseWriter {
     device: HidDevice,
     rumble_mode: RumbleMode,
+    kind: LinkKind,
 }
 
-impl LinkWriter for DualSenseUsbWriter {
+impl LinkWriter for DualSenseWriter {
     fn format(&self) -> FeedbackFormat {
-        FeedbackFormat::DualSenseUsb(self.rumble_mode)
+        match self.kind {
+            LinkKind::Usb => FeedbackFormat::DualSenseUsb(self.rumble_mode),
+            LinkKind::Bluetooth => FeedbackFormat::dualsense_bluetooth(self.rumble_mode),
+        }
     }
 
     fn write(&mut self, report: &[u8]) -> Result<(), LinkWriteError> {
-        // An interrupt OUT transfer (WriteFile), which hidapi waits up to 1 s for.
+        // An output report through WriteFile, which hidapi waits up to 1 s for.
         self.device
             .write(report)
             .map(|_| ())
