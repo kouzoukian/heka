@@ -8,9 +8,6 @@ permissions:
   contents: read
 
 env:
-  # The toolchain pinned by the Zed revision that gpui-pre 0.3.14 snapshots
-  # (zed-industries/zed@f126950, rust-toolchain.toml).
-  RUSTUP_TOOLCHAIN: "1.98.1"
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
@@ -19,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
-        run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal --component clippy
+        # With no arguments, installs what rust-toolchain.toml asks for.
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --locked
