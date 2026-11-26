@@ -2824,11 +2824,13 @@ name = "heka-app"
 version = "0.1.0"
 dependencies = [
  "gpui-component",
+ "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
  "heka-core",
  "heka-windows",
  "hidapi",
+ "serde_json",
  "tray-icon",
  "windows-sys 0.61.2",
 ]
