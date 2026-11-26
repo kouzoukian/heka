@@ -16,3 +16,7 @@ gpui = { package = "gpui-pre", version = "=0.3.14" }
 gpui-component = "=0.11.0"
 # Provides `application()`. It is not part of gpui-pre's own dependency tree.
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.14" }
+hidapi = "=2.6.7"
+vigem-rust = "=0.2.1"
+heka-core = { path = "crates/heka-core" }
+heka-windows = { path = "crates/heka-windows" }
