@@ -1,0 +1,36 @@
+name: Release
+
+# Pushing a tag such as v1.2.3 publishes the GitHub Release for that version.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        # With no arguments, installs what rust-toolchain.toml asks for.
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Package
+        # Fails unless the tag names the version in Cargo.toml.
+        run: cargo run -p heka-package --locked -- --tag "$env:GITHUB_REF_NAME"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A tag with a hyphen, such as v1.2.3-rc.1, is a pre-release.
+        run: |
+          $zip = "target/dist/heka-$env:GITHUB_REF_NAME-windows-x64.zip"
+          $flags = @("--verify-tag", "--generate-notes", "--title", "heka $env:GITHUB_REF_NAME")
+          if ($env:GITHUB_REF_NAME.Contains("-")) { $flags += "--prerelease" }
+          gh release create $env:GITHUB_REF_NAME $zip @flags
