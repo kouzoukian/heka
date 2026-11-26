@@ -2534,6 +2534,9 @@ dependencies = [
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
+ "heka-core",
+ "heka-windows",
+ "hidapi",
 ]
 
 [[package]]
@@ -2543,6 +2546,11 @@ version = "0.1.0"
 [[package]]
 name = "heka-windows"
 version = "0.1.0"
+dependencies = [
+ "heka-core",
+ "hidapi",
+ "vigem-rust",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -2555,6 +2563,19 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hidapi"
+version = "2.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "818c0e1d27887aaf76fe737042e27a66b796a7b099e6d2e1a72d106c2dff3fa6"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "pkg-config",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "hkdf"
@@ -6538,6 +6559,17 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vigem-rust"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17311408b6e4d7cae644d10cc299c5cf37bc0280ea1ded7a49435379a92cc0ce"
+dependencies = [
+ "bitflags 2.13.2",
+ "thiserror 2.0.21",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "vswhom"

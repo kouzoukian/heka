@@ -1,0 +1,66 @@
+//! Records raw DualSense USB input reports, read-only, as fixture lines.
+//!
+//! ```text
+//! cargo run -p heka-windows --example capture_dualsense -- [COUNT] > reports.hex
+//! ```
+//!
+//! Prints every DualSense HID collection it finds on stderr, then COUNT reports
+//! (default 50) as hex lines on stdout, in the format `heka-core`'s fixtures use.
+//! Hold the inputs you want recorded while it runs. Nothing is sent to the
+//! Controller: it opens the device and reads, nothing else.
+
+use std::io::Write;
+use std::time::{Duration, Instant};
+
+use heka_core::link::{LinkRead, LinkReader};
+use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_devices};
+use hidapi::HidApi;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let count: usize = match std::env::args().nth(1) {
+        Some(arg) => arg.parse()?,
+        None => 50,
+    };
+
+    let api = HidApi::new()?;
+    for info in api
+        .device_list()
+        .filter(|info| heka_core::dualsense::is_dualsense(info.vendor_id(), info.product_id()))
+    {
+        eprintln!(
+            "found {:04x}:{:04x} bus={:?} interface={} usage_page={:#06x} usage={:#06x}",
+            info.vendor_id(),
+            info.product_id(),
+            info.bus_type(),
+            info.interface_number(),
+            info.usage_page(),
+            info.usage(),
+        );
+    }
+    eprintln!(
+        "{} usable DualSense USB gamepad collection(s)",
+        dualsense_usb_devices(&api).count()
+    );
+
+    let Some(mut link) = DualSenseUsbLink::open_first(&api)? else {
+        return Err("no DualSense on USB".into());
+    };
+
+    let mut out = std::io::stdout().lock();
+    let mut buf = [0u8; 128];
+    let mut captured = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while captured < count && Instant::now() < deadline {
+        match link.read(&mut buf) {
+            LinkRead::Report(len) => {
+                let hex: Vec<String> = buf[..len].iter().map(|b| format!("{b:02x}")).collect();
+                writeln!(out, "{}", hex.join(" "))?;
+                captured += 1;
+            }
+            LinkRead::Timeout => {}
+            LinkRead::Lost => return Err("the DualSense was unplugged".into()),
+        }
+    }
+    eprintln!("captured {captured} report(s)");
+    Ok(())
+}

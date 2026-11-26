@@ -16,3 +16,6 @@ path = "src/main.rs"
 gpui.workspace = true
 gpui-component.workspace = true
 gpui_platform.workspace = true
+heka-core.workspace = true
+heka-windows.workspace = true
+hidapi.workspace = true

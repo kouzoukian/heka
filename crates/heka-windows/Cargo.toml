@@ -7,3 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+heka-core.workspace = true
+hidapi.workspace = true
+vigem-rust.workspace = true
