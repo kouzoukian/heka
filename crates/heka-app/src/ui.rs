@@ -1,3 +1,4 @@
+pub mod about;
 pub mod assets;
 pub mod banners;
 pub mod detail;

@@ -12,6 +12,7 @@ use heka_core::virtual_controller::OutputType;
 
 use crate::log::Recent;
 use crate::text;
+use crate::ui::about::about;
 use crate::ui::assets::{battery_icon, link_icon};
 use crate::ui::banners::{clamped, notice_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
@@ -26,6 +27,7 @@ pub enum Showing<'a> {
     Live,
     Settings(Fields<'a>),
     Log(&'a Recent),
+    About,
 }
 
 pub type ToggleSettings = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -56,6 +58,11 @@ pub fn pane(
             log::buttons(recent, send),
             theme,
         ),
+        Showing::About => tab_strip(
+            Some(page_tab(IconName::Info, text::ABOUT, theme)),
+            [],
+            theme,
+        ),
     };
     let scrolling = || {
         div()
@@ -69,6 +76,7 @@ pub fn pane(
     let controller = |body: Stateful<Div>| body.children(setup_banners(&screen.missing, send, cx));
     let body = match (entry, showing) {
         (_, Showing::Log(recent)) => log::entries(recent, cx).into_any_element(),
+        (_, Showing::About) => scrolling().child(about(cx)).into_any_element(),
         (Some(entry), Showing::Live) => controller(scrolling())
             .child(properties(entry, send, cx))
             .children(entry.detail().map(|detail| note(entry, detail, cx)))

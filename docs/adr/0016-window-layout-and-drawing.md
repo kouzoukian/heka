@@ -11,8 +11,9 @@ Builds on the look chosen in [ADR 0002](0002-zed-look-through-gpui-component.md)
 - The Active Link, battery and Output Type share a row without labels; icons, words and tooltips name them. Setting rows explain themselves in a tooltip on the label.
 - Ids are per Controller, so each keeps its own hover and tooltip.
 - Buttons take icons as children, because `.icon` and `.label` would impose the button's own sizes.
-- Status-bar error and warning counts are one item, so they are spaced like the rest of the window. The button for the log is at its right end, where Zed puts the buttons that open panels. The title bar is flat, as in Zed, instead of `gpui-component`'s gradient.
+- Status-bar error and warning counts are one item, so they are spaced like the rest of the window. The buttons for the log and About are at its right end, where Zed puts the buttons that open panels. The title bar is flat, as in Zed, instead of `gpui-component`'s gradient.
 - A log entry is one row: its time, then its message cut at two lines, with a tooltip holding the whole line. Equal rows let the list build only those in view.
+- About's heading is three rows high and the rest of it one row each.
 - The window's minimum size leaves room for the panel beside the drawing and the drawing below the properties.
 
 ## Colour picker

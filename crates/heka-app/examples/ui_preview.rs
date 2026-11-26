@@ -271,6 +271,7 @@ fn main() {
             }
             "--settings" => page = Page::Settings,
             "--log" => page = Page::Log,
+            "--about" => page = Page::About,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
             other => panic!("unknown argument {other}"),
         }

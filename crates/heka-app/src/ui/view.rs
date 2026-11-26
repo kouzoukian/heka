@@ -40,6 +40,7 @@ pub enum Page {
     Controller,
     Settings,
     Log,
+    About,
 }
 
 impl Page {
@@ -50,7 +51,7 @@ impl Page {
     pub fn of_a_controller(self) -> Self {
         match self {
             Self::Controller | Self::Settings => self,
-            Self::Log => Self::Controller,
+            Self::Log | Self::About => Self::Controller,
         }
     }
 }
@@ -241,6 +242,7 @@ impl MainView {
                 colour: &self.colour,
             }),
             Page::Log => Showing::Log(&self.screen.log),
+            Page::About => Showing::About,
         };
         let entry = self.selection.shown(&self.screen.controllers);
         let selected = entry
@@ -275,6 +277,7 @@ impl MainView {
 
     fn status_bar(&self, cx: &mut Context<Self>) -> StatusBar {
         let log = self.page_button(Page::Log, IconName::ScrollText, text::LOG, cx);
+        let about = self.page_button(Page::About, IconName::Info, text::ABOUT, cx);
         let screen = &self.screen;
         let theme = cx.theme();
         let count = |name: IconName, count: usize, color: Hsla| {
@@ -301,7 +304,7 @@ impl MainView {
             .text_size(SMALL_TEXT)
             .left(counts)
             .right(screen.summary())
-            .right(log)
+            .right(div().flex().gap(GAP).child(log).child(about))
     }
 }
 

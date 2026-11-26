@@ -383,6 +383,23 @@ pub const COPY_LOG: &str = "Copy log";
 pub const OPEN_LOG_FOLDER: &str = "Open log folder";
 pub const NOTHING_LOGGED: &str = "Nothing logged yet";
 
+pub const ABOUT: &str = "About heka";
+pub const TAGLINE: &str = "Lets games treat a PlayStation controller as an Xbox or PS4 controller.";
+pub const ROW_VERSION: &str = "Version";
+pub const ROW_LICENSE: &str = "License";
+pub const LICENSE_MIT: &str = "MIT";
+pub const LICENSE_OR: &str = "or";
+pub const LICENSE_APACHE: &str = "Apache-2.0";
+pub const ROW_THEME: &str = "Theme";
+pub const THEME_CREDIT: &str = "Min Dark, MIT";
+pub const ROW_FONT: &str = "Font";
+pub const FONT_CREDIT: &str = "Google Sans Code, OFL 1.1";
+pub const ROW_NOTICES: &str = "Notices";
+pub const NOTICES_FILE: &str = "THIRD-PARTY-NOTICES.txt";
+pub const NOTICES_TIP: &str =
+    "The licenses of everything built into heka.exe, in the file beside it.";
+pub const ROW_SOURCE: &str = "Source";
+
 pub mod log {
     use std::path::Path;
 

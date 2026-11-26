@@ -126,12 +126,14 @@ stays, with everything released, and carries on when the Controller returns.
 
 Rumble and lights apply while the Controller is Bridged.
 
-### Log view
+### Log and About
 
-The button at the right of the status bar opens the log; press it again, or select a
-Controller, to go back. It lists what heka did in this run, newest first. **Copy log**
-puts it on the clipboard and **Open log folder** shows the log files. See
-[The log](#the-log).
+The two buttons at the right of the status bar open them; press the same button again, or
+select a Controller, to go back.
+
+- **Log** lists what heka did in this run, newest first. **Copy log** puts it on the
+  clipboard and **Open log folder** shows the log files. See [The log](#the-log).
+- **About heka** shows the version, the licenses and a link to this repository.
 
 ### Tray
 

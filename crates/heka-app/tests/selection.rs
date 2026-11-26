@@ -89,11 +89,12 @@ fn after_every_controller_left_the_first_to_return_is_selected() {
 fn a_status_bar_button_opens_its_page_and_closes_it_again() {
     assert_eq!(Page::Controller.toggled(Page::Log), Page::Log);
     assert_eq!(Page::Log.toggled(Page::Log), Page::Controller);
-    assert_eq!(Page::Settings.toggled(Page::Log), Page::Log);
+    assert_eq!(Page::Log.toggled(Page::About), Page::About);
 }
 
 #[test]
-fn choosing_a_controller_leaves_the_log_and_keeps_its_settings() {
+fn choosing_a_controller_leaves_the_log_and_about_pages_and_keeps_its_settings() {
     assert_eq!(Page::Log.of_a_controller(), Page::Controller);
+    assert_eq!(Page::About.of_a_controller(), Page::Controller);
     assert_eq!(Page::Settings.of_a_controller(), Page::Settings);
 }
