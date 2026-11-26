@@ -31,6 +31,10 @@ _Avoid_: transcription, mapping, session
 Rumble and lightbar colour that a game sends to a Virtual Controller and that reaches the Controller.
 _Avoid_: output, notification
 
+**Preferences**:
+What the player chose for one Controller: how strongly it rumbles, the lightbar colour while no game sets one, its player lights and whether it is Hidden. They shape the Feedback on its way to the Controller.
+_Avoid_: profile, configuration
+
 **Held**:
 A Bridge whose Controller has lost every Link. The Virtual Controller stays, with everything released, for a limited time.
 _Avoid_: grace period, suspended

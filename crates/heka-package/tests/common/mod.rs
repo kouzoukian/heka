@@ -1,0 +1,24 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// An empty directory that is removed again.
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("heka-package-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}

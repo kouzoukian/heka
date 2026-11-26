@@ -1,0 +1,353 @@
+//! What the window says about a Controller, from the Supervisor's view of the Controller.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use heka_app::text;
+use heka_app::ui::model::{Command, ControllerEntry, EntryState, Notice, Screen};
+use heka_core::bridge::LiveInput;
+use heka_core::calibration::Calibration;
+use heka_core::lifecycle::Phase;
+use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
+use heka_core::mac::MacAddress;
+use heka_core::preferences::{Preferences, RumbleStrength};
+use heka_core::settings::Settings;
+use heka_core::setup::{Driver, Missing};
+use heka_core::state::{Battery, Buttons, Charge};
+use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::virtual_controller::OutputType;
+
+const MAC: MacAddress = MacAddress([0x02, 0, 0, 0, 0, 1]);
+
+fn view(phase: Phase) -> ControllerView {
+    ControllerView {
+        mac: MAC,
+        model: ControllerModel::DualSense,
+        phase,
+        output_type: OutputType::Xbox,
+        nickname: None,
+        preferences: Preferences::default(),
+        active_link: Some(LinkKind::Usb),
+        live: Arc::new(LiveInput::default()),
+        error: None,
+    }
+}
+
+/// The entry while ViGEmBus is there.
+fn entry_of(view: &ControllerView, now: Instant) -> ControllerEntry {
+    ControllerEntry::from_view(view, now, false)
+}
+
+/// A DualSense at rest but for Cross held down, charging at 85%.
+struct CrossPressed;
+
+impl LinkReader for CrossPressed {
+    fn format(&self) -> ReportFormat {
+        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> LinkRead {
+        std::thread::sleep(Duration::from_millis(1));
+        // Report ID 1, sticks centred, d-pad released (8) and Cross (bit 5), at
+        // the offsets heka-core takes from `hid-playstation.c`.
+        let mut report = [0u8; 64];
+        report[0] = 0x01;
+        report[1..5].fill(0x80);
+        report[8] = 0x28;
+        // status[0]: charging (high nibble 1), capacity step 8.
+        report[53] = 0x18;
+        buf[..report.len()].copy_from_slice(&report);
+        LinkRead::Report(report.len())
+    }
+}
+
+#[test]
+fn each_phase_has_its_entry_state() {
+    let now = Instant::now();
+    let state = |phase| entry_of(&view(phase), now).state;
+
+    assert_eq!(state(Phase::Bridged), EntryState::Bridged);
+    assert_eq!(state(Phase::Stopped), EntryState::Stopped);
+    assert_eq!(state(Phase::Waiting), EntryState::NotBridged);
+}
+
+#[test]
+fn a_held_entry_counts_down_in_whole_seconds_rounded_up() {
+    let now = Instant::now();
+    let held = view(Phase::Held {
+        until: now + Duration::from_secs(30),
+    });
+    let state = |after_ms| entry_of(&held, now + Duration::from_millis(after_ms)).state;
+
+    assert_eq!(state(0), EntryState::Held { seconds_left: 30 });
+    assert_eq!(state(1), EntryState::Held { seconds_left: 30 });
+    assert_eq!(state(1_000), EntryState::Held { seconds_left: 29 });
+    assert_eq!(state(29_999), EntryState::Held { seconds_left: 1 });
+    // Past its time but not yet removed.
+    assert_eq!(state(31_000), EntryState::Held { seconds_left: 0 });
+}
+
+#[test]
+fn an_entry_names_its_controller_and_says_why_a_bridge_failed() {
+    let mut failed = view(Phase::Waiting);
+    failed.error = Some("no free slot".into());
+
+    let entry = entry_of(&failed, Instant::now());
+
+    assert_eq!(entry.mac, MAC);
+    // The end of the MAC address tells two Controllers of one kind apart.
+    assert_eq!(entry.short_mac(), "00:01");
+    assert_eq!(entry.name, "DualSense");
+    assert_eq!(
+        entry.detail().as_deref(),
+        Some("Could not Bridge: no free slot")
+    );
+}
+
+#[test]
+fn only_a_dualshock_4_entry_says_that_its_support_is_experimental() {
+    let mut dualshock4 = view(Phase::Bridged);
+    dualshock4.model = ControllerModel::DualShock4;
+
+    let entry = entry_of(&dualshock4, Instant::now());
+
+    assert_eq!(entry.name, "DualShock 4");
+    assert!(entry.experimental);
+    assert!(!entry_of(&view(Phase::Bridged), Instant::now()).experimental);
+}
+
+#[test]
+fn an_entry_explains_why_a_controller_is_not_bridged_and_what_a_hold_waits_for() {
+    let now = Instant::now();
+    let detail = |phase| entry_of(&view(phase), now).detail();
+
+    assert_eq!(
+        detail(Phase::Waiting).as_deref(),
+        Some("4 Controllers are already Bridged.")
+    );
+    assert_eq!(
+        detail(Phase::Held { until: now }).as_deref(),
+        Some("Reconnect the Controller to keep its Virtual Controller.")
+    );
+    assert_eq!(detail(Phase::Bridged), None);
+    assert_eq!(detail(Phase::Stopped), None);
+}
+
+#[test]
+fn without_vigem_bus_an_entry_says_so_and_still_shows_live_input() {
+    let mut supervisor = Supervisor::without_bus(Settings::default());
+    supervisor.link_arrived(MAC, Box::new(CrossPressed), Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while supervisor.controllers()[0].live.latest().is_none() {
+        assert!(Instant::now() < deadline, "no input");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let entry = ControllerEntry::from_view(&supervisor.controllers()[0], Instant::now(), true);
+
+    assert_eq!(entry.state, EntryState::NotBridged);
+    assert_eq!(
+        entry.detail().as_deref(),
+        Some("Not Bridged: ViGEmBus is missing")
+    );
+    assert!(entry.pad.is_some_and(|pad| pad.pressed(Buttons::CROSS)));
+}
+
+#[test]
+fn without_vigem_bus_an_entry_also_says_why_input_cannot_be_read() {
+    let mut waiting = view(Phase::Waiting);
+    waiting.error = Some("no thread".into());
+
+    let entry = ControllerEntry::from_view(&waiting, Instant::now(), true);
+
+    assert_eq!(
+        entry.detail().as_deref(),
+        Some("Not Bridged: ViGEmBus is missing (no thread)")
+    );
+}
+
+#[test]
+fn an_entry_shows_the_active_link_the_supervisor_reads() {
+    let now = Instant::now();
+    let link = |active_link| {
+        let mut shown = view(Phase::Bridged);
+        shown.active_link = active_link;
+        entry_of(&shown, now).active_link
+    };
+
+    assert_eq!(link(Some(LinkKind::Bluetooth)), Some(LinkKind::Bluetooth));
+    assert_eq!(link(Some(LinkKind::Usb)), Some(LinkKind::Usb));
+    // A Held Controller has none.
+    assert_eq!(link(None), None);
+}
+
+#[test]
+fn an_entry_shows_the_battery_the_controller_reports_and_none_without_input() {
+    let mut supervisor = Supervisor::without_bus(Settings::default());
+    supervisor.link_arrived(MAC, Box::new(CrossPressed), Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while supervisor.controllers()[0].live.latest().is_none() {
+        assert!(Instant::now() < deadline, "no input");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let entry = entry_of(&supervisor.controllers()[0], Instant::now());
+
+    assert_eq!(
+        entry.battery,
+        Some(Battery {
+            percent: 85,
+            charge: Charge::Charging
+        })
+    );
+    assert_eq!(
+        entry_of(&view(Phase::Stopped), Instant::now()).battery,
+        None
+    );
+}
+
+#[test]
+fn a_battery_is_worded_without_a_level_the_controller_does_not_give() {
+    let words = |percent, charge| text::battery(Some(Battery { percent, charge }));
+
+    assert_eq!(words(75, Charge::Discharging), "75%");
+    assert_eq!(words(85, Charge::Charging), "85%, charging");
+    assert_eq!(words(100, Charge::Full), "100%, full");
+    // Both come with a level of 0 that means nothing.
+    assert_eq!(words(0, Charge::NotCharging), "Battery not charging");
+    assert_eq!(words(0, Charge::Unknown), "Battery unknown");
+    assert_eq!(text::battery(None), "Battery unknown");
+    // A tooltip names what the words alone may not.
+    let level = Some(Battery {
+        percent: 75,
+        charge: Charge::Discharging,
+    });
+    assert_eq!(text::battery_in_full(level), "Battery 75%");
+    assert_eq!(text::battery_in_full(None), "Battery unknown");
+}
+
+#[test]
+fn the_output_switch_shows_the_controllers_output_type_and_asks_for_the_chosen_one() {
+    let mut ps4 = view(Phase::Bridged);
+    ps4.output_type = OutputType::Ps4;
+
+    let entry = entry_of(&ps4, Instant::now());
+
+    assert_eq!(entry.output_type, OutputType::Ps4);
+    assert_eq!(
+        entry.choose(OutputType::Xbox),
+        Some(Command::SetOutputType(MAC, OutputType::Xbox))
+    );
+    // Choosing what is already chosen asks for nothing.
+    assert_eq!(entry.choose(OutputType::Ps4), None);
+}
+
+#[test]
+fn the_entry_button_starts_a_stopped_controller_and_stops_any_other() {
+    let now = Instant::now();
+    let command = |phase| entry_of(&view(phase), now).toggle();
+
+    assert_eq!(command(Phase::Stopped), Command::Start(MAC));
+    assert_eq!(command(Phase::Bridged), Command::Stop(MAC));
+    assert_eq!(command(Phase::Waiting), Command::Stop(MAC));
+    assert_eq!(command(Phase::Held { until: now }), Command::Stop(MAC));
+}
+
+#[test]
+fn a_screen_changes_only_when_something_shown_changes() {
+    let now = Instant::now();
+    let held = view(Phase::Held {
+        until: now + Duration::from_secs(30),
+    });
+    let screen = |after_ms| Screen {
+        starting: false,
+        missing: Vec::new(),
+        notices: vec![Notice::warning("warning")],
+        controllers: vec![entry_of(&held, now + Duration::from_millis(after_ms))],
+    };
+
+    // The window redraws only when two samples differ.
+    assert_eq!(screen(1), screen(900));
+    assert_ne!(screen(900), screen(1_100));
+}
+
+#[test]
+fn the_status_bar_counts_errors_and_warnings_missing_drivers_among_them() {
+    let screen = Screen {
+        starting: false,
+        missing: vec![Missing {
+            driver: Driver::HidHide,
+            error: None,
+        }],
+        notices: vec![
+            Notice::warning("one"),
+            Notice::error("two"),
+            Notice::warning("three"),
+        ],
+        controllers: Vec::new(),
+    };
+
+    assert_eq!(screen.errors(), 1);
+    assert_eq!(screen.warnings(), 3);
+}
+
+#[test]
+fn the_status_bar_counts_controllers_and_bridges() {
+    let now = Instant::now();
+    let summary = |phases: &[Phase]| {
+        Screen {
+            starting: false,
+            missing: Vec::new(),
+            notices: Vec::new(),
+            controllers: phases
+                .iter()
+                .map(|&phase| entry_of(&view(phase), now))
+                .collect(),
+        }
+        .summary()
+    };
+
+    assert_eq!(summary(&[]), "No Controllers");
+    assert_eq!(summary(&[Phase::Bridged]), "1 Controller, 1 Bridged");
+    assert_eq!(
+        summary(&[Phase::Bridged, Phase::Stopped]),
+        "2 Controllers, 1 Bridged"
+    );
+}
+
+#[test]
+fn an_entry_is_called_by_its_nickname_when_it_has_one() {
+    let now = Instant::now();
+    let mut named = view(Phase::Bridged);
+    assert_eq!(entry_of(&named, now).title(), text::DUALSENSE);
+
+    named.nickname = Some("Sofa".into());
+    assert_eq!(entry_of(&named, now).title(), "Sofa");
+}
+
+#[test]
+fn only_a_dualsense_has_player_lights() {
+    let now = Instant::now();
+    let mut other = view(Phase::Bridged);
+    assert!(entry_of(&other, now).has_player_lights);
+
+    other.model = ControllerModel::DualShock4;
+    assert!(!entry_of(&other, now).has_player_lights);
+}
+
+#[test]
+fn only_a_changed_preference_asks_for_anything() {
+    let entry = entry_of(&view(Phase::Bridged), Instant::now());
+
+    assert_eq!(entry.prefer(|preferences| preferences.hide = true), None);
+    assert_eq!(
+        entry.prefer(|preferences| preferences.rumble = RumbleStrength::OFF),
+        Some(Command::SetPreferences(
+            MAC,
+            Preferences {
+                rumble: RumbleStrength::OFF,
+                ..Preferences::default()
+            }
+        ))
+    );
+}
