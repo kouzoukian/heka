@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::calibration::Calibration;
 use crate::dualsense::{self, RumbleMode};
 use crate::feedback::Feedback;
 use crate::state::ControllerState;
@@ -9,15 +10,18 @@ use crate::state::ControllerState;
 /// Which report layout a Link delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReportFormat {
-    /// DualSense or DualSense Edge over USB, report `0x01`.
-    DualSenseUsb,
+    /// DualSense or DualSense Edge over USB, report `0x01`, with the Controller's
+    /// motion calibration.
+    DualSenseUsb(Calibration),
 }
 
 impl ReportFormat {
     /// Reads one input report of this format, report ID byte included.
     pub fn parse(self, report: &[u8]) -> Result<ControllerState, ReportError> {
         match self {
-            Self::DualSenseUsb => dualsense::parse_usb_input_report(report),
+            Self::DualSenseUsb(calibration) => {
+                dualsense::parse_usb_input_report(report, &calibration)
+            }
         }
     }
 }

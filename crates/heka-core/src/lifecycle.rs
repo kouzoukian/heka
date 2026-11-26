@@ -7,7 +7,8 @@
 //! The changes are also where per-Controller side effects attach. Hiding, for
 //! example, hides a Controller on [`Change::Bridged`] and [`Change::Returned`]
 //! (a returning Controller is a new device to the system), keeps it hidden while
-//! [`Phase::Held`], and restores it on [`Change::Removed`], whatever the reason.
+//! [`Phase::Held`], and restores it on [`Change::Removed`], except when the removal
+//! is [`Removal::OutputTypeChanged`] and a [`Change::Bridged`] follows at once.
 
 use std::time::{Duration, Instant};
 
@@ -47,6 +48,9 @@ pub enum Removal {
     Expired,
     /// The Virtual Controller could not be created or refused an update.
     Failed,
+    /// The player chose another Output Type. A Bridged Controller is Bridged again
+    /// at once, to a Virtual Controller of the new type.
+    OutputTypeChanged,
     /// heka is quitting.
     Quit,
 }
@@ -203,6 +207,42 @@ impl Lifecycle {
         entry.phase = Phase::Waiting;
         self.settings.set_stopped(mac, false);
         self.fill_slots(now, &mut changes);
+        changes
+    }
+
+    /// The player chooses this Controller's Output Type. Remembered in the settings.
+    ///
+    /// A Bridged Controller's Virtual Controller is removed and a new one of this
+    /// type is Bridged in its place. A Held Controller's Virtual Controller is
+    /// removed and the Controller is forgotten until it returns. Otherwise the
+    /// choice takes effect at the next Bridge.
+    pub fn set_output_type(
+        &mut self,
+        mac: MacAddress,
+        output_type: OutputType,
+        now: Instant,
+    ) -> Vec<Change> {
+        let mut changes = Vec::new();
+        let Some(index) = self.index(mac) else {
+            return changes;
+        };
+        if self.settings.controller(mac).output_type == output_type {
+            return changes;
+        }
+        self.settings.set_output_type(mac, output_type);
+        let removed = Change::Removed {
+            mac,
+            why: Removal::OutputTypeChanged,
+        };
+        match self.entries[index].phase {
+            Phase::Bridged => changes.extend([removed, Change::Bridged { mac, output_type }]),
+            Phase::Held { .. } => {
+                self.entries.remove(index);
+                changes.push(removed);
+                self.fill_slots(now, &mut changes);
+            }
+            Phase::Stopped | Phase::Waiting => {}
+        }
         changes
     }
 
