@@ -1,77 +1,97 @@
-//! Keeps one DualSense on USB Bridged to an Xbox Virtual Controller.
+//! Runs the Bridge lifecycle for every DualSense on USB.
 //!
-//! A small supervisor thread connects to ViGEmBus, waits for a DualSense, starts a
-//! Bridge, and starts a new one after the Controller is plugged back in. Ticket #6
-//! replaces this with the multi-Controller lifecycle.
+//! One supervisor thread owns the [`Supervisor`]: it connects to ViGEmBus, finds
+//! Controllers as they come and go, carries out the player's Stop and Start, and
+//! publishes a snapshot for the window. The window never waits on the thread.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::ffi::CString;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use heka_core::bridge::{Bridge, LiveInput};
-use heka_core::virtual_controller::{OutputType, VirtualBus};
-use heka_windows::hid::DualSenseUsbLink;
+use heka_core::lifecycle::Change;
+use heka_core::mac::MacAddress;
+use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
+use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_paths};
 use heka_windows::vigem::VigemBus;
 use hidapi::HidApi;
 
-/// How often the supervisor looks for a Controller or a dead Bridge.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+use crate::settings_file;
 
-/// What the supervisor is doing, for the window to show.
+/// How often the supervisor looks for Controllers, ended Bridges and timers.
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// What the supervisor is doing overall, for the window to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
     /// ViGEmBus could not be opened. Retried every poll.
     NoBus(String),
-    /// HID enumeration or opening the Controller failed. Retried every poll.
+    /// HID enumeration failed. Retried every poll.
     HidError(String),
-    /// ViGEmBus is open, no DualSense is on USB.
-    NoController,
-    Bridged,
+    Running,
+}
+
+/// What the window shows.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub status: Status,
+    pub controllers: Vec<ControllerView>,
+}
+
+enum Command {
+    Stop(MacAddress),
+    Start(MacAddress),
+    Quit,
 }
 
 pub struct Bridging {
-    stop: Arc<AtomicBool>,
+    commands: Sender<Command>,
     thread: Mutex<Option<JoinHandle<()>>>,
-    live: Arc<LiveInput>,
-    status: Arc<Mutex<Status>>,
+    snapshot: Arc<Mutex<Snapshot>>,
 }
 
 impl Bridging {
     pub fn start() -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let live = Arc::new(LiveInput::default());
-        let status = Arc::new(Mutex::new(Status::Starting));
+        let (commands, inbox) = mpsc::channel();
+        let snapshot = Arc::new(Mutex::new(Snapshot {
+            status: Status::Starting,
+            controllers: Vec::new(),
+        }));
         let thread = thread::Builder::new()
             .name("heka-supervisor".into())
             .spawn({
-                let (stop, live, status) = (stop.clone(), live.clone(), status.clone());
-                move || supervise(&stop, &live, &status)
+                let snapshot = Arc::clone(&snapshot);
+                move || supervise(&inbox, &snapshot)
             })
             .expect("failed to start the supervisor thread");
         Self {
-            stop,
+            commands,
             thread: Mutex::new(Some(thread)),
-            live,
-            status,
+            snapshot,
         }
     }
 
-    pub fn live(&self) -> &LiveInput {
-        &self.live
-    }
-
-    pub fn status(&self) -> Status {
-        self.status
+    pub fn snapshot(&self) -> Snapshot {
+        self.snapshot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
-    /// Stops the Bridge and waits until its Virtual Controller is removed.
-    pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+    pub fn stop_controller(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::Stop(mac));
+    }
+
+    pub fn start_controller(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::Start(mac));
+    }
+
+    /// Removes every Virtual Controller and waits until they are gone.
+    pub fn quit(&self) {
+        let _ = self.commands.send(Command::Quit);
         let thread = self
             .thread
             .lock()
@@ -85,79 +105,110 @@ impl Bridging {
 
 impl Drop for Bridging {
     fn drop(&mut self) {
-        self.stop();
+        self.quit();
     }
 }
 
-fn supervise(stop: &AtomicBool, live: &Arc<LiveInput>, status: &Mutex<Status>) {
-    let set_status = |new: Status| *status.lock().unwrap_or_else(PoisonError::into_inner) = new;
+/// Where per-Controller side effects of the lifecycle attach. Hiding (ticket #5)
+/// hides on `Bridged` and `Returned` and restores on `Removed`.
+fn after_changes(changes: &[Change]) {
+    for change in changes {
+        eprintln!("heka: {change:?}");
+    }
+}
+
+fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
+    let publish = |status: Status, controllers: Vec<ControllerView>| {
+        *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = Snapshot {
+            status,
+            controllers,
+        };
+    };
 
     let bus = loop {
         match VigemBus::connect() {
             Ok(bus) => break bus,
-            Err(error) => set_status(Status::NoBus(error.to_string())),
+            Err(error) => publish(Status::NoBus(error.to_string()), Vec::new()),
         }
-        if !sleep_unless_stopped(stop) {
-            return;
+        match inbox.recv_timeout(POLL_INTERVAL) {
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => return,
+            // Nothing is listed yet, so there is nothing to stop or start.
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
         }
     };
 
-    let mut api: Option<HidApi> = None;
-    let mut bridge: Option<Bridge> = None;
-    while !stop.load(Ordering::Relaxed) {
-        if bridge.as_ref().is_none_or(Bridge::is_finished) {
-            if let Some(ended) = bridge.take() {
-                eprintln!("heka: Bridge ended: {:?}", ended.stop());
+    let mut supervisor = Supervisor::new(Box::new(bus), settings_file::load());
+    let mut discovery = Discovery::default();
+    loop {
+        let command = inbox.recv_timeout(POLL_INTERVAL);
+        let now = Instant::now();
+        let changes = match command {
+            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(Command::Stop(mac)) => supervisor.stop(mac, now),
+            Ok(Command::Start(mac)) => supervisor.start(mac, now),
+            Err(RecvTimeoutError::Timeout) => Vec::new(),
+        };
+        if matches!(command, Ok(Command::Stop(_) | Command::Start(_))) {
+            settings_file::save(supervisor.settings());
+        }
+        after_changes(&changes);
+
+        let status = match discovery.scan(&mut supervisor, now) {
+            Ok(()) => Status::Running,
+            Err(error) => Status::HidError(error),
+        };
+        after_changes(&supervisor.poll(now));
+        publish(status, supervisor.controllers());
+    }
+    after_changes(&supervisor.quit());
+    publish(Status::Starting, Vec::new());
+    // Dropping the Supervisor drops the bus last, which removes anything left.
+}
+
+/// Finds DualSense Links by HID path and reports arrivals and departures.
+#[derive(Default)]
+struct Discovery {
+    api: Option<HidApi>,
+    known: HashMap<CString, LinkId>,
+}
+
+impl Discovery {
+    fn scan(&mut self, supervisor: &mut Supervisor, now: Instant) -> Result<(), String> {
+        let api = match &mut self.api {
+            Some(api) => {
+                api.refresh_devices().map_err(|e| e.to_string())?;
+                api
             }
-            match find_and_bridge(&mut api, &bus, live) {
-                Ok(Some(started)) => {
-                    bridge = Some(started);
-                    set_status(Status::Bridged);
+            None => self.api.insert(HidApi::new().map_err(|e| e.to_string())?),
+        };
+        let present = dualsense_usb_paths(api);
+
+        let gone: Vec<CString> = self
+            .known
+            .keys()
+            .filter(|path| !present.contains(path))
+            .cloned()
+            .collect();
+        for path in gone {
+            if let Some(id) = self.known.remove(&path) {
+                after_changes(&supervisor.link_gone(id, now));
+            }
+        }
+
+        for path in present {
+            if self.known.contains_key(&path) {
+                continue;
+            }
+            // Retried next scan on failure, for example while another app holds it.
+            match DualSenseUsbLink::open_path(api, &path) {
+                Ok((link, mac)) => {
+                    let (id, changes) = supervisor.link_arrived(mac, Box::new(link), now);
+                    self.known.insert(path, id);
+                    after_changes(&changes);
                 }
-                Ok(None) => set_status(Status::NoController),
-                Err(error) => set_status(Status::HidError(error)),
+                Err(error) => eprintln!("heka: cannot open a DualSense: {error}"),
             }
         }
-        if !sleep_unless_stopped(stop) {
-            break;
-        }
+        Ok(())
     }
-    if let Some(bridge) = bridge {
-        bridge.stop();
-    }
-    // Dropping the bus last removes anything still plugged in.
-    drop(bus);
-}
-
-fn find_and_bridge(
-    api: &mut Option<HidApi>,
-    bus: &VigemBus,
-    live: &Arc<LiveInput>,
-) -> Result<Option<Bridge>, String> {
-    let api = match api {
-        Some(api) => {
-            api.refresh_devices().map_err(|e| e.to_string())?;
-            api
-        }
-        None => api.insert(HidApi::new().map_err(|e| e.to_string())?),
-    };
-    let Some(link) = DualSenseUsbLink::open_first(api).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    let controller = bus.plug(OutputType::Xbox).map_err(|e| e.to_string())?;
-    let bridge =
-        Bridge::start(Box::new(link), controller, Arc::clone(live)).map_err(|e| e.to_string())?;
-    Ok(Some(bridge))
-}
-
-/// Sleeps one poll interval in short steps. False if a stop was requested.
-fn sleep_unless_stopped(stop: &AtomicBool) -> bool {
-    let until = Instant::now() + POLL_INTERVAL;
-    while Instant::now() < until {
-        if stop.load(Ordering::Relaxed) {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    !stop.load(Ordering::Relaxed)
 }
