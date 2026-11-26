@@ -15,6 +15,7 @@ use crate::link::LinkReader;
 use crate::mac::MacAddress;
 use crate::settings::Settings;
 use crate::virtual_controller::{OutputType, VirtualBus};
+use crate::watch::Watch;
 
 /// Names one Link given to [`Supervisor::link_arrived`], to report it gone later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,7 +27,7 @@ pub struct ControllerView {
     pub mac: MacAddress,
     pub phase: Phase,
     pub output_type: OutputType,
-    /// The latest input while Bridged. Kept across a Hold.
+    /// The latest input while Bridged, or while connected and there is no bus.
     pub live: Arc<LiveInput>,
     /// Why the last Bridge attempt failed, until one succeeds.
     pub error: Option<String>,
@@ -41,13 +42,16 @@ struct Slot {
     /// The Link while no Bridge reads it (Stopped, waiting, or between steps).
     link: Option<OpenLink>,
     bridge: Option<Bridge>,
+    /// Reads the Link while there is no bus.
+    watch: Option<Watch>,
     /// The Virtual Controller while Held.
     held: Option<Plugged>,
     error: Option<String>,
 }
 
 pub struct Supervisor {
-    bus: Box<dyn VirtualBus>,
+    /// `None` until Virtual Controllers can be made.
+    bus: Option<Box<dyn VirtualBus>>,
     lifecycle: Lifecycle,
     slots: HashMap<MacAddress, Slot>,
     next_link_id: u64,
@@ -56,11 +60,52 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(bus: Box<dyn VirtualBus>, settings: Settings) -> Self {
         Self {
-            bus,
+            bus: Some(bus),
             lifecycle: Lifecycle::new(settings),
             slots: HashMap::new(),
             next_link_id: 0,
         }
+    }
+
+    /// A Supervisor with no way to make Virtual Controllers yet: it lists
+    /// Controllers and reads their input, and Bridges none until
+    /// [`Self::connect_bus`].
+    pub fn without_bus(settings: Settings) -> Self {
+        Self {
+            bus: None,
+            lifecycle: Lifecycle::paused(settings),
+            slots: HashMap::new(),
+            next_link_id: 0,
+        }
+    }
+
+    pub fn has_bus(&self) -> bool {
+        self.bus.is_some()
+    }
+
+    /// Virtual Controllers can be made now: Bridges the listed Controllers.
+    /// Ignored when there already is a bus.
+    pub fn connect_bus(&mut self, bus: Box<dyn VirtualBus>, now: Instant) -> Vec<Change> {
+        if self.has_bus() {
+            return Vec::new();
+        }
+        self.bus = Some(bus);
+        let mut lost = Vec::new();
+        for (&mac, slot) in &mut self.slots {
+            if let Some(watch) = slot.watch.take() {
+                slot.link = watch.stop();
+                if slot.link.is_none() {
+                    slot.link_id = None;
+                    lost.push(mac);
+                }
+            }
+        }
+        let mut changes = Vec::new();
+        for mac in lost {
+            changes.extend(self.lifecycle.link_lost(mac, now));
+        }
+        changes.extend(self.lifecycle.resume_bridging(now));
+        self.apply(changes, now)
     }
 
     /// The settings as they stand, to be saved after [`Self::stop`] or [`Self::start`].
@@ -125,6 +170,7 @@ impl Supervisor {
         let slot = self.slots.get_mut(&mac).expect("found above");
         slot.link_id = None;
         slot.link = None;
+        slot.watch = None;
         if let Some(bridge) = slot.bridge.take() {
             match bridge.stop() {
                 BridgeEnd::Stopped { controller, .. } => slot.held = Some(release(controller)),
@@ -166,6 +212,19 @@ impl Supervisor {
                     self.lifecycle.bridge_failed(mac, now)
                 }
             };
+            done.extend(self.apply(changes, now));
+        }
+        let unread: Vec<MacAddress> = self
+            .slots
+            .iter()
+            .filter(|(_, slot)| slot.watch.as_ref().is_some_and(Watch::is_finished))
+            .map(|(&mac, _)| mac)
+            .collect();
+        for mac in unread {
+            let slot = self.slots.get_mut(&mac).expect("listed above");
+            slot.watch = None;
+            slot.link_id = None;
+            let changes = self.lifecycle.link_lost(mac, now);
             done.extend(self.apply(changes, now));
         }
         let changes = self.lifecycle.tick(now);
@@ -234,7 +293,23 @@ impl Supervisor {
         }
         let listed: Vec<MacAddress> = self.lifecycle.controllers().map(|(mac, _)| mac).collect();
         self.slots.retain(|mac, _| listed.contains(mac));
+        if !self.has_bus() {
+            self.watch_idle_links();
+        }
         done
+    }
+
+    /// Reads every Link that nothing reads, so its input still shows without a bus.
+    fn watch_idle_links(&mut self) {
+        for slot in self.slots.values_mut() {
+            let Some(link) = slot.link.take() else {
+                continue;
+            };
+            match Watch::start(link, Arc::clone(&slot.live)) {
+                Ok(watch) => slot.watch = Some(watch),
+                Err(error) => slot.error = Some(format!("cannot start the input thread: {error}")),
+            }
+        }
     }
 
     /// Starts a Bridge from the Controller's idle Link, to its Held Virtual
@@ -256,7 +331,10 @@ impl Supervisor {
         };
         let controller = match held {
             Some(controller) => controller,
-            None => Plugged::new(self.bus.plug(output_type).map_err(|e| e.to_string())?),
+            None => {
+                let bus = self.bus.as_ref().ok_or("there is no bus")?;
+                Plugged::new(bus.plug(output_type).map_err(|e| e.to_string())?)
+            }
         };
         let slot = self.slot(mac);
         let link = slot.link.take().expect("checked above");
