@@ -27,12 +27,15 @@ const FACE_BUTTONS: [(Buttons, Xy, &str); 4] = [
 
 pub fn paint(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
+    // Its lower edge is the middle of the bumper's upper one, 2 above it, so
+    // that it leans as the shoulder does.
     let left_trigger = Shape::new(
-        (66., 23.),
+        (66., 27.1),
         &[
-            ((67., 10.), (74., 3.), (87., 3.)),
-            ((99., 3.), (106., 11.), (109., 24.)),
-            ((95., 21.), (80., 21.), (66., 23.)),
+            ((63., 15.5), (73., 4.), (89., 4.)),
+            ((104., 4.), (112., 14.), (113.8, 26.3)),
+            ((107., 24.), (99., 23.), (90., 23.)),
+            ((80., 23.), (72., 24.), (66., 27.1)),
         ],
     );
     painter.trigger(&left_trigger, pad.left_trigger, pad.pressed(Buttons::L2));
@@ -41,12 +44,14 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
         pad.right_trigger,
         pad.pressed(Buttons::R2),
     );
+    // Its lower edge follows the body's upper one.
     let left_bumper = Shape::new(
-        (54., 42.),
+        (54., 46.),
         &[
             ((58., 29.), (70., 25.), (90., 25.)),
-            ((108., 25.), (122., 29.), (130., 38.)),
-            ((108., 35.), (76., 35.), (54., 42.)),
+            ((108., 25.), (122., 29.), (130., 39.1)),
+            ((119.1, 36.), (108., 33.7), (94., 34.4)),
+            ((77.6, 34.9), (64.1, 39.1), (54., 46.)),
         ],
     );
     painter.control(&left_bumper, pad.pressed(Buttons::L1));
@@ -100,10 +105,10 @@ pub fn labels(pad: &PadModel, palette: &Palette) -> Vec<Label> {
     };
     let label = |at: Xy, text: &'static str, color: Hsla| Label { at, text, color };
     let mut labels = vec![
-        label((87., 13.), text::LT, trigger(pad.left_trigger)),
-        label((273., 13.), text::RT, trigger(pad.right_trigger)),
-        label((89., 31.), text::LB, palette.on(pad.pressed(Buttons::L1))),
-        label((271., 31.), text::RB, palette.on(pad.pressed(Buttons::R1))),
+        label((89., 13.5), text::LT, trigger(pad.left_trigger)),
+        label((271., 13.5), text::RT, trigger(pad.right_trigger)),
+        label((90., 30.), text::LB, palette.on(pad.pressed(Buttons::L1))),
+        label((270., 30.), text::RB, palette.on(pad.pressed(Buttons::R1))),
     ];
     let (cx, cy) = FACE;
     labels.extend(FACE_BUTTONS.map(|(button, (dx, dy), letter)| {

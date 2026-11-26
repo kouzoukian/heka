@@ -152,21 +152,34 @@ pub struct Label {
 /// Paints onto the drawing's canvas.
 pub struct Painter<'a> {
     origin: Point<Pixels>,
+    /// How many pixels one of the drawing's pixels covers.
+    scale: f32,
     pub palette: Palette,
     window: &'a mut Window,
 }
 
 impl<'a> Painter<'a> {
-    pub fn new(origin: Point<Pixels>, palette: Palette, window: &'a mut Window) -> Self {
+    pub fn new(
+        origin: Point<Pixels>,
+        scale: f32,
+        palette: Palette,
+        window: &'a mut Window,
+    ) -> Self {
         Self {
             origin,
+            scale,
             palette,
             window,
         }
     }
 
+    /// A length of the drawing's on screen.
+    fn length(&self, length: f32) -> Pixels {
+        px(length * self.scale)
+    }
+
     fn at(&self, (x, y): Xy) -> Point<Pixels> {
-        self.origin + point(px(x), px(y))
+        self.origin + point(self.length(x), self.length(y))
     }
 
     fn path(&mut self, mut path: PathBuilder, shape: &Shape, color: Hsla) {
@@ -186,12 +199,12 @@ impl<'a> Painter<'a> {
     }
 
     pub fn stroke(&mut self, shape: &Shape, width: f32, color: Hsla) {
-        self.path(PathBuilder::stroke(px(width)), shape, color);
+        self.path(PathBuilder::stroke(self.length(width)), shape, color);
     }
 
     /// A straight line.
     pub fn line(&mut self, from: Xy, to: Xy, width: f32, color: Hsla) {
-        let mut path = PathBuilder::stroke(px(width));
+        let mut path = PathBuilder::stroke(self.length(width));
         path.move_to(self.at(from));
         path.line_to(self.at(to));
         if let Ok(path) = path.build() {
@@ -224,12 +237,15 @@ impl<'a> Painter<'a> {
         fill: Hsla,
         border: (f32, Hsla),
     ) {
-        let bounds = Bounds::new(self.at((left, top)), size(px(width), px(height)));
+        let bounds = Bounds::new(
+            self.at((left, top)),
+            size(self.length(width), self.length(height)),
+        );
         self.window.paint_quad(quad(
             bounds,
-            px(radius),
+            self.length(radius),
             fill,
-            px(border.0),
+            self.length(border.0),
             border.1,
             BorderStyle::default(),
         ));
@@ -285,11 +301,15 @@ impl<'a> Painter<'a> {
             let (top, bottom) = shape.height();
             let from = bottom - (bottom - top) * trigger_fill(travel);
             let mask = ContentMask {
-                bounds: Bounds::new(self.at((0., from)), size(px(WIDTH), px(bottom - from + 1.))),
+                bounds: Bounds::new(
+                    self.at((0., from)),
+                    size(self.length(WIDTH), self.length(bottom - from + 1.)),
+                ),
             };
-            let origin = self.origin;
+            let (origin, scale) = (self.origin, self.scale);
             self.window.with_content_mask(Some(mask), |window| {
-                Painter::new(origin, palette, window).fill(shape, palette.pressed.opacity(0.55));
+                Painter::new(origin, scale, palette, window)
+                    .fill(shape, palette.pressed.opacity(0.55));
             });
         }
         let edge = if clicked {

@@ -65,7 +65,7 @@ impl PadModel {
             left_trigger,
             right_trigger,
             touch,
-            // Not drawn: the card shows the battery, and motion is left out so
+            // Not drawn: the pane shows the battery, and motion is left out so
             // that it alone never redraws the window.
             battery: _,
             motion: _,

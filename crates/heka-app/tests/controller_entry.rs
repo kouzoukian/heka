@@ -1,16 +1,17 @@
-//! What a Controller's card says, from the Supervisor's view of the Controller.
+//! What the window says about a Controller, from the Supervisor's view of the Controller.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use heka_app::text;
-use heka_app::ui::model::{CardModel, CardState, Command, Notice, Screen};
+use heka_app::ui::model::{Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_core::bridge::LiveInput;
 use heka_core::calibration::Calibration;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
+use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::virtual_controller::OutputType;
@@ -29,9 +30,9 @@ fn view(phase: Phase) -> ControllerView {
     }
 }
 
-/// The card while ViGEmBus is there.
-fn card_of(view: &ControllerView, now: Instant) -> CardModel {
-    CardModel::from_view(view, now, false)
+/// The entry while ViGEmBus is there.
+fn entry_of(view: &ControllerView, now: Instant) -> ControllerEntry {
+    ControllerEntry::from_view(view, now, false)
 }
 
 /// A DualSense at rest but for Cross held down, charging at 85%.
@@ -58,62 +59,64 @@ impl LinkReader for CrossPressed {
 }
 
 #[test]
-fn each_phase_has_its_card_state() {
+fn each_phase_has_its_entry_state() {
     let now = Instant::now();
-    let state = |phase| card_of(&view(phase), now).state;
+    let state = |phase| entry_of(&view(phase), now).state;
 
-    assert_eq!(state(Phase::Bridged), CardState::Bridged);
-    assert_eq!(state(Phase::Stopped), CardState::Stopped);
-    assert_eq!(state(Phase::Waiting), CardState::NotBridged);
+    assert_eq!(state(Phase::Bridged), EntryState::Bridged);
+    assert_eq!(state(Phase::Stopped), EntryState::Stopped);
+    assert_eq!(state(Phase::Waiting), EntryState::NotBridged);
 }
 
 #[test]
-fn a_held_card_counts_down_in_whole_seconds_rounded_up() {
+fn a_held_entry_counts_down_in_whole_seconds_rounded_up() {
     let now = Instant::now();
     let held = view(Phase::Held {
         until: now + Duration::from_secs(30),
     });
-    let state = |after_ms| card_of(&held, now + Duration::from_millis(after_ms)).state;
+    let state = |after_ms| entry_of(&held, now + Duration::from_millis(after_ms)).state;
 
-    assert_eq!(state(0), CardState::Held { seconds_left: 30 });
-    assert_eq!(state(1), CardState::Held { seconds_left: 30 });
-    assert_eq!(state(1_000), CardState::Held { seconds_left: 29 });
-    assert_eq!(state(29_999), CardState::Held { seconds_left: 1 });
+    assert_eq!(state(0), EntryState::Held { seconds_left: 30 });
+    assert_eq!(state(1), EntryState::Held { seconds_left: 30 });
+    assert_eq!(state(1_000), EntryState::Held { seconds_left: 29 });
+    assert_eq!(state(29_999), EntryState::Held { seconds_left: 1 });
     // Past its time but not yet removed.
-    assert_eq!(state(31_000), CardState::Held { seconds_left: 0 });
+    assert_eq!(state(31_000), EntryState::Held { seconds_left: 0 });
 }
 
 #[test]
-fn a_card_names_its_controller_and_says_why_a_bridge_failed() {
+fn an_entry_names_its_controller_and_says_why_a_bridge_failed() {
     let mut failed = view(Phase::Waiting);
     failed.error = Some("no free slot".into());
 
-    let card = card_of(&failed, Instant::now());
+    let entry = entry_of(&failed, Instant::now());
 
-    assert_eq!(card.mac, MAC);
-    assert_eq!(card.name, "DualSense");
+    assert_eq!(entry.mac, MAC);
+    // The end of the MAC address tells two Controllers of one kind apart.
+    assert_eq!(entry.short_mac(), "00:01");
+    assert_eq!(entry.name, "DualSense");
     assert_eq!(
-        card.detail().as_deref(),
+        entry.detail().as_deref(),
         Some("Could not Bridge: no free slot")
     );
 }
 
 #[test]
-fn only_a_dualshock_4_card_says_that_its_support_is_experimental() {
+fn only_a_dualshock_4_entry_says_that_its_support_is_experimental() {
     let mut dualshock4 = view(Phase::Bridged);
     dualshock4.model = ControllerModel::DualShock4;
 
-    let card = card_of(&dualshock4, Instant::now());
+    let entry = entry_of(&dualshock4, Instant::now());
 
-    assert_eq!(card.name, "DualShock 4");
-    assert!(card.experimental);
-    assert!(!card_of(&view(Phase::Bridged), Instant::now()).experimental);
+    assert_eq!(entry.name, "DualShock 4");
+    assert!(entry.experimental);
+    assert!(!entry_of(&view(Phase::Bridged), Instant::now()).experimental);
 }
 
 #[test]
-fn a_card_explains_why_a_controller_is_not_bridged_and_what_a_hold_waits_for() {
+fn an_entry_explains_why_a_controller_is_not_bridged_and_what_a_hold_waits_for() {
     let now = Instant::now();
-    let detail = |phase| card_of(&view(phase), now).detail();
+    let detail = |phase| entry_of(&view(phase), now).detail();
 
     assert_eq!(
         detail(Phase::Waiting).as_deref(),
@@ -128,7 +131,7 @@ fn a_card_explains_why_a_controller_is_not_bridged_and_what_a_hold_waits_for() {
 }
 
 #[test]
-fn without_vigem_bus_a_card_says_so_and_still_shows_live_input() {
+fn without_vigem_bus_an_entry_says_so_and_still_shows_live_input() {
     let mut supervisor = Supervisor::without_bus(Settings::default());
     supervisor.link_arrived(MAC, Box::new(CrossPressed), Instant::now());
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -137,36 +140,36 @@ fn without_vigem_bus_a_card_says_so_and_still_shows_live_input() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    let card = CardModel::from_view(&supervisor.controllers()[0], Instant::now(), true);
+    let entry = ControllerEntry::from_view(&supervisor.controllers()[0], Instant::now(), true);
 
-    assert_eq!(card.state, CardState::NotBridged);
+    assert_eq!(entry.state, EntryState::NotBridged);
     assert_eq!(
-        card.detail().as_deref(),
+        entry.detail().as_deref(),
         Some("Not Bridged: ViGEmBus is missing")
     );
-    assert!(card.pad.is_some_and(|pad| pad.pressed(Buttons::CROSS)));
+    assert!(entry.pad.is_some_and(|pad| pad.pressed(Buttons::CROSS)));
 }
 
 #[test]
-fn without_vigem_bus_a_card_also_says_why_input_cannot_be_read() {
+fn without_vigem_bus_an_entry_also_says_why_input_cannot_be_read() {
     let mut waiting = view(Phase::Waiting);
     waiting.error = Some("no thread".into());
 
-    let card = CardModel::from_view(&waiting, Instant::now(), true);
+    let entry = ControllerEntry::from_view(&waiting, Instant::now(), true);
 
     assert_eq!(
-        card.detail().as_deref(),
+        entry.detail().as_deref(),
         Some("Not Bridged: ViGEmBus is missing (no thread)")
     );
 }
 
 #[test]
-fn a_card_shows_the_active_link_the_supervisor_reads() {
+fn an_entry_shows_the_active_link_the_supervisor_reads() {
     let now = Instant::now();
     let link = |active_link| {
         let mut shown = view(Phase::Bridged);
         shown.active_link = active_link;
-        card_of(&shown, now).active_link
+        entry_of(&shown, now).active_link
     };
 
     assert_eq!(link(Some(LinkKind::Bluetooth)), Some(LinkKind::Bluetooth));
@@ -176,7 +179,7 @@ fn a_card_shows_the_active_link_the_supervisor_reads() {
 }
 
 #[test]
-fn a_card_shows_the_battery_the_controller_reports_and_none_without_input() {
+fn an_entry_shows_the_battery_the_controller_reports_and_none_without_input() {
     let mut supervisor = Supervisor::without_bus(Settings::default());
     supervisor.link_arrived(MAC, Box::new(CrossPressed), Instant::now());
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -185,16 +188,19 @@ fn a_card_shows_the_battery_the_controller_reports_and_none_without_input() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    let card = card_of(&supervisor.controllers()[0], Instant::now());
+    let entry = entry_of(&supervisor.controllers()[0], Instant::now());
 
     assert_eq!(
-        card.battery,
+        entry.battery,
         Some(Battery {
             percent: 85,
             charge: Charge::Charging
         })
     );
-    assert_eq!(card_of(&view(Phase::Stopped), Instant::now()).battery, None);
+    assert_eq!(
+        entry_of(&view(Phase::Stopped), Instant::now()).battery,
+        None
+    );
 }
 
 #[test]
@@ -215,21 +221,21 @@ fn the_output_switch_shows_the_controllers_output_type_and_asks_for_the_chosen_o
     let mut ps4 = view(Phase::Bridged);
     ps4.output_type = OutputType::Ps4;
 
-    let card = card_of(&ps4, Instant::now());
+    let entry = entry_of(&ps4, Instant::now());
 
-    assert_eq!(card.output_type, OutputType::Ps4);
+    assert_eq!(entry.output_type, OutputType::Ps4);
     assert_eq!(
-        card.choose(OutputType::Xbox),
+        entry.choose(OutputType::Xbox),
         Some(Command::SetOutputType(MAC, OutputType::Xbox))
     );
     // Choosing what is already chosen asks for nothing.
-    assert_eq!(card.choose(OutputType::Ps4), None);
+    assert_eq!(entry.choose(OutputType::Ps4), None);
 }
 
 #[test]
-fn the_card_button_starts_a_stopped_controller_and_stops_any_other() {
+fn the_entry_button_starts_a_stopped_controller_and_stops_any_other() {
     let now = Instant::now();
-    let command = |phase| card_of(&view(phase), now).toggle();
+    let command = |phase| entry_of(&view(phase), now).toggle();
 
     assert_eq!(command(Phase::Stopped), Command::Start(MAC));
     assert_eq!(command(Phase::Bridged), Command::Stop(MAC));
@@ -247,12 +253,32 @@ fn a_screen_changes_only_when_something_shown_changes() {
         starting: false,
         missing: Vec::new(),
         notices: vec![Notice::warning("warning")],
-        cards: vec![card_of(&held, now + Duration::from_millis(after_ms))],
+        controllers: vec![entry_of(&held, now + Duration::from_millis(after_ms))],
     };
 
     // The window redraws only when two samples differ.
     assert_eq!(screen(1), screen(900));
     assert_ne!(screen(900), screen(1_100));
+}
+
+#[test]
+fn the_status_bar_counts_errors_and_warnings_missing_drivers_among_them() {
+    let screen = Screen {
+        starting: false,
+        missing: vec![Missing {
+            driver: Driver::HidHide,
+            error: None,
+        }],
+        notices: vec![
+            Notice::warning("one"),
+            Notice::error("two"),
+            Notice::warning("three"),
+        ],
+        controllers: Vec::new(),
+    };
+
+    assert_eq!(screen.errors(), 1);
+    assert_eq!(screen.warnings(), 3);
 }
 
 #[test]
@@ -263,9 +289,9 @@ fn the_status_bar_counts_controllers_and_bridges() {
             starting: false,
             missing: Vec::new(),
             notices: Vec::new(),
-            cards: phases
+            controllers: phases
                 .iter()
-                .map(|&phase| card_of(&view(phase), now))
+                .map(|&phase| entry_of(&view(phase), now))
                 .collect(),
         }
         .summary()

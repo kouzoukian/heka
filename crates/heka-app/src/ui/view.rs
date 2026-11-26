@@ -1,24 +1,22 @@
-//! The window's root view: title bar, notices, the cards or the empty state, and
-//! the status bar.
+//! The window's root view, in Zed's anatomy: title bar, the Controller panel, the
+//! selected Controller's pane and the status bar.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Bounds, Context, Div, InteractiveElement, IntoElement, ParentElement, Render,
-    Result, StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowBounds,
-    WindowHandle, WindowOptions, div, px, size,
-};
-use gpui_component::empty::{
-    Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
+    App, AppContext, Bounds, Context, Div, Hsla, IntoElement, ParentElement, Render, Result,
+    Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div,
+    prelude::FluentBuilder as _, px, size,
 };
 use gpui_component::status_bar::StatusBar;
-use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
+use gpui_component::{ActiveTheme, Root, TitleBar};
 use gpui_kit_assets::IconName;
+use heka_core::mac::MacAddress;
 
-use crate::ui::card;
-use crate::ui::model::{Backend, Command, Level, Notice, Screen};
-use crate::ui::setup_screen::setup_screen;
+use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
+use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
+use crate::ui::{detail, panel};
 use crate::{text, theme};
 
 /// How often the window samples the screen, about 60 times a second.
@@ -27,12 +25,17 @@ use crate::{text, theme};
 /// `ui_preview` example prints the rate: 54 to 63 a second in a release build.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(15);
 
-/// Sets up gpui-component and the theme. Call once, before opening the window, in
-/// an application given [`crate::ui::assets::Assets`].
+const SIZE: (f32, f32) = (840., 680.);
+/// Room for the panel beside the drawing, and for the drawing below the
+/// selected Controller's properties.
+const MIN_SIZE: (f32, f32) = (640., 560.);
+
+/// Sets up gpui-component, the font and the theme. Call once, before opening the
+/// window, in an application given [`crate::ui::assets::Assets`].
 pub fn init(cx: &mut App) {
     // Must run before any gpui-component element is created.
     gpui_component::init(cx);
-    theme::apply(cx).expect("the built-in theme loads");
+    theme::apply(cx).expect("the built-in font and theme load");
 }
 
 /// Opens heka's window onto `backend`.
@@ -44,11 +47,10 @@ pub fn open_window(cx: &mut App, backend: Rc<dyn Backend>) -> Result<WindowHandl
         }),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(840.), px(680.)),
+            size(px(SIZE.0), px(SIZE.1)),
             cx,
         ))),
-        // Room for one card across.
-        window_min_size: Some(size(px(card::WIDTH + 34.), px(360.))),
+        window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
         ..TitleBar::window_options()
     };
     cx.open_window(options, |window, cx| {
@@ -62,6 +64,7 @@ struct MainView {
     backend: Rc<dyn Backend>,
     /// The last sample, which is what is drawn.
     screen: Screen,
+    selection: Selection,
 }
 
 impl MainView {
@@ -77,7 +80,13 @@ impl MainView {
         })
         .detach();
         let screen = backend.screen(Instant::now());
-        Self { backend, screen }
+        let mut selection = Selection::default();
+        selection.follow(&screen.controllers);
+        Self {
+            backend,
+            screen,
+            selection,
+        }
     }
 
     /// Redraws only if something shown has changed, so an idle window costs nothing.
@@ -85,96 +94,65 @@ impl MainView {
         let screen = self.backend.screen(Instant::now());
         if screen != self.screen {
             self.screen = screen;
+            self.selection.follow(&self.screen.controllers);
             cx.notify();
         }
     }
 
-    /// What scrolls: the setup screen if a driver is missing, then the cards or
-    /// the empty state.
-    fn body(&self, cx: &App) -> impl IntoElement + use<> {
+    fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
+        self.selection.choose(mac, &self.screen.controllers);
+        cx.notify();
+    }
+
+    /// The panel beside the selected Controller's pane.
+    fn body(&self, cx: &mut Context<Self>) -> Div {
+        let view = cx.weak_entity();
+        let choose: panel::Choose = Rc::new(move |mac, cx: &mut App| {
+            // The view is gone only while its window closes.
+            let _ = view.update(cx, |view, cx| view.choose(mac, cx));
+        });
         let backend = Rc::clone(&self.backend);
-        let send: card::Send = Rc::new(move |command: Command| backend.command(command));
-        let setup = setup_screen(&self.screen.missing, &send, cx)
-            .map(|setup| setup.flex_none().px_4().pt_4());
-        let cards: Vec<Div> = self
-            .screen
-            .cards
-            .iter()
-            .map(|model| card::card(model, &send, cx))
-            .collect();
-        let list = if cards.is_empty() {
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(empty_state(self.screen.starting, cx))
-        } else {
-            div()
-                .flex()
-                .flex_none()
-                .flex_wrap()
-                .items_start()
-                .justify_center()
-                .gap_3()
-                .p_4()
-                .children(cards)
-        };
+        let send: SendCommand = Rc::new(move |command: Command| backend.command(command));
+        let entry = self.selection.shown(&self.screen.controllers);
         div()
-            .id("controllers")
-            .size_full()
             .flex()
-            .flex_col()
-            .overflow_y_scroll()
-            .children(setup)
-            .child(list)
+            .flex_1()
+            .min_h_0()
+            .child(panel::panel(
+                &self.screen,
+                entry.map(|entry| entry.mac),
+                &choose,
+                cx,
+            ))
+            .child(detail::pane(&self.screen, entry, &send, cx))
     }
 }
 
-fn notice(notice: &Notice, cx: &App) -> Div {
+/// How many errors and warnings there are, as Zed counts its diagnostics, and
+/// the summary of Controllers.
+fn status_bar(screen: &Screen, cx: &App) -> StatusBar {
     let theme = cx.theme();
-    let (icon, color) = match notice.level {
-        Level::Warning => (IconName::TriangleAlert, theme.warning),
-        Level::Error => (IconName::CircleX, theme.danger),
+    let count = |name: IconName, count: usize, color: Hsla| {
+        div()
+            .flex()
+            .items_center()
+            .gap(GAP)
+            .when(count > 0, |this| this.text_color(color))
+            .child(icon(name))
+            .child(count.to_string())
     };
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap_2()
-        .px_4()
-        .py_2()
-        .bg(color.opacity(0.1))
-        .border_b_1()
-        .border_color(theme.border)
-        .child(Icon::new(icon).small().text_color(color))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_xs()
-                .child(notice.text.clone()),
-        )
-}
-
-/// Shown while there is no card to show.
-fn empty_state(starting: bool, cx: &App) -> Empty {
-    let (title, hint) = if starting {
-        (text::STARTING, None)
-    } else {
-        (text::NO_CONTROLLER, Some(text::CONNECT_HINT))
-    };
-    let mut header = EmptyHeader::new()
-        .media(
-            EmptyMedia::new()
-                .with_variant(EmptyMediaVariant::Icon)
-                .child(Icon::new(IconName::Gamepad2).text_color(cx.theme().muted_foreground)),
-        )
-        .title(EmptyTitle::new().child(title));
-    if let Some(hint) = hint {
-        header = header.description(EmptyDescription::new().child(hint));
-    }
-    Empty::new().header(header)
+    StatusBar::new()
+        .h(ROW)
+        .px(INSET)
+        .gap(INSET)
+        .text_size(SMALL_TEXT)
+        .left(count(IconName::CircleX, screen.errors(), theme.danger))
+        .left(count(
+            IconName::TriangleAlert,
+            screen.warnings(),
+            theme.warning,
+        ))
+        .right(screen.summary())
 }
 
 impl Render for MainView {
@@ -186,10 +164,15 @@ impl Render for MainView {
             .flex()
             .flex_col()
             .bg(theme.background)
-            .text_color(theme.foreground)
-            .child(TitleBar::new().child(div().text_sm().child(text::APP_NAME)))
-            .children(self.screen.notices.iter().map(|n| notice(n, cx)))
-            .child(div().flex_1().min_h_0().child(body))
-            .child(StatusBar::new().left(div().text_xs().child(self.screen.summary())))
+            .text_size(TEXT)
+            .text_color(theme.muted_foreground)
+            .child(
+                TitleBar::new()
+                    // Flat, as in Zed, instead of gpui-component's gradient.
+                    .bg(theme.title_bar)
+                    .child(div().text_size(TEXT).child(text::APP_NAME)),
+            )
+            .child(body)
+            .child(status_bar(&self.screen, cx))
     }
 }

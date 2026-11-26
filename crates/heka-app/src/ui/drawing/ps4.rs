@@ -21,12 +21,14 @@ const RIGHT_STICK: Xy = (228., 144.);
 
 pub fn paint(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;
+    // Its lower edge is the middle of the bumper's upper one, 2 above it.
     let left_trigger = Shape::new(
-        (59., 28.),
+        (58.3, 31.1),
         &[
-            ((59., 12.), (66., 3.), (81., 3.)),
-            ((96., 3.), (103., 12.), (103., 28.)),
-            ((90., 26.), (72., 26.), (59., 28.)),
+            ((54.5, 20.), (63., 5.), (81., 5.)),
+            ((99., 5.), (107.5, 20.), (103.7, 31.5)),
+            ((98.7, 28.9), (90.9, 28.), (81., 28.)),
+            ((71.1, 28.), (63.3, 28.9), (58.3, 31.1)),
         ],
     );
     painter.trigger(&left_trigger, pad.left_trigger, pad.pressed(Buttons::L2));
@@ -35,12 +37,14 @@ pub fn paint(painter: &mut Painter, pad: &PadModel) {
         pad.right_trigger,
         pad.pressed(Buttons::R2),
     );
+    // Its lower edge follows the body's upper one.
     let left_bumper = Shape::new(
-        (52., 42.),
+        (52., 41.4),
         &[
             ((52., 33.), (63., 30.), (81., 30.)),
-            ((99., 30.), (110., 33.), (110., 42.)),
-            ((94., 38.), (68., 38.), (52., 42.)),
+            ((99., 30.), (110., 33.), (110., 43.4)),
+            ((102.2, 40.2), (91.5, 38.4), (76., 38.4)),
+            ((66.6, 38.4), (58.7, 39.4), (52., 41.4)),
         ],
     );
     painter.control(&left_bumper, pad.pressed(Buttons::L1));
@@ -108,10 +112,10 @@ pub fn labels(pad: &PadModel, palette: &Palette) -> Vec<Label> {
     };
     let label = |at: Xy, text: &'static str, color: Hsla| Label { at, text, color };
     vec![
-        label((81., 17.), text::L2, trigger(pad.left_trigger)),
-        label((279., 17.), text::R2, trigger(pad.right_trigger)),
-        label((81., 35.), text::L1, palette.on(pad.pressed(Buttons::L1))),
-        label((279., 35.), text::R1, palette.on(pad.pressed(Buttons::R1))),
+        label((81., 16.5), text::L2, trigger(pad.left_trigger)),
+        label((279., 16.5), text::R2, trigger(pad.right_trigger)),
+        label((81., 34.), text::L1, palette.on(pad.pressed(Buttons::L1))),
+        label((279., 34.), text::R1, palette.on(pad.pressed(Buttons::R1))),
         label(PS, text::PS, palette.on(pad.pressed(Buttons::PS))),
     ]
 }

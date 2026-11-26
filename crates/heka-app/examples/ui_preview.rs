@@ -2,11 +2,12 @@
 //!
 //! It touches no HID device, ViGEmBus or HidHide.
 //!
-//! `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--seconds N]`
+//! `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--first N] [--seconds N]`
 //!
 //! `--empty` shows the window with no Controller, `--missing` adds the setup
-//! screen for both drivers, and `--seconds N` closes the window by itself. It
-//! prints how often the window samples its backend.
+//! screen for both drivers, `--first N` lists the Nth Controller first, so that it
+//! is the one selected, and `--seconds N` closes the window by itself. It prints
+//! how often the window samples its backend.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use heka_app::text;
 use heka_app::ui::assets::Assets;
-use heka_app::ui::model::{Backend, CardModel, CardState, Command, Notice, Screen};
+use heka_app::ui::model::{Backend, Command, ControllerEntry, EntryState, Notice, Screen};
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view;
 use heka_core::link::LinkKind;
@@ -28,16 +29,16 @@ const REPORT_EVERY: Duration = Duration::from_secs(2);
 
 struct Fake {
     started: Instant,
-    cards: RefCell<Vec<CardModel>>,
+    controllers: RefCell<Vec<ControllerEntry>>,
     missing: RefCell<Vec<Missing>>,
     /// Samples since the last report, and when that was.
     samples: RefCell<(u32, Instant)>,
 }
 
 impl Fake {
-    fn new(empty: bool, missing: bool) -> Self {
+    fn new(empty: bool, missing: bool, first: usize) -> Self {
         let now = Instant::now();
-        let card = |last: u8, state, active_link, battery, output_type| CardModel {
+        let entry = |last: u8, state, active_link, battery, output_type| ControllerEntry {
             mac: MacAddress([0x02, 0, 0, 0, 0, last]),
             name: text::DUALSENSE,
             experimental: false,
@@ -50,49 +51,51 @@ impl Fake {
             pad: None,
         };
         let level = |percent, charge| Some(Battery { percent, charge });
-        let mut cards = vec![
-            card(
+        let mut controllers = vec![
+            entry(
                 1,
-                CardState::Bridged,
+                EntryState::Bridged,
                 Some(LinkKind::Usb),
                 level(85, Charge::Charging),
                 OutputType::Xbox,
             ),
-            card(
+            entry(
                 2,
-                CardState::Held { seconds_left: 30 },
+                EntryState::Held { seconds_left: 30 },
                 None,
                 None,
                 OutputType::Ps4,
             ),
-            card(
+            entry(
                 3,
-                CardState::Stopped,
+                EntryState::Stopped,
                 Some(LinkKind::Bluetooth),
                 level(25, Charge::Discharging),
                 OutputType::Ps4,
             ),
-            card(
+            entry(
                 4,
-                CardState::NotBridged,
+                EntryState::NotBridged,
                 Some(LinkKind::Usb),
                 None,
                 OutputType::Xbox,
             ),
         ];
-        cards[2].name = text::DUALSHOCK4;
-        cards[2].experimental = true;
-        cards[3].error = Some("made-up error for the preview".into());
+        controllers[2].name = text::DUALSHOCK4;
+        controllers[2].experimental = true;
+        controllers[3].error = Some("made-up error for the preview".into());
         if missing {
             // Without ViGEmBus nothing is Bridged, but input still shows.
-            for card in &mut cards {
-                card.state = CardState::NotBridged;
-                card.active_link = card.active_link.or(Some(LinkKind::Usb));
-                card.error = None;
+            for entry in &mut controllers {
+                entry.state = EntryState::NotBridged;
+                entry.active_link = entry.active_link.or(Some(LinkKind::Usb));
+                entry.error = None;
             }
         }
+        let before_first = first.saturating_sub(1) % controllers.len();
+        controllers.rotate_left(before_first);
         if empty {
-            cards.clear();
+            controllers.clear();
         }
         let missing = [Driver::ViGEmBus, Driver::HidHide]
             .into_iter()
@@ -104,7 +107,7 @@ impl Fake {
             .collect();
         Self {
             started: now,
-            cards: RefCell::new(cards),
+            controllers: RefCell::new(controllers),
             missing: RefCell::new(missing),
             samples: RefCell::new((0, now)),
         }
@@ -128,23 +131,23 @@ impl Backend for Fake {
     fn screen(&self, now: Instant) -> Screen {
         self.report_rate(now);
         let t = now.duration_since(self.started).as_secs_f32();
-        let mut cards = self.cards.borrow().clone();
-        for card in &mut cards {
-            if card.bus_missing && card.state != CardState::Stopped {
-                card.pad = Some(moving_pad(t));
+        let mut controllers = self.controllers.borrow().clone();
+        for entry in &mut controllers {
+            if entry.bus_missing && entry.state != EntryState::Stopped {
+                entry.pad = Some(moving_pad(t));
             }
-            match card.state {
-                CardState::Bridged => card.pad = Some(moving_pad(t)),
-                CardState::Held { .. } => {
-                    card.state = CardState::Held {
+            match entry.state {
+                EntryState::Bridged => entry.pad = Some(moving_pad(t)),
+                EntryState::Held { .. } => {
+                    entry.state = EntryState::Held {
                         seconds_left: 30 - (t as u64 % 30),
                     };
                 }
-                CardState::Stopped | CardState::NotBridged => {}
+                EntryState::Stopped | EntryState::NotBridged => {}
             }
         }
         let missing = self.missing.borrow().clone();
-        let notices = if cards.is_empty() || !missing.is_empty() {
+        let notices = if controllers.is_empty() || !missing.is_empty() {
             Vec::new()
         } else {
             vec![Notice::warning(text::not_hidden("made-up warning"))]
@@ -153,36 +156,36 @@ impl Backend for Fake {
             starting: false,
             missing,
             notices,
-            cards,
+            controllers,
         }
     }
 
     fn command(&self, command: Command) {
         eprintln!("ui_preview: {command:?}");
-        let mut cards = self.cards.borrow_mut();
+        let mut controllers = self.controllers.borrow_mut();
         let mac = match command {
             Command::Stop(mac) | Command::Start(mac) | Command::SetOutputType(mac, _) => mac,
             Command::CheckDrivers => {
                 // As if the player had installed both.
                 self.missing.borrow_mut().clear();
-                for card in cards.iter_mut() {
-                    card.bus_missing = false;
-                    card.state = CardState::Bridged;
+                for entry in controllers.iter_mut() {
+                    entry.bus_missing = false;
+                    entry.state = EntryState::Bridged;
                 }
                 return;
             }
         };
-        let Some(card) = cards.iter_mut().find(|card| card.mac == mac) else {
+        let Some(entry) = controllers.iter_mut().find(|entry| entry.mac == mac) else {
             return;
         };
         match command {
             Command::Stop(_) => {
-                card.state = CardState::Stopped;
-                card.pad = None;
-                card.error = None;
+                entry.state = EntryState::Stopped;
+                entry.pad = None;
+                entry.error = None;
             }
-            Command::Start(_) => card.state = CardState::Bridged,
-            Command::SetOutputType(_, output_type) => card.output_type = output_type,
+            Command::Start(_) => entry.state = EntryState::Bridged,
+            Command::SetOutputType(_, output_type) => entry.output_type = output_type,
             Command::CheckDrivers => {}
         }
     }
@@ -215,12 +218,16 @@ fn moving_pad(t: f32) -> PadModel {
 fn main() {
     let mut empty = false;
     let mut missing = false;
+    let mut first = 1;
     let mut seconds = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--empty" => empty = true,
             "--missing" => missing = true,
+            "--first" => {
+                first = args.next().and_then(|n| n.parse().ok()).expect("--first N");
+            }
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
             other => panic!("unknown argument {other}"),
         }
@@ -229,7 +236,7 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx| {
             view::init(cx);
-            view::open_window(cx, Rc::new(Fake::new(empty, missing)))
+            view::open_window(cx, Rc::new(Fake::new(empty, missing, first)))
                 .expect("failed to open the preview window");
             if let Some(seconds) = seconds {
                 cx.spawn(async move |cx| {

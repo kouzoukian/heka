@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use heka_app::text;
-use heka_app::ui::model::{Backend, CardModel, Command, Notice, Screen};
+use heka_app::ui::model::{Backend, Command, ControllerEntry, Notice, Screen};
 use heka_core::setup::Driver;
 
 use crate::bridging::{Bridging, Status};
@@ -32,10 +32,10 @@ impl Backend for WindowBackend {
             starting: snapshot.status == Status::Starting,
             missing,
             notices: status.into_iter().chain(hiding).collect(),
-            cards: snapshot
+            controllers: snapshot
                 .controllers
                 .iter()
-                .map(|view| CardModel::from_view(view, now, bus_missing))
+                .map(|view| ControllerEntry::from_view(view, now, bus_missing))
                 .collect(),
         }
     }

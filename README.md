@@ -57,13 +57,15 @@ Sony's wireless USB adaptor and controllers from other makers are not supported.
 
 ## Using heka
 
-Up to 4 Controllers can be Bridged at once. A fifth is listed but not Bridged. Each
-Controller has a card with its battery level, a live drawing of its input, and:
+Up to 4 Controllers can be Bridged at once. A fifth is listed but not Bridged. The
+window lists the Controllers on the left. Select one to see its state, Active Link,
+battery level and a live drawing of its input, and to choose:
 
-- **Output**, the **Output Type** of its Virtual Controller: **Xbox** (Xbox 360) or
-  **PS4** (DualShock 4). Changing it replaces the Virtual Controller, so a running game
-  may need to be restarted.
-- **Stop** and **Start**. A Stopped Controller is not Bridged, and games see it as it is.
+- Its **Output Type**, what its Virtual Controller is: **Xbox** (Xbox 360) or **PS4**
+  (DualShock 4). Changing it replaces the Virtual Controller, so a running game may need
+  to be restarted.
+- **Stop** and **Start**, the button at the top right. A Stopped Controller is not
+  Bridged, and games see it as it is.
 
 heka remembers both for each Controller.
 
@@ -137,8 +139,8 @@ own rumble and light bar colours, and may create their own virtual controllers.
   hidden: if so, untick it, or add `heka.exe` to the allowed applications. Close the
   client again.
 - **The game sees two controllers.** See [Hiding Controllers](#hiding-controllers).
-- **The game sees none.** Check that the card says **Bridged**, and try the other Output
-  Type.
+- **The game sees none.** Check that the Controller's state says **Bridged**, and try the
+  other Output Type.
 
 ## Files, updating and removing
 
@@ -177,8 +179,10 @@ heka is licensed under either of the [MIT license](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
 
 The theme is Min Dark (Solid), from Miguel Solorio's Min Theme and its Zed port by
-Phillip Bronzel, under the MIT license. The release zip carries its notices
-(`LICENSE-MIN-THEME`) and those of everything built into `heka.exe`
+Phillip Bronzel, under the MIT license. The font is
+[Google Sans Code](https://github.com/googlefonts/googlesans-code), under the SIL Open
+Font License. The release zip carries their notices (`LICENSE-MIN-THEME` and
+`LICENSE-GOOGLE-SANS-CODE`) and those of everything built into `heka.exe`
 (`THIRD-PARTY-NOTICES.txt` and `THIRD-PARTY-NOTICES-RUST.html`).
 
 heka is not affiliated with or endorsed by Sony Interactive Entertainment or Microsoft.
