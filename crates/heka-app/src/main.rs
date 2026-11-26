@@ -1,21 +1,25 @@
 mod bridging;
 mod settings_file;
 mod setup_screen;
+mod tray;
 
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Context, IntoElement, ParentElement, Render, SharedString, Styled,
+    App, AppContext, Context, IntoElement, ParentElement, QuitMode, Render, SharedString, Styled,
     TitlebarOptions, Window, WindowOptions, div, px,
 };
 use gpui_component::button::Button;
 use gpui_component::{ActiveTheme, Root};
+use heka_core::autostart::{self, Autostart};
 use heka_core::lifecycle::Phase;
 use heka_core::setup::Driver;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
 use heka_core::virtual_controller::OutputType;
+use heka_windows::autostart::RunKey;
+use heka_windows::single_instance::{self, Instance};
 
 use bridging::{Bridging, Status};
 
@@ -187,13 +191,49 @@ impl Render for MainView {
     }
 }
 
+/// Focuses the window, or opens it again after it was closed to the tray.
+fn show_main_window(cx: &mut App, bridging: &Arc<Bridging>) {
+    if let Some(window) = cx.windows().first() {
+        let _ = window.update(cx, |_, window, _| window.activate_window());
+        return;
+    }
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some("heka".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let bridging = Arc::clone(bridging);
+    cx.open_window(options, |window, cx| {
+        let view = cx.new(|cx| MainView::new(bridging, cx));
+        // gpui-component expects a `Root` as the window's first view.
+        cx.new(|cx| Root::new(view, window, cx))
+    })
+    .expect("failed to open the main window");
+}
+
 fn main() {
-    gpui_platform::application().run(|cx: &mut App| {
+    // A second copy only asks the running one to show its window.
+    let instance = match single_instance::claim() {
+        Ok(Instance::Second) => return,
+        Ok(Instance::First(instance)) => Some(instance),
+        Err(error) => {
+            eprintln!("heka: cannot check for a running copy: {error}");
+            None
+        }
+    };
+    let in_tray = autostart::opens_in_tray(std::env::args_os());
+
+    // Closing the window leaves heka running in the tray; only Quit ends it.
+    let application = gpui_platform::application().with_quit_mode(QuitMode::Explicit);
+    application.run(move |cx: &mut App| {
         // Must run before any gpui-component element is created.
         gpui_component::init(cx);
 
         let bridging = Arc::new(Bridging::start());
-        // Quitting removes every Virtual Controller before the process ends.
+        // Quitting removes every Virtual Controller and restores every Hidden
+        // Controller before the process ends.
         cx.on_app_quit({
             let bridging = Arc::clone(&bridging);
             move |_| {
@@ -203,18 +243,33 @@ fn main() {
         })
         .detach();
 
-        let options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("heka".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        cx.open_window(options, |window, cx| {
-            let view = cx.new(|cx| MainView::new(bridging, cx));
-            // gpui-component expects a `Root` as the window's first view.
-            cx.new(|cx| Root::new(view, window, cx))
-        })
-        .expect("failed to open the main window");
+        let (show_requests_sender, show_requests) = mpsc::channel();
+        if let Some(instance) = instance {
+            instance.on_second_launch(move || {
+                let _ = show_requests_sender.send(());
+            });
+        }
+        let tray = tray::install(cx, autostart(), show_requests, {
+            let bridging = Arc::clone(&bridging);
+            move |cx| show_main_window(cx, &bridging)
+        });
+        if let Err(error) = &tray {
+            // Without a tray icon, closing the window must quit as before.
+            eprintln!("heka: cannot add the tray icon: {error}");
+            cx.set_quit_mode(QuitMode::Default);
+        }
+        if !in_tray || tray.is_err() {
+            show_main_window(cx, &bridging);
+        }
     });
+}
+
+/// Start with Windows for this copy, pointed at wherever this copy now lives.
+fn autostart() -> Autostart<RunKey> {
+    let exe = std::env::current_exe().unwrap_or_else(|_| "heka.exe".into());
+    let mut autostart = Autostart::new(RunKey, &exe);
+    if let Err(error) = autostart.repair() {
+        eprintln!("heka: cannot update Start with Windows: {error}");
+    }
+    autostart
 }
