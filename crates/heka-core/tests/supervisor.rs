@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::calibration::Calibration;
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
-use heka_core::link::{LinkRead, LinkReader, ReportFormat};
+use heka_core::link::{LinkKind, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
@@ -24,11 +24,25 @@ struct Script {
     lost: bool,
 }
 
-/// A Link the test feeds reports to and can pull out.
+/// A Link the test feeds reports to and can pull out. USB unless made by
+/// [`LinkHandle::bluetooth`].
 #[derive(Clone, Default)]
-struct LinkHandle(Arc<Mutex<Script>>);
+struct LinkHandle(Arc<Mutex<Script>>, bool);
 
 impl LinkHandle {
+    fn bluetooth() -> Self {
+        Self(Arc::default(), true)
+    }
+
+    /// Sends this USB report in the Link's own format.
+    fn send_input(&self, usb: Vec<u8>) {
+        if self.1 {
+            self.send(common::bluetooth_from_usb(&usb));
+        } else {
+            self.send(usb);
+        }
+    }
+
     fn reader(&self) -> Box<dyn LinkReader> {
         Box::new(FakeLink(self.clone()))
     }
@@ -46,7 +60,11 @@ struct FakeLink(LinkHandle);
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
+        if (self.0).1 {
+            ReportFormat::DualSenseBluetooth(Calibration::UNCALIBRATED)
+        } else {
+            ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
+        }
     }
 
     fn read(&mut self, buf: &mut [u8]) -> LinkRead {
@@ -422,4 +440,185 @@ fn heka_never_bridges_its_own_ps4_virtual_controller() {
     assert_eq!(changes, []);
     assert_eq!(bus.plugged(), 0);
     assert!(supervisor.controllers().is_empty());
+}
+
+// ---- Several Links --------------------------------------------------------
+
+fn square() -> Vec<u8> {
+    // DERIVED: captured baseline with Square pressed (buttons[0] bit 4).
+    common::derived(&[(8, 0x18)])
+}
+
+/// Sends Cross then Square on `from` and waits until Virtual Controller `index`
+/// shows each in turn.
+fn shows_input_from(bus: &FakeBus, index: usize, from: &LinkHandle) {
+    from.send_input(cross());
+    wait_until(|| bus.last_state(index).map(|s| s.buttons) == Some(Buttons::CROSS));
+    from.send_input(square());
+    wait_until(|| bus.last_state(index).map(|s| s.buttons) == Some(Buttons::SQUARE));
+}
+
+#[test]
+fn a_controller_on_usb_and_bluetooth_is_listed_once_with_one_virtual_controller() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let usb = LinkHandle::default();
+    let bluetooth = LinkHandle::bluetooth();
+
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+    let (_, changes) = supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    assert_eq!(changes, []);
+    assert_eq!(bus.plugged(), 1);
+    let views = supervisor.controllers();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].active_link, Some(LinkKind::Usb));
+    shows_input_from(&bus, 0, &usb);
+}
+
+#[test]
+fn plugging_in_usb_makes_it_the_active_link_on_the_same_virtual_controller() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let bluetooth = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    shows_input_from(&bus, 0, &bluetooth);
+    assert_eq!(
+        supervisor.controllers()[0].active_link,
+        Some(LinkKind::Bluetooth)
+    );
+
+    let usb = LinkHandle::default();
+    let (_, changes) = supervisor.link_arrived(mac(1), usb.reader(), t0);
+    assert_eq!(changes, []);
+    assert_eq!(supervisor.controllers()[0].active_link, Some(LinkKind::Usb));
+    shows_input_from(&bus, 0, &usb);
+    // Bluetooth input is no longer read.
+    bluetooth.send_input(cross());
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(bus.last_state(0).unwrap().buttons, Buttons::SQUARE);
+    assert_eq!(bus.plugged(), 1);
+    assert!(!bus.unplugged(0));
+}
+
+#[test]
+fn unplugging_usb_falls_back_to_bluetooth_without_a_hold() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let bluetooth = LinkHandle::bluetooth();
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+
+    // The Bridge notices first.
+    usb.pull_out();
+    wait_until(|| {
+        assert_eq!(supervisor.poll(t0), []);
+        supervisor.controllers()[0].active_link == Some(LinkKind::Bluetooth)
+    });
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
+    shows_input_from(&bus, 0, &bluetooth);
+    assert_eq!(bus.plugged(), 1);
+    assert!(!bus.unplugged(0));
+
+    // Only losing the last Link Holds the Controller.
+    bluetooth.pull_out();
+    assert_eq!(
+        poll_until_changed(&mut supervisor, t0),
+        [Change::Held { mac: mac(1) }]
+    );
+}
+
+#[test]
+fn a_usb_link_reported_gone_falls_back_to_bluetooth_too() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let bluetooth = LinkHandle::bluetooth();
+    let usb = LinkHandle::default();
+    let (bluetooth_id, _) = supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    let (usb_id, _) = supervisor.link_arrived(mac(1), usb.reader(), t0);
+
+    assert_eq!(supervisor.link_gone(usb_id, t0), []);
+    assert_eq!(
+        supervisor.controllers()[0].active_link,
+        Some(LinkKind::Bluetooth)
+    );
+    shows_input_from(&bus, 0, &bluetooth);
+    assert_eq!(bus.plugged(), 1);
+
+    assert_eq!(
+        supervisor.link_gone(bluetooth_id, t0),
+        [Change::Held { mac: mac(1) }]
+    );
+    assert_eq!(bus.last_state(0), Some(ControllerState::NEUTRAL));
+    assert_eq!(supervisor.controllers()[0].active_link, None);
+}
+
+#[test]
+fn an_idle_bluetooth_link_leaving_changes_nothing() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+    let (bluetooth_id, _) = supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+
+    assert_eq!(supervisor.link_gone(bluetooth_id, t0), []);
+    shows_input_from(&bus, 0, &usb);
+    // Losing USB, now the only Link, Holds the Controller.
+    usb.pull_out();
+    assert_eq!(
+        poll_until_changed(&mut supervisor, t0),
+        [Change::Held { mac: mac(1) }]
+    );
+}
+
+#[test]
+fn a_held_controller_returning_on_both_links_reads_usb() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let first = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    first.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    let bluetooth = LinkHandle::bluetooth();
+    let (_, changes) = supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    assert_eq!(changes, [Change::Returned { mac: mac(1) }]);
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+    shows_input_from(&bus, 0, &usb);
+    assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn without_a_bus_the_active_link_is_read_and_follows_usb() {
+    let t0 = Instant::now();
+    let mut supervisor = Supervisor::without_bus(Settings::default());
+    let bluetooth = LinkHandle::bluetooth();
+    let (_, changes) = supervisor.link_arrived(mac(1), bluetooth.reader(), t0);
+    assert_eq!(changes, []);
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    bluetooth.send_input(cross());
+    wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::CROSS));
+
+    let usb = LinkHandle::default();
+    let (usb_id, _) = supervisor.link_arrived(mac(1), usb.reader(), t0);
+    assert_eq!(supervisor.controllers()[0].active_link, Some(LinkKind::Usb));
+    usb.send_input(square());
+    wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::SQUARE));
+
+    assert_eq!(supervisor.link_gone(usb_id, t0), []);
+    bluetooth.send_input(cross());
+    wait_until(|| live.latest().map(|s| s.buttons) == Some(Buttons::CROSS));
+
+    // With a bus, the Controller is Bridged once, from Bluetooth.
+    let bus = FakeBus::default();
+    let changes = supervisor.connect_bus(Box::new(bus.clone()), t0);
+    assert_eq!(
+        changes,
+        [Change::Bridged {
+            mac: mac(1),
+            output_type: OutputType::Xbox
+        }]
+    );
+    shows_input_from(&bus, 0, &bluetooth);
 }

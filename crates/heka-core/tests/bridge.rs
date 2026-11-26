@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink};
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
-use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Rumble};
+use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Rumble};
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
 };
@@ -540,5 +540,32 @@ fn a_feedback_write_that_hangs_does_not_delay_input() {
     assert!(written.lock().unwrap().reports.is_empty());
 
     drop(release);
+    bridge.stop();
+}
+
+#[test]
+fn a_bridge_moved_to_another_link_shows_the_games_last_feedback_there() {
+    let (usb, _usb_steps, on_usb) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let bridge = Bridge::start(usb, controller, Arc::default()).unwrap();
+    let asked = Feedback {
+        lightbar: Some(Lightbar {
+            red: 1,
+            green: 2,
+            blue: 3,
+        }),
+        ..rumble(200, 64)
+    };
+    game.send(asked).unwrap();
+    wait_until(|| on_usb.lock().unwrap().reports.len() == 1);
+    let BridgeEnd::Stopped { controller, .. } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+
+    // The same Virtual Controller now reads another Link of the Controller.
+    let (other, _steps, on_other) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
+    wait_until(|| !on_other.lock().unwrap().reports.is_empty());
+    assert_eq!(on_other.lock().unwrap().reports[0], output_report(asked));
     bridge.stop();
 }

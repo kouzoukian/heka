@@ -75,6 +75,8 @@ pub enum Change {
 struct Entry {
     mac: MacAddress,
     phase: Phase,
+    /// How many Links the Controller has. Zero only while [`Phase::Held`].
+    links: usize,
     /// While [`Phase::Waiting`] after a failure: no new Bridge before this.
     retry_at: Option<Instant>,
 }
@@ -140,14 +142,15 @@ impl Lifecycle {
             .min()
     }
 
-    /// A Link to this Controller appeared.
+    /// A Link to this Controller appeared. A Controller is listed once however
+    /// many Links it has; which Link a Bridge reads is not the lifecycle's concern.
     pub fn link_arrived(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         if let Some(entry) = self.entry_mut(mac) {
+            entry.links += 1;
             if let Phase::Held { .. } = entry.phase {
                 entry.phase = Phase::Bridged;
                 return vec![Change::Returned { mac }];
             }
-            // Already connected. Several Links per Controller are ticket #8.
             return Vec::new();
         }
         let phase = if self.settings.controller(mac).stopped {
@@ -158,6 +161,7 @@ impl Lifecycle {
         self.entries.push(Entry {
             mac,
             phase,
+            links: 1,
             retry_at: None,
         });
         let mut changes = Vec::new();
@@ -165,12 +169,18 @@ impl Lifecycle {
         changes
     }
 
-    /// The Controller's Link went away.
+    /// One of the Controller's Links went away. Only losing the last one matters.
     pub fn link_lost(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let Some(index) = self.index(mac) else {
             return Vec::new();
         };
-        match self.entries[index].phase {
+        let entry = &mut self.entries[index];
+        if entry.links > 1 {
+            entry.links -= 1;
+            return Vec::new();
+        }
+        entry.links = 0;
+        match entry.phase {
             Phase::Bridged => {
                 self.entries[index].phase = Phase::Held {
                     until: now + HOLD_TIME,

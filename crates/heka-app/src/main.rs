@@ -14,6 +14,7 @@ use gpui_component::button::Button;
 use gpui_component::{ActiveTheme, Root};
 use heka_core::autostart::{self, Autostart};
 use heka_core::lifecycle::Phase;
+use heka_core::link::LinkKind;
 use heka_core::setup::Driver;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
@@ -76,6 +77,7 @@ fn input_text(state: ControllerState) -> SharedString {
         right_stick,
         left_trigger,
         right_trigger,
+        battery,
         ..
     } = state;
     let pressed: Vec<&str> = Buttons::NAMED
@@ -84,8 +86,9 @@ fn input_text(state: ControllerState) -> SharedString {
         .map(|(_, name)| *name)
         .collect();
     let stick = |stick: Stick| format!("{:>3},{:>3}", stick.x, stick.y);
+    let battery = battery.map_or_else(String::new, |b| format!("  Battery {}%", b.percent));
     format!(
-        "L {}  R {}  L2 {left_trigger:>3}  R2 {right_trigger:>3}  {}",
+        "L {}  R {}  L2 {left_trigger:>3}  R2 {right_trigger:>3}{battery}  {}",
         stick(left_stick),
         stick(right_stick),
         pressed.join(" "),
@@ -128,6 +131,11 @@ impl MainView {
             Phase::Waiting if no_bus => setup_screen::text::NOT_BRIDGED.into(),
             phase => phase_text(phase, view.output_type),
         };
+        match view.active_link {
+            Some(LinkKind::Usb) => phase = format!("{phase}, USB").into(),
+            Some(LinkKind::Bluetooth) => phase = format!("{phase}, Bluetooth").into(),
+            None => {}
+        }
         if let Some(error) = &view.error {
             phase = format!("{phase} ({error})").into();
         }

@@ -1,4 +1,4 @@
-//! Runs the Bridge lifecycle for every DualSense on USB.
+//! Runs the Bridge lifecycle for every DualSense on USB or Bluetooth.
 //!
 //! One supervisor thread owns the [`Supervisor`]: it checks for the drivers, finds
 //! Controllers as they come and go, carries out the player's Stop and Start, and
@@ -6,7 +6,8 @@
 //!
 //! Hiding follows the lifecycle's changes: a Controller is Hidden with HidHide when
 //! it is Bridged and again when it returns from a Hold, stays Hidden while Held, and
-//! is restored whenever its Virtual Controller is removed. A start after a crash
+//! is restored whenever its Virtual Controller is removed. Every Link of a Hidden
+//! Controller is Hidden, including one that arrives later. A start after a crash
 //! first restores what the crashed run Hid.
 
 use std::collections::{HashMap, HashSet};
@@ -23,7 +24,7 @@ use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
 use heka_core::virtual_controller::OutputType;
 use heka_windows::drivers::InstalledDrivers;
-use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_paths};
+use heka_windows::hid::{DualSenseLink, dualsense_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
 
@@ -200,8 +201,10 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
 /// owner keyed by its MAC address.
 struct Hider {
     hiding: Option<Hiding>,
-    /// The HidHide device of each Controller's latest Link.
-    devices: HashMap<MacAddress, Result<DeviceInstancePath, String>>,
+    /// The HidHide device of each of a Controller's Links, by HID path.
+    devices: HashMap<MacAddress, HashMap<CString, Result<DeviceInstancePath, String>>>,
+    /// Controllers that should be Hidden: Bridged or Held.
+    wanted: HashSet<MacAddress>,
     /// Controllers to Hide that are not Hidden yet, retried every poll, for
     /// example while HidHide's own client holds the driver.
     pending: HashSet<MacAddress>,
@@ -214,6 +217,7 @@ impl Hider {
         let mut hider = Self {
             hiding: None,
             devices: HashMap::new(),
+            wanted: HashSet::new(),
             pending: HashSet::new(),
             note: None,
         };
@@ -231,11 +235,26 @@ impl Hider {
         hider
     }
 
-    /// Records the device behind a Link before the Supervisor hears of it.
-    fn link_seen(&mut self, mac: MacAddress, link: &DualSenseUsbLink) {
+    /// Records the device behind a Link before the Supervisor hears of it, and
+    /// Hides it if its Controller is already Hidden.
+    fn link_seen(&mut self, mac: MacAddress, link: &DualSenseLink) {
         let device = hidhide::device_instance_path(link.hid_path())
             .map_err(|error| format!("cannot identify the Controller for HidHide: {error}"));
-        self.devices.insert(mac, device);
+        self.devices
+            .entry(mac)
+            .or_default()
+            .insert(link.hid_path().to_owned(), device);
+        if self.wanted.contains(&mac) {
+            self.pending.insert(mac);
+            self.hide(mac);
+        }
+    }
+
+    /// Forgets the device behind a Link that went away.
+    fn link_gone(&mut self, mac: MacAddress, path: &CString) {
+        if let Some(devices) = self.devices.get_mut(&mac) {
+            devices.remove(path);
+        }
     }
 
     fn follow(&mut self, changes: &[Change]) {
@@ -251,6 +270,7 @@ impl Hider {
             match *change {
                 // A returning Controller is a new device to the system: Hide it again.
                 Change::Bridged { mac, .. } | Change::Returned { mac } => {
+                    self.wanted.insert(mac);
                     self.pending.insert(mac);
                     self.hide(mac);
                 }
@@ -261,6 +281,7 @@ impl Hider {
                     why: Removal::OutputTypeChanged,
                 } if replaced(mac) => {}
                 Change::Removed { mac, .. } => {
+                    self.wanted.remove(&mac);
                     self.pending.remove(&mac);
                     self.release(mac);
                 }
@@ -280,11 +301,19 @@ impl Hider {
             self.pending.remove(&mac);
             return;
         };
-        let result = match self.devices.get(&mac) {
-            Some(Ok(device)) => hiding
-                .hide(&mac.to_string(), device)
-                .map_err(|e| e.to_string()),
-            Some(Err(error)) => Err(error.clone()),
+        let devices = self.devices.get(&mac).filter(|devices| !devices.is_empty());
+        let result = match devices {
+            // Every Link is tried, so that one that cannot be Hidden does not
+            // keep the others visible.
+            Some(devices) => devices
+                .values()
+                .map(|device| match device {
+                    Ok(device) => hiding
+                        .hide(&mac.to_string(), device)
+                        .map_err(|e| e.to_string()),
+                    Err(error) => Err(error.clone()),
+                })
+                .fold(Ok(()), Result::and),
             None => Err("no Link to Hide".into()),
         };
         match result {
@@ -317,7 +346,7 @@ impl Hider {
 #[derive(Default)]
 struct Discovery {
     api: Option<HidApi>,
-    known: HashMap<CString, LinkId>,
+    known: HashMap<CString, (LinkId, MacAddress)>,
 }
 
 impl Discovery {
@@ -334,7 +363,7 @@ impl Discovery {
             }
             None => self.api.insert(HidApi::new().map_err(|e| e.to_string())?),
         };
-        let present = dualsense_usb_paths(api);
+        let present = dualsense_paths(api);
 
         let gone: Vec<CString> = self
             .known
@@ -343,7 +372,8 @@ impl Discovery {
             .cloned()
             .collect();
         for path in gone {
-            if let Some(id) = self.known.remove(&path) {
+            if let Some((id, mac)) = self.known.remove(&path) {
+                hider.link_gone(mac, &path);
                 hider.follow(&supervisor.link_gone(id, now));
             }
         }
@@ -353,11 +383,11 @@ impl Discovery {
                 continue;
             }
             // Retried next scan on failure, for example while another app holds it.
-            match DualSenseUsbLink::open_path(api, &path) {
+            match DualSenseLink::open_path(api, &path) {
                 Ok((link, mac)) => {
                     hider.link_seen(mac, &link);
                     let (id, changes) = supervisor.link_arrived(mac, Box::new(link), now);
-                    self.known.insert(path, id);
+                    self.known.insert(path, (id, mac));
                     hider.follow(&changes);
                 }
                 Err(error) => eprintln!("heka: cannot open a DualSense: {error}"),
