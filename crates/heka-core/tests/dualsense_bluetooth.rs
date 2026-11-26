@@ -5,9 +5,22 @@
 
 mod common;
 
-use heka_core::dualsense::{parse_bluetooth_input_report, parse_usb_input_report};
+use heka_core::calibration::Calibration;
+use heka_core::dualsense::{
+    parse_bluetooth_input_report, parse_calibration, parse_usb_input_report,
+};
 use heka_core::link::{ReportError, ReportFormat};
-use heka_core::state::Buttons;
+use heka_core::state::{Buttons, ControllerState};
+
+/// CAPTURED: the calibration of the DualSense the USB reports came from.
+fn calibration() -> Calibration {
+    let report = common::reports(include_str!("fixtures/dualsense_usb_calibration.hex")).remove(0);
+    parse_calibration(&report).unwrap()
+}
+
+fn parse(report: &[u8]) -> Result<ControllerState, ReportError> {
+    parse_bluetooth_input_report(report, &Calibration::UNCALIBRATED)
+}
 
 #[test]
 fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
@@ -18,11 +31,11 @@ fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
     {
         let bluetooth = common::bluetooth_from_usb(&usb);
         assert_eq!(
-            parse_bluetooth_input_report(&bluetooth),
-            parse_usb_input_report(&usb)
+            parse_bluetooth_input_report(&bluetooth, &calibration()),
+            parse_usb_input_report(&usb, &calibration())
         );
     }
-    let state = ReportFormat::DualSenseBluetooth
+    let state = ReportFormat::DualSenseBluetooth(calibration())
         .parse(&common::bluetooth_from_usb(&common::derived(&[(8, 0x28)])))
         .unwrap();
     assert_eq!(state.buttons, Buttons::CROSS);
@@ -32,10 +45,7 @@ fn a_bluetooth_report_carries_the_same_input_as_the_usb_report() {
 fn a_bluetooth_report_with_a_wrong_crc_is_refused() {
     let mut report = common::bluetooth_from_usb(&common::derived(&[(8, 0x28)]));
     report[10] ^= 0x01;
-    assert_eq!(
-        parse_bluetooth_input_report(&report),
-        Err(ReportError::BadCrc)
-    );
+    assert_eq!(parse(&report), Err(ReportError::BadCrc));
 }
 
 #[test]
@@ -46,12 +56,6 @@ fn the_simple_bluetooth_report_and_short_reads_are_refused() {
     let full = common::bluetooth_from_usb(&common::captured_baseline());
     let mut simple = full.clone();
     simple[0] = 0x01;
-    assert_eq!(
-        parse_bluetooth_input_report(&simple),
-        Err(ReportError::UnexpectedId { id: 0x01 })
-    );
-    assert_eq!(
-        parse_bluetooth_input_report(&full[..10]),
-        Err(ReportError::TooShort { len: 10 })
-    );
+    assert_eq!(parse(&simple), Err(ReportError::UnexpectedId { id: 0x01 }));
+    assert_eq!(parse(&full[..10]), Err(ReportError::TooShort { len: 10 }));
 }

@@ -302,7 +302,12 @@ fn run_feedback(
     let mut shown = Feedback::OFF;
     let mut show = |writer: &mut Box<dyn LinkWriter>, feedback: Feedback| {
         // Kept unchanged on a failed write, so the next Feedback is sent again.
-        if feedback != shown && writer.write(&format.report(&feedback)).is_ok() {
+        if feedback != shown
+            && format
+                .reports(&feedback)
+                .iter()
+                .all(|report| writer.write(report).is_ok())
+        {
             shown = feedback;
         }
     };

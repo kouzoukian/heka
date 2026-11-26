@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::calibration::Calibration;
 use crate::dualsense::{self, RumbleMode};
 use crate::feedback::Feedback;
 use crate::state::ControllerState;
@@ -9,26 +10,32 @@ use crate::state::ControllerState;
 /// Which report layout a Link delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReportFormat {
-    /// DualSense or DualSense Edge over USB, report `0x01`.
-    DualSenseUsb,
-    /// DualSense or DualSense Edge over Bluetooth, full report `0x31`.
-    DualSenseBluetooth,
+    /// DualSense or DualSense Edge over USB, report `0x01`, with the Controller's
+    /// motion calibration.
+    DualSenseUsb(Calibration),
+    /// DualSense or DualSense Edge over Bluetooth, full report `0x31`, with the
+    /// Controller's motion calibration.
+    DualSenseBluetooth(Calibration),
 }
 
 impl ReportFormat {
     /// Reads one input report of this format, report ID byte included.
     pub fn parse(self, report: &[u8]) -> Result<ControllerState, ReportError> {
         match self {
-            Self::DualSenseUsb => dualsense::parse_usb_input_report(report),
-            Self::DualSenseBluetooth => dualsense::parse_bluetooth_input_report(report),
+            Self::DualSenseUsb(calibration) => {
+                dualsense::parse_usb_input_report(report, &calibration)
+            }
+            Self::DualSenseBluetooth(calibration) => {
+                dualsense::parse_bluetooth_input_report(report, &calibration)
+            }
         }
     }
 
     /// Whether the Link delivering this format is USB or Bluetooth.
     pub fn kind(self) -> LinkKind {
         match self {
-            Self::DualSenseUsb => LinkKind::Usb,
-            Self::DualSenseBluetooth => LinkKind::Bluetooth,
+            Self::DualSenseUsb(_) => LinkKind::Usb,
+            Self::DualSenseBluetooth(_) => LinkKind::Bluetooth,
         }
     }
 }
@@ -108,23 +115,53 @@ pub enum FeedbackFormat {
     DualSenseUsb(RumbleMode),
     /// DualSense or DualSense Edge over Bluetooth, report `0x31`, rumbling in this
     /// mode. Each report carries the next sequence number, `seq`, and a CRC32.
-    DualSenseBluetooth { mode: RumbleMode, seq: u8 },
+    /// `lightbar_ready` once the lightbar setup report has been built.
+    DualSenseBluetooth {
+        mode: RumbleMode,
+        seq: u8,
+        lightbar_ready: bool,
+    },
 }
 
 impl FeedbackFormat {
     /// A DualSense over Bluetooth, starting from sequence number 0.
     pub fn dualsense_bluetooth(mode: RumbleMode) -> Self {
-        Self::DualSenseBluetooth { mode, seq: 0 }
+        Self::DualSenseBluetooth {
+            mode,
+            seq: 0,
+            lightbar_ready: false,
+        }
     }
 
-    /// The next output report that shows this Feedback on the Controller, report ID included.
-    pub fn report(&mut self, feedback: &Feedback) -> Vec<u8> {
+    /// The output reports that show this Feedback on the Controller, in the order
+    /// to send them, report IDs included.
+    ///
+    /// Over Bluetooth the first colour is preceded by a lightbar setup report:
+    /// until then the DualSense keeps control of its own lightbar
+    /// (`dualsense_reset_leds` in Linux `hid-playstation.c`).
+    pub fn reports(&mut self, feedback: &Feedback) -> Vec<Vec<u8>> {
         match self {
-            Self::DualSenseUsb(mode) => dualsense::usb_output_report(feedback, *mode).to_vec(),
-            Self::DualSenseBluetooth { mode, seq } => {
-                let report = dualsense::bluetooth_output_report(feedback, *mode, *seq);
-                *seq = (*seq + 1) % dualsense::BT_OUTPUT_SEQUENCE_LEN;
-                report.to_vec()
+            Self::DualSenseUsb(mode) => {
+                vec![dualsense::usb_output_report(feedback, *mode).to_vec()]
+            }
+            Self::DualSenseBluetooth {
+                mode,
+                seq,
+                lightbar_ready,
+            } => {
+                let mut next_seq = || {
+                    let current = *seq;
+                    *seq = (*seq + 1) % dualsense::BT_OUTPUT_SEQUENCE_LEN;
+                    current
+                };
+                let mut reports = Vec::with_capacity(2);
+                if feedback.lightbar.is_some() && !*lightbar_ready {
+                    *lightbar_ready = true;
+                    reports.push(dualsense::bluetooth_lightbar_setup_report(next_seq()).to_vec());
+                }
+                reports
+                    .push(dualsense::bluetooth_output_report(feedback, *mode, next_seq()).to_vec());
+                reports
             }
         }
     }

@@ -93,7 +93,8 @@ impl Supervisor {
     /// A Link to the Controller with this MAC address appeared.
     ///
     /// A second Link to a Controller that already has one is closed (ticket #8
-    /// adds several Links per Controller).
+    /// adds several Links per Controller). A Link to a Virtual Controller, heka's
+    /// own or another ViGEmBus client's, is closed and never listed.
     pub fn link_arrived(
         &mut self,
         mac: MacAddress,
@@ -102,6 +103,9 @@ impl Supervisor {
     ) -> (LinkId, Vec<Change>) {
         let id = LinkId(self.next_link_id);
         self.next_link_id += 1;
+        if mac.is_virtual_controller() {
+            return (id, Vec::new());
+        }
         let slot = self.slots.entry(mac).or_default();
         if slot.link_id.is_some() {
             return (id, Vec::new());
@@ -178,6 +182,18 @@ impl Supervisor {
     /// The player starts this Stopped Controller again.
     pub fn start(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
         let changes = self.lifecycle.start(mac, now);
+        self.apply(changes, now)
+    }
+
+    /// The player chooses this Controller's Output Type. A Bridged Controller's
+    /// Link is Bridged again to a new Virtual Controller of that type.
+    pub fn set_output_type(
+        &mut self,
+        mac: MacAddress,
+        output_type: OutputType,
+        now: Instant,
+    ) -> Vec<Change> {
+        let changes = self.lifecycle.set_output_type(mac, output_type, now);
         self.apply(changes, now)
     }
 
