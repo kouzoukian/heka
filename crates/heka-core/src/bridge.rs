@@ -31,7 +31,8 @@ pub struct LiveInput {
 }
 
 impl LiveInput {
-    /// The state the Bridge last sent, or `None` when no Bridge is running.
+    /// The state the Bridge (or [`crate::watch::Watch`]) last read, or `None` when
+    /// none is running.
     pub fn latest(&self) -> Option<ControllerState> {
         *self.latest.lock().unwrap_or_else(PoisonError::into_inner)
     }

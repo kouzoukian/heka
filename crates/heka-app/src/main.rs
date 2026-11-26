@@ -1,5 +1,6 @@
 mod bridging;
 mod settings_file;
+mod setup_screen;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,6 +12,7 @@ use gpui::{
 use gpui_component::button::Button;
 use gpui_component::{ActiveTheme, Root};
 use heka_core::lifecycle::Phase;
+use heka_core::setup::Driver;
 use heka_core::state::{Buttons, ControllerState, Stick};
 use heka_core::supervisor::ControllerView;
 
@@ -41,7 +43,6 @@ impl MainView {
 fn status_text(status: &Status, controllers: usize) -> SharedString {
     match status {
         Status::Starting => "Starting".into(),
-        Status::NoBus(error) => format!("ViGEmBus is not available: {error}").into(),
         Status::HidError(error) => format!("Cannot look for Controllers: {error}").into(),
         Status::Running if controllers == 0 => "Connect a DualSense with a USB cable".into(),
         Status::Running => "".into(),
@@ -84,7 +85,13 @@ fn input_text(state: ControllerState) -> SharedString {
 }
 
 impl MainView {
-    fn controller_row(&self, index: usize, view: &ControllerView, cx: &App) -> impl IntoElement {
+    fn controller_row(
+        &self,
+        index: usize,
+        view: &ControllerView,
+        no_bus: bool,
+        cx: &App,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let mac = view.mac;
         let bridging = Arc::clone(&self.bridging);
@@ -97,14 +104,14 @@ impl MainView {
                 .label("Stop")
                 .on_click(move |_, _, _| bridging.stop_controller(mac))
         };
-        let mut phase = phase_text(view.phase);
+        let mut phase = match view.phase {
+            Phase::Waiting if no_bus => setup_screen::text::NOT_BRIDGED.into(),
+            phase => phase_text(phase),
+        };
         if let Some(error) = &view.error {
             phase = format!("{phase} ({error})").into();
         }
-        let input = match (view.phase, view.live.latest()) {
-            (Phase::Bridged, Some(state)) => input_text(state),
-            _ => "".into(),
-        };
+        let input = view.live.latest().map(input_text).unwrap_or_default();
         div()
             .flex()
             .flex_col()
@@ -129,12 +136,20 @@ impl MainView {
 impl Render for MainView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.bridging.snapshot();
+        let no_bus = snapshot
+            .setup
+            .as_ref()
+            .is_some_and(|setup| setup.is_missing(Driver::ViGEmBus));
         let rows: Vec<_> = snapshot
             .controllers
             .iter()
             .enumerate()
-            .map(|(index, view)| self.controller_row(index, view, cx))
+            .map(|(index, view)| self.controller_row(index, view, no_bus, cx))
             .collect();
+        let setup_screen = snapshot.setup.as_ref().and_then(|setup| {
+            let bridging = Arc::clone(&self.bridging);
+            setup_screen::setup_screen(setup, move || bridging.check_drivers(), cx)
+        });
         let theme = cx.theme();
         div()
             .size_full()
@@ -145,6 +160,7 @@ impl Render for MainView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .text_sm()
+            .children(setup_screen)
             .child(div().child(status_text(&snapshot.status, rows.len())))
             .children(
                 snapshot

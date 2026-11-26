@@ -1,6 +1,6 @@
 //! Runs the Bridge lifecycle for every DualSense on USB.
 //!
-//! One supervisor thread owns the [`Supervisor`]: it connects to ViGEmBus, finds
+//! One supervisor thread owns the [`Supervisor`]: it checks for the drivers, finds
 //! Controllers as they come and go, carries out the player's Stop and Start, and
 //! publishes a snapshot for the window. The window never waits on the thread.
 //!
@@ -19,10 +19,11 @@ use std::time::{Duration, Instant};
 use heka_core::hiding::{DeviceInstancePath, Hiding};
 use heka_core::lifecycle::Change;
 use heka_core::mac::MacAddress;
+use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, LinkId, Supervisor};
+use heka_windows::drivers::InstalledDrivers;
 use heka_windows::hid::{DualSenseUsbLink, dualsense_usb_paths};
 use heka_windows::hidhide;
-use heka_windows::vigem::VigemBus;
 use hidapi::HidApi;
 
 use crate::settings_file;
@@ -34,8 +35,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
-    /// ViGEmBus could not be opened. Retried every poll.
-    NoBus(String),
     /// HID enumeration failed. Retried every poll.
     HidError(String),
     Running,
@@ -45,6 +44,8 @@ pub enum Status {
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub status: Status,
+    /// What the last driver check found, once there has been one.
+    pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
     /// Why a Controller is not Hidden when it should be.
     pub hiding_note: Option<String>,
@@ -53,6 +54,7 @@ pub struct Snapshot {
 enum Command {
     Stop(MacAddress),
     Start(MacAddress),
+    CheckDrivers,
     Quit,
 }
 
@@ -67,6 +69,7 @@ impl Bridging {
         let (commands, inbox) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: Status::Starting,
+            setup: None,
             controllers: Vec::new(),
             hiding_note: None,
         }));
@@ -99,6 +102,11 @@ impl Bridging {
         let _ = self.commands.send(Command::Start(mac));
     }
 
+    /// Looks for the drivers again, for example after the player installed one.
+    pub fn check_drivers(&self) {
+        let _ = self.commands.send(Command::CheckDrivers);
+    }
+
     /// Removes every Virtual Controller, restores every Hidden Controller, and
     /// waits until both are done.
     pub fn quit(&self) {
@@ -122,27 +130,25 @@ impl Drop for Bridging {
 
 fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let mut hider = Hider::open();
-    let publish = |status: Status, controllers: Vec<ControllerView>, hider: &Hider| {
+    let publish = |status: Status, setup: &Setup, controllers, hider: &Hider| {
+        // Without HidHide every hiding failure follows from that, and the setup
+        // screen already says so.
+        let hiding_note = if setup.is_missing(Driver::HidHide) {
+            None
+        } else {
+            hider.note.clone()
+        };
         *snapshot.lock().unwrap_or_else(PoisonError::into_inner) = Snapshot {
             status,
+            setup: Some(setup.clone()),
             controllers,
-            hiding_note: hider.note.clone(),
+            hiding_note,
         };
     };
 
-    let bus = loop {
-        match VigemBus::connect() {
-            Ok(bus) => break bus,
-            Err(error) => publish(Status::NoBus(error.to_string()), Vec::new(), &hider),
-        }
-        match inbox.recv_timeout(POLL_INTERVAL) {
-            Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => return,
-            // Nothing is listed yet, so there is nothing to stop or start.
-            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-        }
-    };
-
-    let mut supervisor = Supervisor::new(Box::new(bus), settings_file::load());
+    let mut supervisor = Supervisor::without_bus(settings_file::load());
+    let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
+    hider.follow(&changes);
     let mut discovery = Discovery::default();
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
@@ -151,6 +157,11 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
             Ok(Command::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(Command::Stop(mac)) => supervisor.stop(mac, now),
             Ok(Command::Start(mac)) => supervisor.start(mac, now),
+            Ok(Command::CheckDrivers) => {
+                let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
+                detected = found;
+                changes
+            }
             Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
         if matches!(command, Ok(Command::Stop(_) | Command::Start(_))) {
@@ -164,11 +175,11 @@ fn supervise(inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
         };
         hider.follow(&supervisor.poll(now));
         hider.retry();
-        publish(status, supervisor.controllers(), &hider);
+        publish(status, &detected, supervisor.controllers(), &hider);
     }
     hider.follow(&supervisor.quit());
     hider.restore_all();
-    publish(Status::Starting, Vec::new(), &hider);
+    publish(Status::Starting, &detected, Vec::new(), &hider);
     // Dropping the Supervisor drops the bus last, which removes anything left.
 }
 
