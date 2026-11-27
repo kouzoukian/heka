@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use heka_core::calibration::Calibration;
+use heka_core::desktop::{Chord, Desk, DesktopError, DesktopEvent, DesktopOutput, Key, WheelStep};
 use heka_core::dualsense::{RumbleMode, is_bluetooth_lightbar_setup_report, usb_output_report};
 use heka_core::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
@@ -15,7 +16,9 @@ use heka_core::feedback::{
 use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
 };
+use heka_core::live_mapper::LiveMapper;
 use heka_core::preferences::{LightbarChoice, LivePreferences, Preferences, RumbleStrength};
+use heka_core::profile::{Binding, Input, Mapper, Profile};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
@@ -1235,4 +1238,220 @@ fn a_virtual_controller_that_gives_no_feedback_is_reported_once() {
 
     let no_feedback = VirtualFailure::NoFeedback("no notifications".into());
     assert_eq!(failures.take(), [no_feedback]);
+}
+
+const M: Key = Key::new(0x32);
+const Q: Key = Key::new(0x10);
+
+fn down(key: Key) -> DesktopEvent {
+    DesktopEvent::Key { key, down: true }
+}
+
+fn up(key: Key) -> DesktopEvent {
+    DesktopEvent::Key { key, down: false }
+}
+
+#[derive(Clone, Default)]
+struct FakeDesktop(Arc<Mutex<Vec<DesktopEvent>>>);
+
+impl FakeDesktop {
+    fn sent(&self) -> Vec<DesktopEvent> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl DesktopOutput for FakeDesktop {
+    fn send(&mut self, events: &[DesktopEvent]) -> Result<(), DesktopError> {
+        self.0.lock().unwrap().extend_from_slice(events);
+        Ok(())
+    }
+}
+
+fn cross_types(key: Key) -> Mapper {
+    let mut profile = Profile::named("Desk");
+    profile.bind(Input::Cross, Binding::Keys(Chord::of(key)));
+    Mapper::new(&profile)
+}
+
+struct Typing {
+    bridge: Bridge,
+    steps: Sender<Step>,
+    desktop: FakeDesktop,
+    mapper: Arc<LiveMapper>,
+    record: Arc<Mutex<Record>>,
+}
+
+fn typing() -> Typing {
+    let (link, steps, _) = FakeLink::live();
+    let (controller, record) = FakeController::new();
+    let desktop = FakeDesktop::default();
+    let mapper = Arc::new(LiveMapper::default());
+    mapper.set(cross_types(M));
+    let mut plugged = Plugged::new(controller);
+    plugged.use_desk(Arc::new(Desk::new(Box::new(desktop.clone()))));
+    plugged.map_with(Arc::clone(&mapper));
+    let bridge = Bridge::resume(OpenLink::new(link), plugged, Arc::default()).unwrap();
+    Typing {
+        bridge,
+        steps,
+        desktop,
+        mapper,
+        record,
+    }
+}
+
+#[test]
+fn a_report_presses_and_releases_the_key_a_button_is_bound_to() {
+    let typing = typing();
+
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+    typing
+        .steps
+        .send(Step::Report(common::captured_baseline()))
+        .unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M), up(M)]);
+
+    typing.bridge.stop();
+    let record = typing.record.lock().unwrap();
+    assert!(record.updates.iter().all(|s| s.buttons == Buttons::NONE));
+}
+
+#[test]
+fn stopping_a_bridge_releases_its_keys_before_it_returns() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+
+    let ended = typing.bridge.stop();
+
+    assert_eq!(typing.desktop.sent(), [down(M), up(M)]);
+    drop(ended);
+}
+
+#[test]
+fn losing_the_link_releases_the_keys() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    typing.steps.send(Step::Lost).unwrap();
+
+    wait_until(|| typing.bridge.is_finished());
+
+    assert_eq!(typing.desktop.sent(), [down(M), up(M)]);
+}
+
+#[test]
+fn dropping_a_bridge_releases_its_keys() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+
+    drop(typing.bridge);
+
+    assert_eq!(typing.desktop.sent(), [down(M), up(M)]);
+}
+
+#[test]
+fn a_failing_virtual_controller_leaves_no_key_held() {
+    let (link, steps, _) = FakeLink::live();
+    let (mut controller, _) = FakeController::new();
+    controller.fail_updates = true;
+    let desktop = FakeDesktop::default();
+    let mapper = Arc::new(LiveMapper::default());
+    mapper.set(cross_types(M));
+    let mut plugged = Plugged::new(controller);
+    plugged.use_desk(Arc::new(Desk::new(Box::new(desktop.clone()))));
+    plugged.map_with(mapper);
+    let bridge = Bridge::resume(OpenLink::new(link), plugged, Arc::default()).unwrap();
+
+    steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| bridge.is_finished());
+
+    assert_eq!(desktop.sent(), []);
+}
+
+#[test]
+fn a_changed_binding_releases_the_old_key_even_before_another_report() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+
+    typing.mapper.set(Mapper::default());
+
+    wait_until(|| typing.desktop.sent() == [down(M), up(M)]);
+    typing.bridge.stop();
+}
+
+#[test]
+fn a_changed_profile_presses_what_a_held_button_is_bound_to_now() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+
+    typing.mapper.set(cross_types(Q));
+    typing.steps.send(Step::Report(cross())).unwrap();
+
+    wait_until(|| typing.desktop.sent() == [down(M), up(M), down(Q)]);
+    typing.bridge.stop();
+}
+
+#[test]
+fn setting_the_same_mapping_again_keeps_the_keys_held() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+
+    typing.mapper.set(cross_types(M));
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.record.lock().unwrap().updates.len() == 2);
+
+    assert_eq!(typing.desktop.sent(), [down(M)]);
+    typing.bridge.stop();
+}
+
+#[test]
+fn a_binding_changed_to_the_wheel_turns_it_only_for_a_new_press() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+    let mut profile = Profile::named("Desk");
+    profile.bind(Input::Cross, Binding::Wheel(WheelStep::Up));
+
+    typing.mapper.set(Mapper::new(&profile));
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.record.lock().unwrap().updates.len() == 2);
+    typing
+        .steps
+        .send(Step::Report(common::captured_baseline()))
+        .unwrap();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.record.lock().unwrap().updates.len() == 4);
+    typing.bridge.stop();
+
+    assert_eq!(
+        typing.desktop.sent(),
+        [down(M), up(M), DesktopEvent::Wheel(WheelStep::Up)]
+    );
+}
+
+#[test]
+fn a_bridge_dropped_by_a_panicking_thread_still_releases_its_keys() {
+    let typing = typing();
+    typing.steps.send(Step::Report(cross())).unwrap();
+    wait_until(|| typing.desktop.sent() == [down(M)]);
+    let Typing {
+        bridge,
+        desktop,
+        steps: _steps,
+        ..
+    } = typing;
+
+    let panicked = std::thread::spawn(move || {
+        let _bridge = bridge;
+        panic!("the supervisor failed");
+    })
+    .join();
+
+    assert!(panicked.is_err());
+    wait_until(|| desktop.sent() == [down(M), up(M)]);
 }

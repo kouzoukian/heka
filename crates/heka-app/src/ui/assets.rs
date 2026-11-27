@@ -12,6 +12,7 @@ icon_assets!(
         Bluetooth,
         CircleArrowUp,
         Gamepad2,
+        Keyboard,
         Layers,
         Palette,
         Pencil,

@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::desktop::{Chord, DesktopState, Key, MouseButton, WheelStep};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
 use crate::tuning::{
     StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
@@ -177,6 +179,59 @@ pub enum Binding {
     Default,
     Nothing,
     To(Output),
+    Keys(Chord),
+    Mouse(MouseButton),
+    Wheel(WheelStep),
+}
+
+impl Binding {
+    fn load(value: &Value) -> Option<Self> {
+        match value {
+            Value::Null => Some(Self::Nothing),
+            Value::Object(fields) => {
+                match (fields.get("keys"), fields.get("mouse"), fields.get("wheel")) {
+                    (Some(keys), None, None) => chord(keys).map(Self::Keys),
+                    (None, Some(button), None) => given(button).map(Self::Mouse),
+                    (None, None, Some(step)) => given(step).map(Self::Wheel),
+                    _ => None,
+                }
+            }
+            other => given(other).map(Self::To),
+        }
+    }
+}
+
+impl Serialize for Binding {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        fn tagged<S: Serializer>(
+            serializer: S,
+            tag: &str,
+            value: impl Serialize,
+        ) -> Result<S::Ok, S::Error> {
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_entry(tag, &value)?;
+            map.end()
+        }
+        match self {
+            Self::Default | Self::Nothing => serializer.serialize_none(),
+            Self::To(output) => output.serialize(serializer),
+            Self::Keys(chord) => tagged(
+                serializer,
+                "keys",
+                chord.keys().map(Key::scan).collect::<Vec<_>>(),
+            ),
+            Self::Mouse(button) => tagged(serializer, "mouse", button),
+            Self::Wheel(step) => tagged(serializer, "wheel", step),
+        }
+    }
+}
+
+fn chord(value: &Value) -> Option<Chord> {
+    let keys = given::<Vec<u16>>(value)?
+        .into_iter()
+        .map(Key::from_scan)
+        .collect::<Option<Vec<_>>>()?;
+    Chord::new(&keys)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,7 +245,7 @@ pub struct Profile {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_type: Option<OutputType>,
-    bindings: BTreeMap<Input, Option<Output>>,
+    bindings: BTreeMap<Input, Binding>,
     #[serde(skip_serializing_if = "StickTuning::is_neutral")]
     pub left_stick: StickTuning,
     #[serde(skip_serializing_if = "StickTuning::is_neutral")]
@@ -270,13 +325,9 @@ impl Profile {
             .and_then(Value::as_object)
             .into_iter()
             .flatten()
-            .filter_map(|(input, output)| {
+            .filter_map(|(input, binding)| {
                 let input = given::<Input>(&Value::String(input.clone()))?;
-                let output = match output {
-                    Value::Null => None,
-                    other => Some(given::<Output>(other)?),
-                };
-                Some((input, output))
+                Some((input, Binding::load(binding)?))
             })
             .collect();
         let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
@@ -307,18 +358,16 @@ impl Profile {
     }
 
     pub fn binding(&self, input: Input) -> Binding {
-        match self.bindings.get(&input) {
-            None => Binding::Default,
-            Some(None) => Binding::Nothing,
-            Some(Some(output)) => Binding::To(*output),
-        }
+        self.bindings
+            .get(&input)
+            .copied()
+            .unwrap_or(Binding::Default)
     }
 
     pub fn bind(&mut self, input: Input, binding: Binding) {
         match binding {
             Binding::Default => self.bindings.remove(&input),
-            Binding::Nothing => self.bindings.insert(input, None),
-            Binding::To(output) => self.bindings.insert(input, Some(output)),
+            binding => self.bindings.insert(input, binding),
         };
     }
 
@@ -371,16 +420,15 @@ fn given<T: DeserializeOwned>(value: &Value) -> Option<T> {
     T::deserialize(value).ok()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Slot {
-    Unbound,
-    Nothing,
-    To(Output),
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mapped {
+    pub shown: ControllerState,
+    pub desktop: DesktopState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mapper {
-    slots: [Slot; Input::ALL.len()],
+    slots: [Binding; Input::ALL.len()],
     left_stick: StickTuning,
     right_stick: StickTuning,
     swap_sticks: bool,
@@ -391,7 +439,7 @@ pub struct Mapper {
 impl Default for Mapper {
     fn default() -> Self {
         Self {
-            slots: [Slot::Unbound; Input::ALL.len()],
+            slots: [Binding::Default; Input::ALL.len()],
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
@@ -412,25 +460,29 @@ impl Mapper {
             ..Self::default()
         };
         for input in Input::ALL {
-            mapper.slots[input.index()] = match profile.binding(input) {
-                Binding::Default => Slot::Unbound,
-                Binding::Nothing => Slot::Nothing,
-                Binding::To(output) => Slot::To(output),
-            };
+            mapper.slots[input.index()] = profile.binding(input);
         }
         mapper
     }
 
     pub fn map(&self, state: &ControllerState) -> ControllerState {
+        self.mapped(state).shown
+    }
+
+    pub fn mapped(&self, state: &ControllerState) -> Mapped {
         let mut buttons = Buttons::NONE;
         let mut left_full = false;
         let mut right_full = false;
-        let mut drive = |slot: Slot, own: Buttons| match slot {
-            Slot::Unbound => buttons |= own,
-            Slot::Nothing => {}
-            Slot::To(Output::LeftTrigger) => left_full = true,
-            Slot::To(Output::RightTrigger) => right_full = true,
-            Slot::To(output) => buttons |= output.buttons(),
+        let mut desktop = DesktopState::default();
+        let mut drive = |source: Input, own: Buttons| match self.slot(source) {
+            Binding::Default => buttons |= own,
+            Binding::Nothing => {}
+            Binding::To(Output::LeftTrigger) => left_full = true,
+            Binding::To(Output::RightTrigger) => right_full = true,
+            Binding::To(output) => buttons |= output.buttons(),
+            Binding::Keys(chord) => desktop.add_chord(chord),
+            Binding::Mouse(button) => desktop.add_button(button),
+            Binding::Wheel(step) => desktop.add_wheel(source.index(), step),
         };
         for input in Input::ALL {
             let own = input.buttons();
@@ -446,14 +498,13 @@ impl Mapper {
                             Input::TouchpadRight
                         }
                     });
-                    let slot = half
-                        .map(|half| self.slot(half))
-                        .filter(|slot| *slot != Slot::Unbound)
-                        .unwrap_or_else(|| self.slot(Input::Touchpad));
-                    drive(slot, own);
+                    let source = half
+                        .filter(|&half| self.is_bound(half))
+                        .unwrap_or(Input::Touchpad);
+                    drive(source, own);
                 }
                 Input::TouchpadLeft | Input::TouchpadRight => {}
-                _ => drive(self.slot(input), own),
+                _ => drive(input, own),
             }
         }
         if left_full || self.hair_trigger_fires(Input::L2, state.left_trigger) {
@@ -463,7 +514,7 @@ impl Mapper {
             buttons |= Buttons::R2;
         }
         let (left_stick, right_stick, fine_sticks) = self.sticks(state);
-        ControllerState {
+        let shown = ControllerState {
             buttons,
             left_trigger: self.trigger(Input::L2, left_full, state.left_trigger),
             right_trigger: self.trigger(Input::R2, right_full, state.right_trigger),
@@ -471,7 +522,8 @@ impl Mapper {
             right_stick,
             fine_sticks,
             ..*state
-        }
+        };
+        Mapped { shown, desktop }
     }
 
     fn sticks(&self, state: &ControllerState) -> (Stick, Stick, Option<FineSticks>) {
@@ -505,23 +557,27 @@ impl Mapper {
             _ => return state.buttons.contains(input.buttons()),
         };
         match self.tuning_of(input).presses(travel) {
-            Some(pressed) if self.slot(input) != Slot::Unbound => pressed,
+            Some(pressed) if self.is_bound(input) => pressed,
             _ => state.buttons.contains(input.buttons()),
         }
     }
 
     fn hair_trigger_fires(&self, input: Input, travel: u8) -> bool {
-        self.slot(input) == Slot::Unbound && self.tuning_of(input).fires_hair_trigger(travel)
+        !self.is_bound(input) && self.tuning_of(input).fires_hair_trigger(travel)
     }
 
-    fn slot(&self, input: Input) -> Slot {
+    fn slot(&self, input: Input) -> Binding {
         self.slots[input.index()]
+    }
+
+    fn is_bound(&self, input: Input) -> bool {
+        self.slot(input) != Binding::Default
     }
 
     fn trigger(&self, input: Input, full: bool, travel: u8) -> u8 {
         if full {
             u8::MAX
-        } else if self.slot(input) == Slot::Unbound {
+        } else if !self.is_bound(input) {
             self.tuning_of(input).tune(travel)
         } else {
             0

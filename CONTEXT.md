@@ -28,11 +28,11 @@ A named set of choices for how a Controller's input becomes what games receive: 
 _Avoid_: mapping, configuration, preset
 
 **Binding**:
-What one input of a Profile drives on the Virtual Controller: another button, a d-pad direction, a trigger pressed all the way, or nothing.
+What one input of a Profile drives: another button, a d-pad direction or a trigger pressed all the way on the Virtual Controller, a key or key combination, a mouse button or a wheel step on the PC, or nothing.
 _Avoid_: mapping, assignment
 
 **Mapper**:
-The step that turns a Controller's state into the state its Virtual Controller shows, by the Controller's Profile.
+The step that turns a Controller's state into the state its Virtual Controller shows and the keys and mouse buttons it holds, by the Controller's Profile.
 
 **Bridge**:
 The live pairing of one Controller with one Virtual Controller, carrying input to the game and Feedback back.

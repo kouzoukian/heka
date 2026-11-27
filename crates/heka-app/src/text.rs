@@ -1,3 +1,4 @@
+use heka_core::desktop::{Chord, Key, MouseButton, WheelStep};
 use heka_core::discovery::{OpenError, Unopened};
 use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{
@@ -601,7 +602,143 @@ pub fn delete_profile_question(name: &str, users: usize) -> String {
     }
 }
 
-pub const BINDING_TIP: &str = "What this input drives on the Virtual Controller";
+pub const BINDING_TIP: &str = "What this input drives";
+pub const KIND_BUTTON: &str = "Button";
+pub const KIND_KEY: &str = "Key";
+pub const KIND_MOUSE: &str = "Mouse";
+pub const ROW_KEYS: &str = "Keys";
+pub const CAPTURE_KEY: &str = "Capture a key";
+pub const CAPTURING_KEY: &str = "Press a key, Esc cancels";
+pub const CAPTURE_TIP: &str = "Capture a key or combination by pressing it";
+pub const KEYS_TIP: &str = "The key or combination held while this input is";
+pub const MOUSE_BUTTON_TIP: &str = "The mouse button held while this input is";
+pub const WHEEL_TIP: &str = "Turns the wheel one step for each press";
+pub const BIND_ESCAPE: &str = "Bind Esc";
+pub const ROW_MOUSE_BUTTON: &str = "Button";
+pub const ROW_WHEEL: &str = "Wheel";
+pub const FORWARD_SHORT: &str = "Fwd";
+pub const DESKTOP_NOTE: &str = "Programs run as administrator ignore keys and clicks unless heka is too. Anti-cheat may reject them.";
+
+pub fn mouse_button_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "Left",
+        MouseButton::Right => "Right",
+        MouseButton::Middle => "Middle",
+        MouseButton::Back => "Back",
+        MouseButton::Forward => "Forward",
+    }
+}
+
+pub fn wheel_name(step: WheelStep) -> &'static str {
+    match step {
+        WheelStep::Up => "Up",
+        WheelStep::Down => "Down",
+    }
+}
+
+pub fn key_name(key: Key, label: &dyn Fn(Key) -> Option<String>) -> String {
+    if let Some(name) = named_key(key) {
+        return name.to_owned();
+    }
+    label(key)
+        .or_else(|| us_character(key).map(String::from))
+        .unwrap_or_else(|| format!("{:04X}", key.scan()))
+}
+
+pub fn chord_words(chord: Chord, label: &dyn Fn(Key) -> Option<String>) -> String {
+    chord
+        .modifiers()
+        .map(|modifier| modifier_name(modifier).to_owned())
+        .chain([key_name(chord.key(), label)])
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+fn modifier_name(key: Key) -> &'static str {
+    match key {
+        Key::LEFT_CTRL => "Ctrl",
+        Key::LEFT_ALT => "Alt",
+        Key::LEFT_SHIFT => "Shift",
+        Key::LEFT_WINDOWS => "Win",
+        other => named_key(other).expect("every modifier has a name"),
+    }
+}
+
+fn named_key(key: Key) -> Option<&'static str> {
+    const FUNCTION: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"];
+    const MORE_FUNCTION: [&str; 11] = [
+        "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23",
+    ];
+    let name = match key.scan() {
+        0x01 => "Esc",
+        0x0E => "Backspace",
+        0x0F => "Tab",
+        0x1C => "Enter",
+        0x1D => "Left Ctrl",
+        0x2A => "Left Shift",
+        0x36 => "Right Shift",
+        0x37 => "Num *",
+        0x38 => "Left Alt",
+        0x39 => "Space",
+        0x3A => "Caps Lock",
+        scan @ 0x3B..=0x44 => FUNCTION[usize::from(scan - 0x3B)],
+        0x45 => "Pause",
+        0x46 => "Scroll Lock",
+        0x47 => "Num 7",
+        0x48 => "Num 8",
+        0x49 => "Num 9",
+        0x4A => "Num -",
+        0x4B => "Num 4",
+        0x4C => "Num 5",
+        0x4D => "Num 6",
+        0x4E => "Num +",
+        0x4F => "Num 1",
+        0x50 => "Num 2",
+        0x51 => "Num 3",
+        0x52 => "Num 0",
+        0x53 => "Num .",
+        0x54 | 0xE037 => "Print Screen",
+        0x57 => "F11",
+        0x58 => "F12",
+        scan @ 0x64..=0x6E => MORE_FUNCTION[usize::from(scan - 0x64)],
+        0x76 => "F24",
+        0xE01C => "Num Enter",
+        0xE01D => "Right Ctrl",
+        0xE035 => "Num /",
+        0xE038 => "Right Alt",
+        0xE045 => "Num Lock",
+        0xE047 => "Home",
+        0xE048 => "Up",
+        0xE049 => "Page Up",
+        0xE04B => "Left",
+        0xE04D => "Right",
+        0xE04F => "End",
+        0xE050 => "Down",
+        0xE051 => "Page Down",
+        0xE052 => "Insert",
+        0xE053 => "Delete",
+        0xE05B => "Left Windows",
+        0xE05C => "Right Windows",
+        0xE05D => "Menu",
+        _ => return None,
+    };
+    Some(name)
+}
+
+fn us_character(key: Key) -> Option<char> {
+    let rows: [(u16, &str); 6] = [
+        (0x02, "1234567890-="),
+        (0x10, "QWERTYUIOP[]"),
+        (0x1E, "ASDFGHJKL;'`"),
+        (0x2B, "\\ZXCVBNM,./"),
+        (0x56, "\\"),
+        (0x73, "/"),
+    ];
+    rows.into_iter().find_map(|(first, characters)| {
+        let place = key.scan().checked_sub(first)?;
+        characters.chars().nth(usize::from(place))
+    })
+}
 
 pub fn input_name(input: Input) -> &'static str {
     match input {
@@ -674,11 +811,17 @@ pub fn cannot_export(path: &std::path::Path, error: &str) -> String {
     format!("Cannot write {}: {error}", path.display())
 }
 
-pub fn binding_words(binding: Binding) -> &'static str {
+pub fn binding_words(binding: Binding, label: &dyn Fn(Key) -> Option<String>) -> String {
     match binding {
-        Binding::Default => DEFAULT,
-        Binding::Nothing => BINDING_NOTHING,
-        Binding::To(output) => output_name(output),
+        Binding::Default => DEFAULT.to_owned(),
+        Binding::Nothing => BINDING_NOTHING.to_owned(),
+        Binding::To(output) => output_name(output).to_owned(),
+        Binding::Keys(chord) => format!("{KIND_KEY} {}", chord_words(chord, label)),
+        Binding::Mouse(button) => {
+            let button = mouse_button_name(button).to_lowercase();
+            format!("{KIND_MOUSE} {button}")
+        }
+        Binding::Wheel(step) => format!("{ROW_WHEEL} {}", wheel_name(step).to_lowercase()),
     }
 }
 
@@ -714,6 +857,14 @@ pub mod log {
 
     pub fn repeated(message: &str, left_out: u32) -> String {
         format!("{message} (left out {left_out} repeats)")
+    }
+
+    pub fn cannot_send_input(error: &str) -> String {
+        format!("cannot send keys or clicks: {error}")
+    }
+
+    pub fn cannot_listen_for_keys(error: &str) -> String {
+        format!("cannot listen for keys: {error}")
     }
 
     pub fn cannot_write(error: &str) -> String {

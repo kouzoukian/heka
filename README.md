@@ -23,7 +23,8 @@ it twice. The live pairing of the two is a **Bridge**.
 
 - **Xbox 360 or DualShock 4 output**, chosen and remembered for each Controller.
 - **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
-- **Profiles:** remap buttons and tune sticks and triggers, chosen for each Controller.
+- **Profiles:** remap buttons, also to keyboard keys and the mouse, and tune sticks and
+  triggers, chosen for each Controller.
 - **Profiles by game:** the program in front can apply its own Profile.
 - **Controller shortcuts:** hold **PS** to switch Profile or turn off a Controller.
 - **USB and Bluetooth.** A Controller on both is listed once and read over USB.
@@ -156,7 +157,8 @@ use it. Changes apply at once.
 
 - **Buttons:** each button, d-pad direction, L2 and R2, mute, touchpad click (whole, or
   its left and right halves) and DualSense Edge button can drive another button, a d-pad
-  direction, a trigger pressed fully, or nothing.
+  direction, a trigger pressed fully, [the keyboard or mouse](#keyboard-and-mouse), or
+  nothing.
 - **Sticks:** for each stick, dead zone, anti-dead zone, max zone, sensitivity, output
   curve and inverted axes; the two sticks can be swapped. A live readout shows your input
   beside the tuned one, with the Controller's reports per second.
@@ -167,6 +169,29 @@ use it. Changes apply at once.
 
 Profiles can be renamed, duplicated, deleted, exported to a file and imported from one.
 DS4Windows profiles cannot be imported.
+
+#### Keyboard and mouse
+
+A button can press a **key**, alone or with Ctrl, Alt, Shift or the Windows key, one of
+the five **mouse buttons**, or turn the **wheel** one step. It then no longer reaches the
+Virtual Controller.
+
+- To bind a key, open the input under **Buttons**, choose **Key**, press **Capture a
+  key** and press the key or combination. **Esc** cancels; **Bind Esc** binds Esc itself.
+- A key or mouse button is held while the button is. The wheel turns once for each press.
+- heka sends the key's place on the keyboard (its scan code), which games understand. The
+  name shown follows your keyboard layout.
+- Everything held is released when the Controller disconnects, when its Profile or a
+  Binding changes, when you **Stop** it and when heka quits. If heka is ended by force,
+  press a key that stayed down once to release it.
+- Windows ignores these keys and clicks in a program **run as administrator**, such as
+  some games and Task Manager, unless heka runs as administrator too.
+- **Anti-cheat** software may ignore keys and clicks sent by another program, or treat
+  them as cheating. Check a game's rules before using them in it.
+- A key held while such a program comes to the front can stay down, because Windows
+  ignores its release too. Press that key once.
+- Combinations Windows acts on itself, such as Ctrl+Alt+Del, Alt+Tab or the Windows key
+  with D or L, cannot be captured.
 
 ### Log and About
 

@@ -11,7 +11,9 @@ use heka_app::ui::model::{
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view::{self, Page};
 use heka_core::app_settings::AppSettings;
+use heka_core::capture::KeyListener;
 use heka_core::clock::Timestamp;
+use heka_core::desktop::Key;
 use heka_core::hiding::{DeviceInstancePath, HidingChange};
 use heka_core::lifecycle::Change;
 use heka_core::link::{ControllerModel, LinkKind};
@@ -24,6 +26,7 @@ use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::{Rect, WindowPlacement};
+use heka_windows::keyboard::{self, KeyHook};
 
 const REPORT_EVERY: Duration = Duration::from_secs(2);
 
@@ -151,6 +154,16 @@ impl Fake {
 }
 
 impl Backend for Fake {
+    fn listen_for_keys(&self) -> Option<Box<dyn KeyListener>> {
+        KeyHook::install()
+            .ok()
+            .map(|hook| Box::new(hook) as Box<dyn KeyListener>)
+    }
+
+    fn key_label(&self, key: Key) -> Option<String> {
+        keyboard::key_label(key)
+    }
+
     fn screen(&self, now: Instant) -> Screen {
         self.report_rate(now);
         let t = now.duration_since(self.started).as_secs_f32();
