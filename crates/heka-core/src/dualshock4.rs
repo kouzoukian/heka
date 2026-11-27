@@ -201,6 +201,7 @@ fn state(
         },
         left_trigger: common[LEFT_TRIGGER],
         right_trigger: common[RIGHT_TRIGGER],
+        fine_sticks: None,
         battery: Some(battery(common[STATUS_0])),
         touch: newest_touch(touch, capacity),
         motion: Motion {

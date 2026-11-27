@@ -171,6 +171,7 @@ pub fn parse_usb_input_report(
         },
         left_trigger: report[LEFT_TRIGGER],
         right_trigger: report[RIGHT_TRIGGER],
+        fine_sticks: None,
         battery: Some(battery(report[STATUS_0])),
     })
 }

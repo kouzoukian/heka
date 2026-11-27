@@ -53,16 +53,34 @@ impl XboxReport {
             .iter()
             .filter(|(from, _)| state.buttons.contains(*from))
             .fold(0, |bits, (_, to)| bits | to);
+        let (thumb_lx, thumb_ly, thumb_rx, thumb_ry) = match state.fine_sticks {
+            Some(fine) => (
+                fine.left_x,
+                flipped(fine.left_y),
+                fine.right_x,
+                flipped(fine.right_y),
+            ),
+            None => (
+                axis(state.left_stick.x),
+                inverted_axis(state.left_stick.y),
+                axis(state.right_stick.x),
+                inverted_axis(state.right_stick.y),
+            ),
+        };
         Self {
             buttons,
             left_trigger: state.left_trigger,
             right_trigger: state.right_trigger,
-            thumb_lx: axis(state.left_stick.x),
-            thumb_ly: inverted_axis(state.left_stick.y),
-            thumb_rx: axis(state.right_stick.x),
-            thumb_ry: inverted_axis(state.right_stick.y),
+            thumb_lx,
+            thumb_ly,
+            thumb_rx,
+            thumb_ry,
         }
     }
+}
+
+fn flipped(value: i16) -> i16 {
+    (-i32::from(value)).clamp(i16::MIN.into(), i16::MAX.into()) as i16
 }
 
 fn axis(value: u8) -> i16 {

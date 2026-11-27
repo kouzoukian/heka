@@ -4,7 +4,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::state::{Buttons, ControllerState, TOUCHPAD_WIDTH};
+use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
+use crate::tuning::{StickTuning, fine, tuned_stick};
 use crate::virtual_controller::OutputType;
 
 pub const DEFAULT_NAME: &str = "Default";
@@ -187,6 +188,16 @@ pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_type: Option<OutputType>,
     bindings: BTreeMap<Input, Option<Output>>,
+    #[serde(skip_serializing_if = "StickTuning::is_neutral")]
+    pub left_stick: StickTuning,
+    #[serde(skip_serializing_if = "StickTuning::is_neutral")]
+    pub right_stick: StickTuning,
+    #[serde(skip_serializing_if = "is_false")]
+    pub swap_sticks: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Default for Profile {
@@ -201,6 +212,9 @@ impl Profile {
             name: clean_name(name).unwrap_or_else(|| DEFAULT_NAME.to_owned()),
             output_type: None,
             bindings: BTreeMap::new(),
+            left_stick: StickTuning::default(),
+            right_stick: StickTuning::default(),
+            swap_sticks: false,
         }
     }
 
@@ -217,9 +231,16 @@ impl Profile {
         let Value::Object(root) = value else {
             return Err(ProfileError::NotAProfile);
         };
-        let looks_like_one = ["name", "output_type", "bindings"]
-            .iter()
-            .any(|key| root.contains_key(*key));
+        let looks_like_one = [
+            "name",
+            "output_type",
+            "bindings",
+            "left_stick",
+            "right_stick",
+            "swap_sticks",
+        ]
+        .iter()
+        .any(|key| root.contains_key(*key));
         if !looks_like_one {
             return Err(ProfileError::NotAProfile);
         }
@@ -247,10 +268,17 @@ impl Profile {
                 Some((input, output))
             })
             .collect();
+        let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
         Some(Self {
             name,
             output_type,
             bindings,
+            left_stick: stick("left_stick"),
+            right_stick: stick("right_stick"),
+            swap_sticks: root
+                .get("swap_sticks")
+                .and_then(given::<bool>)
+                .unwrap_or(false),
         })
     }
 
@@ -281,7 +309,11 @@ impl Profile {
     }
 
     pub fn is_plain(&self) -> bool {
-        self.output_type.is_none() && self.bindings.is_empty()
+        self.output_type.is_none()
+            && self.bindings.is_empty()
+            && self.left_stick.is_neutral()
+            && self.right_stick.is_neutral()
+            && !self.swap_sticks
     }
 }
 
@@ -305,19 +337,30 @@ enum Slot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mapper {
     slots: [Slot; Input::ALL.len()],
+    left_stick: StickTuning,
+    right_stick: StickTuning,
+    swap_sticks: bool,
 }
 
 impl Default for Mapper {
     fn default() -> Self {
         Self {
             slots: [Slot::Unbound; Input::ALL.len()],
+            left_stick: StickTuning::default(),
+            right_stick: StickTuning::default(),
+            swap_sticks: false,
         }
     }
 }
 
 impl Mapper {
     pub fn new(profile: &Profile) -> Self {
-        let mut mapper = Self::default();
+        let mut mapper = Self {
+            left_stick: profile.left_stick,
+            right_stick: profile.right_stick,
+            swap_sticks: profile.swap_sticks,
+            ..Self::default()
+        };
         for input in Input::ALL {
             mapper.slots[input.index()] = match profile.binding(input) {
                 Binding::Default => Slot::Unbound,
@@ -369,11 +412,32 @@ impl Mapper {
         if right_full {
             buttons |= Buttons::R2;
         }
+        let (left_stick, right_stick, fine_sticks) = self.sticks(state);
         ControllerState {
             buttons,
             left_trigger: self.trigger(Input::L2, left_full, state.left_trigger),
             right_trigger: self.trigger(Input::R2, right_full, state.right_trigger),
+            left_stick,
+            right_stick,
+            fine_sticks,
             ..*state
+        }
+    }
+
+    fn sticks(&self, state: &ControllerState) -> (Stick, Stick, Option<FineSticks>) {
+        if self.left_stick.is_neutral() && self.right_stick.is_neutral() {
+            return if self.swap_sticks {
+                (state.right_stick, state.left_stick, state.fine_sticks)
+            } else {
+                (state.left_stick, state.right_stick, state.fine_sticks)
+            };
+        }
+        let (left, left_wide) = tuned_stick(&self.left_stick, state.left_stick);
+        let (right, right_wide) = tuned_stick(&self.right_stick, state.right_stick);
+        if self.swap_sticks {
+            (right, left, Some(fine(right_wide, left_wide)))
+        } else {
+            (left, right, Some(fine(left_wide, right_wide)))
         }
     }
 

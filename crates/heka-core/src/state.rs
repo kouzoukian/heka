@@ -103,6 +103,14 @@ impl Stick {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FineSticks {
+    pub left_x: i16,
+    pub left_y: i16,
+    pub right_x: i16,
+    pub right_y: i16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Charge {
     Discharging,
     Charging,
@@ -148,6 +156,7 @@ pub struct ControllerState {
     pub right_stick: Stick,
     pub left_trigger: u8,
     pub right_trigger: u8,
+    pub fine_sticks: Option<FineSticks>,
     pub battery: Option<Battery>,
     pub touch: [Option<Finger>; 2],
     pub motion: Motion,
@@ -160,6 +169,7 @@ impl ControllerState {
         right_stick: Stick::CENTER,
         left_trigger: 0,
         right_trigger: 0,
+        fine_sticks: None,
         battery: None,
         touch: [None, None],
         motion: Motion {

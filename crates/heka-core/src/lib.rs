@@ -26,6 +26,7 @@ pub mod setup;
 pub mod state;
 pub mod supervisor;
 pub mod threads;
+pub mod tuning;
 pub mod virtual_controller;
 pub mod watch;
 pub mod web;
