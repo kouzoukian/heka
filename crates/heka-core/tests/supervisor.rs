@@ -437,7 +437,7 @@ fn quitting_removes_every_virtual_controller() {
     held.pull_out();
     poll_until_changed(&mut supervisor, t0);
 
-    let changes = supervisor.quit();
+    let changes = supervisor.quit(t0);
     assert_eq!(changes.len(), 2);
     assert!(bus.unplugged(0) && bus.unplugged(1));
     assert!(supervisor.controllers().is_empty());
@@ -974,8 +974,8 @@ fn a_virtual_controller_that_cannot_be_removed_is_reported() {
     let stop: fn(&mut Supervisor, Instant) = |supervisor, now| {
         supervisor.stop(mac(1), now);
     };
-    let quit: fn(&mut Supervisor, Instant) = |supervisor, _| {
-        supervisor.quit();
+    let quit: fn(&mut Supervisor, Instant) = |supervisor, now| {
+        supervisor.quit(now);
     };
     let change: fn(&mut Supervisor, Instant) = |supervisor, now| {
         supervisor.set_output_type(mac(1), OutputType::Ps4, now);

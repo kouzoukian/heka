@@ -292,7 +292,7 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
     if unsaved {
         settings_file::save(supervisor.settings());
     }
-    follow(&mut hider, &supervisor.quit());
+    follow(&mut hider, &supervisor.quit(Instant::now()));
     report_failures(&mut supervisor, &mut not_unplugged);
     if let Err(error) = hider.restore_all() {
         log::line(&text::log::cannot_restore_on_quit(&error));

@@ -498,9 +498,9 @@ impl Supervisor {
         }
     }
 
-    pub fn quit(&mut self) -> Vec<Change> {
+    pub fn quit(&mut self, now: Instant) -> Vec<Change> {
         let changes = self.lifecycle.quit();
-        let done = self.apply(changes, Instant::now());
+        let done = self.apply(changes, now);
         self.slots.clear();
         done
     }
