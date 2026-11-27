@@ -17,11 +17,20 @@ pub enum CloseAction {
     Quit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    #[default]
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppSettings {
     pub start_in_tray: bool,
     pub on_close: CloseAction,
     pub check_for_releases: bool,
+    pub theme: ThemeChoice,
     #[serde(skip_serializing_if = "GameRules::is_empty")]
     pub game_rules: GameRules,
     #[serde(skip_serializing_if = "Shortcuts::is_default")]
@@ -35,6 +44,7 @@ pub enum AppChange {
     StartInTray(bool),
     OnClose(CloseAction),
     CheckForReleases(bool),
+    Theme(ThemeChoice),
 }
 
 impl Default for AppSettings {
@@ -43,6 +53,7 @@ impl Default for AppSettings {
             start_in_tray: false,
             on_close: CloseAction::default(),
             check_for_releases: true,
+            theme: ThemeChoice::default(),
             game_rules: GameRules::default(),
             shortcuts: Shortcuts::default(),
             window: None,
@@ -60,6 +71,7 @@ impl AppSettings {
             on_close: field(entry, "on_close"),
             check_for_releases: given(entry, "check_for_releases")
                 .unwrap_or(Self::default().check_for_releases),
+            theme: field(entry, "theme"),
             game_rules: GameRules::load(entry.get("game_rules")),
             shortcuts: Shortcuts::load(entry.get("shortcuts")),
             window: given::<WindowPlacement>(entry, "window")
@@ -72,6 +84,7 @@ impl AppSettings {
             AppChange::StartInTray(start_in_tray) => self.start_in_tray = start_in_tray,
             AppChange::OnClose(on_close) => self.on_close = on_close,
             AppChange::CheckForReleases(check) => self.check_for_releases = check,
+            AppChange::Theme(theme) => self.theme = theme,
         }
     }
 

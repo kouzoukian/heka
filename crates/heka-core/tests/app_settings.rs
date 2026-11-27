@@ -1,4 +1,4 @@
-use heka_core::app_settings::{AppChange, AppSettings, CloseAction};
+use heka_core::app_settings::{AppChange, AppSettings, CloseAction, ThemeChoice};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
 use heka_core::window_placement::{Monitor, Rect, WindowPlacement};
@@ -43,6 +43,7 @@ fn heka_keeps_running_and_opens_its_window_by_default() {
             start_in_tray: false,
             on_close: CloseAction::KeepRunning,
             check_for_releases: true,
+            theme: ThemeChoice::Dark,
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: None,
@@ -79,6 +80,7 @@ fn app_settings_survive_a_save_and_load() {
         start_in_tray: true,
         on_close: CloseAction::Quit,
         check_for_releases: false,
+        theme: ThemeChoice::Light,
         game_rules: Default::default(),
         shortcuts: Default::default(),
         window: Some(WindowPlacement {
@@ -98,6 +100,7 @@ fn the_file_names_the_app_settings() {
         "start_in_tray": true,
         "on_close": "quit",
         "check_for_releases": false,
+        "theme": "light",
         "window": {"x": 10, "y": 20, "width": 700, "height": 600}
     }}"#;
 
@@ -107,6 +110,7 @@ fn the_file_names_the_app_settings() {
             start_in_tray: true,
             on_close: CloseAction::Quit,
             check_for_releases: false,
+            theme: ThemeChoice::Light,
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: Some(placed(rect(10, 20, 700, 600))),
@@ -120,6 +124,7 @@ fn a_broken_app_setting_leaves_the_others() {
         "start_in_tray": true,
         "on_close": "minimize",
         "check_for_releases": "no",
+        "theme": "solarized",
         "window": {"x": "left"},
         "future": 1
     }}"#;
@@ -170,6 +175,7 @@ fn a_change_touches_only_what_it_names() {
     app.change(AppChange::StartInTray(true));
     app.change(AppChange::OnClose(CloseAction::Quit));
     app.change(AppChange::CheckForReleases(false));
+    app.change(AppChange::Theme(ThemeChoice::Light));
 
     assert_eq!(
         app,
@@ -177,6 +183,7 @@ fn a_change_touches_only_what_it_names() {
             start_in_tray: true,
             on_close: CloseAction::Quit,
             check_for_releases: false,
+            theme: ThemeChoice::Light,
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: Some(placed(rect(1, 2, 700, 600))),

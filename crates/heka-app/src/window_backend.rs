@@ -80,6 +80,7 @@ impl WindowBackend {
             start_in_tray: app.start_in_tray,
             on_close: app.on_close,
             check_for_releases: app.check_for_releases,
+            theme: app.theme,
         }
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use heka_core::app_settings::{AppChange, CloseAction};
+use heka_core::app_settings::{AppChange, CloseAction, ThemeChoice};
 use heka_core::capture::KeyListener;
 use heka_core::desktop::Key;
 use heka_core::feedback::Motor;
@@ -99,6 +99,7 @@ pub struct AppEntry {
     pub start_in_tray: bool,
     pub on_close: CloseAction,
     pub check_for_releases: bool,
+    pub theme: ThemeChoice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

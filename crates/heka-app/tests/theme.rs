@@ -1,46 +1,75 @@
 use gpui::{AssetSource, Rgba};
 use gpui_component::ThemeSet;
-use heka_app::theme::{FONT, FONT_FAMILY, MIN_DARK, MIN_DARK_JSON};
+use heka_app::theme::{FONT, FONT_FAMILY, MIN_DARK, MIN_DARK_JSON, MIN_LIGHT, MIN_LIGHT_JSON};
 use heka_app::ui::assets::{Assets, battery_icon, link_icon};
 use heka_core::link::LinkKind;
 use heka_core::state::{Battery, Charge};
 use serde_json::Value;
 
-#[test]
-fn the_theme_file_holds_the_dark_theme_heka_asks_for() {
-    let set: ThemeSet = serde_json::from_str(MIN_DARK_JSON).expect("a gpui-component theme");
+const THEMES: [(&str, &str, bool, &str); 2] = [
+    (MIN_DARK_JSON, MIN_DARK, true, "#1a1a1a"),
+    (MIN_LIGHT_JSON, MIN_LIGHT, false, "#ffffff"),
+];
 
-    let [theme] = &set.themes[..] else {
-        panic!("one theme expected");
-    };
-    assert_eq!(theme.name, MIN_DARK);
-    assert!(theme.mode.is_dark());
-    assert_eq!(theme.colors.background.as_deref(), Some("#1a1a1a"));
+#[test]
+fn each_theme_file_holds_the_theme_heka_asks_for() {
+    for (json, name, dark, background) in THEMES {
+        let set: ThemeSet = serde_json::from_str(json).expect("a gpui-component theme");
+
+        let [theme] = &set.themes[..] else {
+            panic!("one theme expected");
+        };
+        assert_eq!(theme.name, name);
+        assert_eq!(theme.mode.is_dark(), dark, "{name}");
+        assert_eq!(theme.colors.background.as_deref(), Some(background));
+    }
 }
 
 #[test]
-fn the_theme_asks_for_the_built_in_font_at_zeds_size() {
-    let set: ThemeSet = serde_json::from_str(MIN_DARK_JSON).expect("a gpui-component theme");
-    let theme = &set.themes[0];
+fn each_theme_asks_for_the_built_in_font_at_zeds_size() {
+    for (json, name, ..) in THEMES {
+        let set: ThemeSet = serde_json::from_str(json).expect("a gpui-component theme");
+        let theme = &set.themes[0];
 
-    assert_eq!(theme.font_family.as_deref(), Some(FONT_FAMILY));
-    assert_eq!(theme.mono_font_family.as_deref(), Some(FONT_FAMILY));
-    assert_eq!(theme.font_size, Some(15.));
+        assert_eq!(theme.font_family.as_deref(), Some(FONT_FAMILY), "{name}");
+        assert_eq!(theme.mono_font_family.as_deref(), Some(FONT_FAMILY));
+        assert_eq!(theme.font_size, Some(15.));
+    }
     assert_eq!(FONT.get(..4), Some(&[0, 1, 0, 0][..]));
 }
 
 #[test]
-fn gpui_component_knows_every_colour_the_theme_sets() {
-    let file: Value = serde_json::from_str(MIN_DARK_JSON).unwrap();
-    let written = file["themes"][0]["colors"].as_object().unwrap();
-    let set: ThemeSet = serde_json::from_str(MIN_DARK_JSON).unwrap();
-    let read = serde_json::to_value(&set.themes[0].colors).unwrap();
+fn gpui_component_knows_every_colour_the_themes_set() {
+    for (json, name, ..) in THEMES {
+        let file: Value = serde_json::from_str(json).unwrap();
+        let written = file["themes"][0]["colors"].as_object().unwrap();
+        let set: ThemeSet = serde_json::from_str(json).unwrap();
+        let read = serde_json::to_value(&set.themes[0].colors).unwrap();
 
-    for (key, value) in written {
-        assert_eq!(read.get(key), Some(value), "unknown theme key {key}");
-        let text = value.as_str().unwrap();
-        assert!(Rgba::try_from(text).is_ok(), "{key}: bad colour {text}");
+        for (key, value) in written {
+            assert_eq!(
+                read.get(key),
+                Some(value),
+                "{name}: unknown theme key {key}"
+            );
+            let text = value.as_str().unwrap();
+            assert!(
+                Rgba::try_from(text).is_ok(),
+                "{name} {key}: bad colour {text}"
+            );
+        }
     }
+}
+
+#[test]
+fn both_themes_set_the_same_colours() {
+    let keys = |json: &str| {
+        let file: Value = serde_json::from_str(json).unwrap();
+        let colours = file["themes"][0]["colors"].as_object().unwrap();
+        colours.keys().cloned().collect::<Vec<_>>()
+    };
+
+    assert_eq!(keys(MIN_DARK_JSON), keys(MIN_LIGHT_JSON));
 }
 
 #[test]

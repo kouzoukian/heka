@@ -53,7 +53,8 @@ impl Release<'_> {
         };
         let sections = [
             Section {
-                title: "Min Dark theme, converted from the Zed port of Min Theme".into(),
+                title: "Min Dark and Min Light themes, converted from the Zed port of Min Theme"
+                    .into(),
                 text: read(&min_theme)?,
             },
             Section {

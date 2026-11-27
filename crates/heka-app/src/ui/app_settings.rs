@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{App, Div, ParentElement, Styled, div};
 use gpui_component::{ActiveTheme, Theme};
 use gpui_kit_assets::IconName;
-use heka_core::app_settings::{AppChange, CloseAction};
+use heka_core::app_settings::{AppChange, CloseAction, ThemeChoice};
 
 use crate::text;
 use crate::ui::banners::text_button;
@@ -55,6 +55,7 @@ pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx:
                 theme,
             )),
         )
+        .child(line(text::ROW_THEME, text::THEME_TIP).child(theme_switch(app.theme, send, theme)))
         .child(group(text::UPDATES, theme))
         .child(
             line(text::ROW_CHECK_FOR_RELEASES, text::CHECK_FOR_RELEASES_TIP).child(on_off(
@@ -91,6 +92,22 @@ fn closing_switch(chosen: CloseAction, send: &SendCommand, theme: &Theme) -> Div
             words,
             chosen == action,
             Some(Command::ChangeAppSetting(AppChange::OnClose(action))),
+        )
+    });
+    segmented(segments, send, theme)
+}
+
+fn theme_switch(chosen: ThemeChoice, send: &SendCommand, theme: &Theme) -> Div {
+    let choices = [
+        ("theme-dark", text::DARK, ThemeChoice::Dark),
+        ("theme-light", text::LIGHT, ThemeChoice::Light),
+    ];
+    let segments = choices.map(|(id, words, choice)| {
+        Segment::words(
+            id,
+            words,
+            chosen == choice,
+            Some(Command::ChangeAppSetting(AppChange::Theme(choice))),
         )
     });
     segmented(segments, send, theme)

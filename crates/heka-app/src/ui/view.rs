@@ -44,7 +44,7 @@ actions!(heka, [OpenAppSettings]);
 
 pub fn init(cx: &mut App) {
     gpui_component::init(cx);
-    theme::apply(cx).expect("the built-in font and theme load");
+    theme::load(cx).expect("the built-in font and themes load");
     cx.bind_keys([KeyBinding::new("ctrl-,", OpenAppSettings, None)]);
     cx.on_action(|_: &OpenAppSettings, cx| {
         cx.defer(|cx| {
@@ -229,6 +229,7 @@ impl MainView {
         })
         .detach();
         let screen = backend.screen(Instant::now());
+        theme::show(screen.app.theme, cx);
         let mut selection = Selection::default();
         selection.follow(&screen.controllers);
         Self {
@@ -260,6 +261,9 @@ impl MainView {
     fn sample(&mut self, cx: &mut Context<Self>) {
         let screen = self.backend.screen(Instant::now());
         if screen != self.screen {
+            if screen.app.theme != self.screen.app.theme {
+                theme::show(screen.app.theme, cx);
+            }
             self.screen = screen;
             self.selection.follow(&self.screen.controllers);
             cx.notify();

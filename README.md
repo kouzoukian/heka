@@ -269,6 +269,7 @@ what concerns heka as a whole.
 - **Start in the tray**, off by default: no window opens when you start heka yourself
   either.
 - **Closing the window**: **Keep running** (the default) or **Quit**.
+- **Theme**: **Dark** (the default) or **Light**, whichever colour mode Windows is in.
 - **Check for new releases**, on unless you turn it off. See
   [Files, updating and removing](#files-updating-and-removing).
 - **Settings folder**, where heka keeps `settings.json` and your Profiles.
@@ -442,8 +443,8 @@ fakes in their place. [CONTEXT.md](CONTEXT.md) defines the terms used in the cod
 heka is licensed under either of the [MIT license](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
 
-The theme is Min Dark (Solid), from Miguel Solorio's Min Theme and its Zed port by
-Phillip Bronzel, under the MIT license. The font is
+The themes are Min Dark (Solid) and Min Light (Solid), from Miguel Solorio's Min Theme
+and its Zed port by Phillip Bronzel, under the MIT license. The font is
 [Google Sans Code](https://github.com/googlefonts/googlesans-code), under the SIL Open
 Font License. The release zip carries their notices (`LICENSE-MIN-THEME` and
 `LICENSE-GOOGLE-SANS-CODE`) and those of everything built into `heka.exe`

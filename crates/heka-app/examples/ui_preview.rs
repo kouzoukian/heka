@@ -10,7 +10,7 @@ use heka_app::ui::model::{
 };
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view::{self, Page};
-use heka_core::app_settings::AppSettings;
+use heka_core::app_settings::{AppSettings, ThemeChoice};
 use heka_core::capture::KeyListener;
 use heka_core::clock::Timestamp;
 use heka_core::desktop::Key;
@@ -224,6 +224,7 @@ impl Backend for Fake {
                 start_in_tray: self.app.borrow().start_in_tray,
                 on_close: self.app.borrow().on_close,
                 check_for_releases: self.app.borrow().check_for_releases,
+                theme: self.app.borrow().theme,
             },
             newer_release: self
                 .newer_release
@@ -492,6 +493,7 @@ fn main() {
     let mut window = None;
     let mut page = Page::default();
     let mut newer_release = None;
+    let mut theme = ThemeChoice::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -508,6 +510,7 @@ fn main() {
                 assert!(window.is_some(), "--window X,Y,WIDTH,HEIGHT");
             }
             "--release" => newer_release = Version::parse("0.3.0"),
+            "--light" => theme = ThemeChoice::Light,
             "--log" => page = Page::Log,
             "--about" => page = Page::About,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
@@ -521,6 +524,7 @@ fn main() {
             let mut fake = Fake::new(empty, missing, first);
             fake.newer_release = newer_release;
             fake.app.borrow_mut().window = window;
+            fake.app.borrow_mut().theme = theme;
             view::open_window(cx, Rc::new(fake), page).expect("failed to open the preview window");
             if let Some(seconds) = seconds {
                 cx.spawn(async move |cx| {
