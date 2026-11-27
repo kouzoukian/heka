@@ -56,3 +56,7 @@ Names are distinct, compared without regard to case, and the Default Profile's n
 The supervisor thread does all Profile file work, so the window never waits on the disk. Duplicating and renaming write the Profile's file; renaming rewrites the name inside it and leaves the file where it is. Deleting removes the file after the Supervisor has cleared the choices, and a file that is already gone is not an error.
 
 Import and export take a path, which the window gets from the platform's file dialogs (`prompt_for_paths` and `prompt_for_new_path` in GPUI). A failure to read or write the file, or a file that is not a Profile, is logged and shown as a warning in the window until the next Profile action, and changes nothing. All of its text is in `text.rs`.
+
+## Managing Profiles in the window
+
+Under the Profile list a row of actions works on the Profile the selected Controller uses: Duplicate, Rename, Export, Import and Delete. The Default Profile offers Duplicate and Import only. Rename edits the name in place and is saved with Enter or the check; Delete asks in place, and the question says how many Controllers go back to the Default Profile. The count comes from the settings, so it includes Controllers that are not connected. What a rename or delete is about is the Profile that was chosen when it began, so choosing another Profile meanwhile cannot redirect it.

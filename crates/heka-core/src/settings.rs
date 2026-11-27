@@ -115,6 +115,16 @@ impl Settings {
             .collect()
     }
 
+    pub fn profile_users(&self) -> BTreeMap<String, usize> {
+        let mut users = BTreeMap::new();
+        for settings in self.controllers.values() {
+            if let Some(profile) = &settings.profile {
+                *users.entry(profile.clone()).or_insert(0) += 1;
+            }
+        }
+        users
+    }
+
     pub fn forget_profile(&mut self, profile: &str) -> usize {
         let users = self.controllers_using(profile);
         for mac in &users {

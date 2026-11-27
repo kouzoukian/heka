@@ -316,3 +316,21 @@ fn forgetting_a_profile_sends_its_controllers_back_to_the_default_one() {
     );
     assert_eq!(settings.forget_profile("racing"), 0);
 }
+
+#[test]
+fn the_number_of_controllers_using_each_profile_is_counted() {
+    let other = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x77]);
+    let third = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x88]);
+    let mut settings = Settings::default();
+    settings.set_profile(MAC, Some("racing".into()));
+    settings.set_profile(other, Some("racing".into()));
+    settings.set_profile(third, Some("shooter".into()));
+    settings.set_stopped(MAC, false);
+
+    let users = settings.profile_users();
+
+    assert_eq!(users.get("racing"), Some(&2));
+    assert_eq!(users.get("shooter"), Some(&1));
+    assert_eq!(users.get("gone"), None);
+    assert_eq!(Settings::default().profile_users().len(), 0);
+}

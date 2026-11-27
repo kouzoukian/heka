@@ -166,20 +166,25 @@ impl Backend for Fake {
         } else {
             vec![Notice::warning(text::not_hidden("made-up warning"))]
         };
+        let profiles = self
+            .profiles
+            .borrow()
+            .list()
+            .map(|(id, profile)| ProfileEntry {
+                id: id.to_owned(),
+                profile: profile.clone(),
+                users: controllers
+                    .iter()
+                    .filter(|entry| entry.profile.as_deref() == Some(id))
+                    .count(),
+            })
+            .collect();
         Screen {
             starting: false,
             missing,
             notices,
             controllers,
-            profiles: self
-                .profiles
-                .borrow()
-                .list()
-                .map(|(id, profile)| ProfileEntry {
-                    id: id.to_owned(),
-                    profile: profile.clone(),
-                })
-                .collect(),
+            profiles,
             log: Recent::clone(&self.log),
             app: AppEntry {
                 start_with_windows: self.start_with_windows.get(),

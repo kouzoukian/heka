@@ -1,11 +1,12 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Div, InteractiveElement, ParentElement, SharedString, Stateful,
+    App, Div, Entity, InteractiveElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{ActiveTheme, Selectable, Theme};
+use gpui_component::input::{Input as TextInput, InputState};
+use gpui_component::{ActiveTheme, Selectable, Sizable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::profile::{Binding, Input, Output};
 use heka_core::profiles::suggest_name;
@@ -22,15 +23,40 @@ use crate::ui::settings::{explained, group};
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
 
-pub struct ProfileView {
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Manage {
+    #[default]
+    Idle,
+    Renaming(String),
+    ConfirmingDelete(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileAction {
+    Duplicate,
+    StartRename,
+    CommitRename,
+    AskDelete,
+    ConfirmDelete,
+    Cancel,
+    Import,
+    Export,
+}
+
+pub type ProfileAct = Rc<dyn Fn(ProfileAction, &mut Window, &mut App)>;
+
+pub struct ProfileView<'a> {
     pub editing: Option<Input>,
+    pub manage: Manage,
+    pub rename: &'a Entity<InputState>,
     pub toggle: ToggleBinding,
+    pub act: ProfileAct,
 }
 
 pub fn profile_page(
     screen: &Screen,
     entry: &ControllerEntry,
-    view: &ProfileView,
+    view: &ProfileView<'_>,
     send: &SendCommand,
     cx: &App,
 ) -> Div {
@@ -64,7 +90,8 @@ pub fn profile_page(
                 theme,
             )
         }))
-        .child(new_profile_row(screen, send, theme));
+        .child(new_profile_row(screen, send, theme))
+        .child(manage_row(chosen, view, theme));
     match chosen {
         None => page.child(
             strip("profile-fixed", 2, theme).child(clamped(text::DEFAULT_PROFILE_FIXED.into())),
@@ -120,6 +147,107 @@ fn new_profile_row(screen: &Screen, send: &SendCommand, theme: &Theme) -> Div {
     )
 }
 
+fn manage_row(chosen: Option<&ProfileEntry>, view: &ProfileView<'_>, theme: &Theme) -> Div {
+    let button = |id: &'static str, name: IconName, words: &'static str, action: ProfileAction| {
+        let act = Rc::clone(&view.act);
+        text_button(id, name, words).on_click(move |_, window, cx| act(action, window, cx))
+    };
+    let bar = || {
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(GAP)
+            .px(INSET)
+            .py(GAP)
+            .border_b_1()
+            .border_color(theme.border)
+    };
+    match (chosen, &view.manage) {
+        (Some(profile), Manage::Renaming(id)) if *id == profile.id => bar()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(theme.foreground)
+                    .child(TextInput::new(view.rename).small()),
+            )
+            .child(button(
+                "rename-save",
+                IconName::Check,
+                text::RENAME,
+                ProfileAction::CommitRename,
+            ))
+            .child(button(
+                "rename-cancel",
+                IconName::X,
+                text::CANCEL,
+                ProfileAction::Cancel,
+            )),
+        (Some(profile), Manage::ConfirmingDelete(id)) if *id == profile.id => bar()
+            .text_size(SMALL_TEXT)
+            .child(clamped(
+                text::delete_profile_question(&profile.profile.name, profile.users).into(),
+            ))
+            .child(button(
+                "delete-cancel",
+                IconName::X,
+                text::CANCEL,
+                ProfileAction::Cancel,
+            ))
+            .child(button(
+                "delete-confirm",
+                IconName::Trash,
+                text::DELETE,
+                ProfileAction::ConfirmDelete,
+            )),
+        (Some(_), _) => bar()
+            .child(button(
+                "profile-duplicate",
+                IconName::Copy,
+                text::DUPLICATE,
+                ProfileAction::Duplicate,
+            ))
+            .child(button(
+                "profile-rename",
+                IconName::Pencil,
+                text::RENAME,
+                ProfileAction::StartRename,
+            ))
+            .child(button(
+                "profile-export",
+                IconName::ArrowUp,
+                text::EXPORT,
+                ProfileAction::Export,
+            ))
+            .child(button(
+                "profile-import",
+                IconName::ArrowDown,
+                text::IMPORT,
+                ProfileAction::Import,
+            ))
+            .child(button(
+                "profile-delete",
+                IconName::Trash,
+                text::DELETE,
+                ProfileAction::AskDelete,
+            )),
+        (None, _) => bar()
+            .child(button(
+                "profile-duplicate",
+                IconName::Copy,
+                text::DUPLICATE,
+                ProfileAction::Duplicate,
+            ))
+            .child(button(
+                "profile-import",
+                IconName::ArrowDown,
+                text::IMPORT,
+                ProfileAction::Import,
+            )),
+    }
+}
+
 fn output_row(profile: &ProfileEntry, send: &SendCommand, theme: &Theme) -> Div {
     let choices = [
         (text::OUTPUT_OWN, None),
@@ -149,7 +277,7 @@ fn output_row(profile: &ProfileEntry, send: &SendCommand, theme: &Theme) -> Div 
 fn binding_block(
     profile: &ProfileEntry,
     input: Input,
-    view: &ProfileView,
+    view: &ProfileView<'_>,
     send: &SendCommand,
     theme: &Theme,
 ) -> Div {
@@ -192,7 +320,7 @@ fn options(
     profile: &ProfileEntry,
     input: Input,
     binding: Binding,
-    view: &ProfileView,
+    view: &ProfileView<'_>,
     send: &SendCommand,
     theme: &Theme,
 ) -> Div {

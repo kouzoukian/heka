@@ -135,6 +135,7 @@ impl Backend for WindowBackend {
                 .map(|(id, profile)| ProfileEntry {
                     id: id.to_owned(),
                     profile: profile.clone(),
+                    users: snapshot.profile_users.get(id).copied().unwrap_or(0),
                 })
                 .collect(),
             log: log::recent(),

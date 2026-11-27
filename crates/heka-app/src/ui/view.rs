@@ -1,10 +1,11 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Div, Entity, Hsla, IntoElement, KeyBinding,
-    ParentElement, Render, Result, Styled, TitlebarOptions, Window, WindowHandle, WindowOptions,
-    actions, div, prelude::FluentBuilder as _, px, size,
+    ParentElement, PathPromptOptions, Render, Result, Styled, TitlebarOptions, Window,
+    WindowHandle, WindowOptions, actions, div, prelude::FluentBuilder as _, px, size,
 };
 use gpui_component::button::Button;
 use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
@@ -15,13 +16,14 @@ use gpui_kit_assets::IconName;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
-use heka_core::profile::Input;
+use heka_core::profile::{Input, MAX_NAME_CHARS};
+use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 
 use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
-use crate::ui::profile::{ProfileView, ToggleBinding};
+use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, ToggleBinding};
 use crate::ui::settings::Fields;
 use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
@@ -112,6 +114,8 @@ struct MainView {
     held_colour: Lightbar,
     filled: Option<MacAddress>,
     editing: Option<Input>,
+    rename: Entity<InputState>,
+    manage: Manage,
 }
 
 impl MainView {
@@ -129,6 +133,15 @@ impl MainView {
             if let (InputEvent::Change, Some(mac)) = (event, this.filled) {
                 let typed = name.read(cx).value().to_string();
                 this.backend.command(Command::SetNickname(mac, typed));
+            }
+        })
+        .detach();
+        let rename = cx.new(|cx| {
+            InputState::new(window, cx).validate(|text, _| text.chars().count() <= MAX_NAME_CHARS)
+        });
+        cx.subscribe(&rename, |this: &mut Self, _, event: &InputEvent, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                this.commit_rename(cx);
             }
         })
         .detach();
@@ -183,6 +196,8 @@ impl MainView {
             held_colour: Lightbar::DEFAULT,
             filled: None,
             editing: None,
+            rename,
+            manage: Manage::Idle,
         }
     }
 
@@ -199,6 +214,7 @@ impl MainView {
         self.selection.choose(mac, &self.screen.controllers);
         self.page = self.page.of_a_controller();
         self.editing = None;
+        self.manage = Manage::Idle;
         cx.notify();
     }
 
@@ -215,9 +231,107 @@ impl MainView {
         cx.notify();
     }
 
+    fn chosen_profile(&self) -> Option<String> {
+        self.selection
+            .shown(&self.screen.controllers)
+            .and_then(|entry| entry.profile.clone())
+    }
+
+    fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        if let Manage::Renaming(id) = std::mem::take(&mut self.manage) {
+            let name = self.rename.read(cx).value().to_string();
+            self.backend.command(Command::RenameProfile(id, name));
+        }
+        cx.notify();
+    }
+
+    fn profile_action(
+        &mut self,
+        action: ProfileAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = self.chosen_profile();
+        match action {
+            ProfileAction::Duplicate => {
+                self.manage = Manage::Idle;
+                self.backend.command(Command::DuplicateProfile(chosen));
+            }
+            ProfileAction::StartRename => {
+                if let Some(id) = chosen {
+                    let name = self
+                        .screen
+                        .profiles
+                        .iter()
+                        .find(|profile| profile.id == id)
+                        .map(|profile| profile.profile.name.clone())
+                        .unwrap_or_default();
+                    self.rename
+                        .update(cx, |input, cx| input.set_value(name, window, cx));
+                    self.manage = Manage::Renaming(id);
+                }
+            }
+            ProfileAction::CommitRename => self.commit_rename(cx),
+            ProfileAction::AskDelete => {
+                if let Some(id) = chosen {
+                    self.manage = Manage::ConfirmingDelete(id);
+                }
+            }
+            ProfileAction::ConfirmDelete => {
+                if let Manage::ConfirmingDelete(id) = std::mem::take(&mut self.manage) {
+                    self.backend.command(Command::DeleteProfile(id));
+                }
+            }
+            ProfileAction::Cancel => self.manage = Manage::Idle,
+            ProfileAction::Import => self.import_profile(cx),
+            ProfileAction::Export => {
+                if let Some(id) = chosen {
+                    self.export_profile(id, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn import_profile(&self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(text::IMPORT_PROMPT.into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = chosen.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let _ = this.update(cx, |this, _| {
+                    this.backend.command(Command::ImportProfile(path));
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn export_profile(&self, id: String, cx: &mut Context<Self>) {
+        let directory = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let name = Profiles::file_name(&id);
+        let chosen = cx.prompt_for_new_path(&directory, Some(&name));
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(path))) = chosen.await {
+                let _ = this.update(cx, |this, _| {
+                    this.backend.command(Command::ExportProfile(id, path));
+                });
+            }
+        })
+        .detach();
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
         self.editing = None;
+        self.manage = Manage::Idle;
         self.leave_settings();
         cx.notify();
     }
@@ -302,6 +416,10 @@ impl MainView {
         let toggle_binding: ToggleBinding = Rc::new(move |input, _, cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.toggle_binding(input, cx));
         });
+        let view = cx.weak_entity();
+        let act: ProfileAct = Rc::new(move |action, window: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.profile_action(action, window, cx));
+        });
         let showing = match self.page {
             Page::Controller => Showing::Live,
             Page::ControllerSettings => Showing::ControllerSettings(Fields {
@@ -310,7 +428,10 @@ impl MainView {
             }),
             Page::Profile => Showing::Profile(ProfileView {
                 editing: self.editing,
+                manage: self.manage.clone(),
+                rename: &self.rename,
                 toggle: toggle_binding,
+                act,
             }),
             Page::AppSettings => Showing::AppSettings(self.screen.app),
             Page::Log => Showing::Log(&self.screen.log),

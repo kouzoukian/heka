@@ -470,6 +470,25 @@ pub const PROFILE_OUTPUT_TIP: &str = "The Output Type while this Profile is chos
 pub const OUTPUT_OWN: &str = "Controller's own";
 pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
 pub const BINDING_NOTHING: &str = "Nothing";
+pub const DUPLICATE: &str = "Duplicate";
+pub const RENAME: &str = "Rename";
+pub const DELETE: &str = "Delete";
+pub const IMPORT: &str = "Import";
+pub const EXPORT: &str = "Export";
+pub const CANCEL: &str = "Cancel";
+pub const PROFILE_NAME: &str = "Profile name";
+pub const IMPORT_PROMPT: &str = "Import a Profile";
+
+pub fn delete_profile_question(name: &str, users: usize) -> String {
+    match users {
+        0 => format!("Delete {name}? No Controller uses it."),
+        1 => format!("Delete {name}? 1 Controller goes back to the Default Profile."),
+        users => {
+            format!("Delete {name}? {users} Controllers go back to the Default Profile.")
+        }
+    }
+}
+
 pub const BINDING_TIP: &str = "What this input drives on the Virtual Controller";
 
 pub fn input_name(input: Input) -> &'static str {

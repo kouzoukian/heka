@@ -28,7 +28,7 @@ use crate::ui::settings::{Fields, settings};
 pub enum Showing<'a> {
     Live,
     ControllerSettings(Fields<'a>),
-    Profile(ProfileView),
+    Profile(ProfileView<'a>),
     AppSettings(AppEntry),
     Log(&'a Recent),
     About,

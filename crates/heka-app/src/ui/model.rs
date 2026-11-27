@@ -109,6 +109,7 @@ impl Screen {
 pub struct ProfileEntry {
     pub id: String,
     pub profile: Profile,
+    pub users: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default)]

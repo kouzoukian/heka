@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -47,6 +48,7 @@ pub struct Snapshot {
     pub controllers: Vec<ControllerView>,
     pub profiles: Profiles,
     pub profile_notice: Option<String>,
+    pub profile_users: BTreeMap<String, usize>,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
     pub not_unplugged: Vec<String>,
@@ -91,6 +93,7 @@ impl Bridging {
             controllers: Vec::new(),
             profiles: Profiles::default(),
             profile_notice: None,
+            profile_users: BTreeMap::new(),
             hiding: Vec::new(),
             unopened: Vec::new(),
             not_unplugged: Vec::new(),
@@ -405,6 +408,7 @@ fn supervise(
                 controllers,
                 profiles: supervisor.profiles().clone(),
                 profile_notice: profile_notice.clone(),
+                profile_users: supervisor.settings().profile_users(),
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),
