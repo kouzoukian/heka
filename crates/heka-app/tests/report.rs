@@ -9,6 +9,7 @@ use heka_core::lifecycle::{Change, Phase, Removal};
 use heka_core::link::ControllerModel;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
+use heka_core::radio::TurnOffError;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, BusUnavailable, Drivers};
 use heka_core::supervisor::{BridgeError, ControllerView, Supervisor};
@@ -25,8 +26,11 @@ fn view(error: Option<BridgeError>) -> ControllerView {
         nickname: None,
         preferences: Preferences::default(),
         active_link: None,
+        has_bluetooth: false,
+        idle_time: None,
         live: Arc::new(LiveInput::default()),
         error,
+        turn_off_error: None,
     }
 }
 
@@ -131,4 +135,24 @@ fn a_bridge_change_is_logged_with_the_controller_and_the_reason() {
         }),
         "02:00:00:00:00:01: Virtual Controller removed, the Held time is over"
     );
+}
+
+#[test]
+fn a_failure_to_turn_off_is_reported_when_it_appears_or_changes() {
+    let mut reporter = Reporter::default();
+    let failed = |why: &str| {
+        let mut failed = view(None);
+        failed.turn_off_error = Some(TurnOffError::Failed(why.into()));
+        failed
+    };
+    let words = ["02:00:00:00:00:01: could not turn off: access is denied"];
+
+    assert_eq!(reporter.controllers(&[failed("access is denied")]), words);
+    assert!(
+        reporter
+            .controllers(&[failed("access is denied")])
+            .is_empty()
+    );
+    assert!(reporter.controllers(&[view(None)]).is_empty());
+    assert_eq!(reporter.controllers(&[failed("access is denied")]), words);
 }

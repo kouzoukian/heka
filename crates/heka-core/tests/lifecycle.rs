@@ -349,3 +349,47 @@ fn a_held_controller_that_changes_output_type_loses_its_virtual_controller() {
         [bridged_ps4(1)]
     );
 }
+
+#[test]
+fn turning_off_the_only_link_removes_the_virtual_controller_without_a_hold() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    for n in 1..=5 {
+        lifecycle.link_arrived(mac(n), t0);
+    }
+
+    assert_eq!(
+        lifecycle.link_turned_off(mac(1), t0),
+        [removed(1, Removal::TurnedOff), bridged(5)]
+    );
+    assert_eq!(lifecycle.phase(mac(1)), None);
+    assert!(!lifecycle.settings().controller(mac(1)).stopped);
+    assert_eq!(lifecycle.link_turned_off(mac(1), t0), []);
+}
+
+#[test]
+fn turning_off_one_of_two_links_leaves_the_bridge_until_the_other_is_lost() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.link_arrived(mac(1), t0);
+
+    assert_eq!(lifecycle.link_turned_off(mac(1), t0), []);
+    assert_eq!(lifecycle.phase(mac(1)), Some(Phase::Bridged));
+    assert_eq!(
+        lifecycle.link_lost(mac(1), t0),
+        [Change::Held { mac: mac(1) }]
+    );
+}
+
+#[test]
+fn turning_off_a_controller_without_a_bridge_just_forgets_it() {
+    let t0 = Instant::now();
+    let mut lifecycle = Lifecycle::new(Settings::default());
+    lifecycle.link_arrived(mac(1), t0);
+    lifecycle.stop(mac(1), t0);
+
+    assert_eq!(lifecycle.link_turned_off(mac(1), t0), []);
+    assert!(phases(&lifecycle).is_empty());
+    assert!(lifecycle.settings().controller(mac(1)).stopped);
+}

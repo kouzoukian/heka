@@ -24,6 +24,7 @@ it twice. The live pairing of the two is a **Bridge**.
 - **Xbox 360 or DualShock 4 output**, chosen and remembered for each Controller.
 - **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
 - **USB and Bluetooth.** A Controller on both is listed once and read over USB.
+- **Turn off a Controller on Bluetooth**, with a button or after it is left unused.
 - **Brief disconnections:** the Virtual Controller stays for 30 seconds while the
   Controller reconnects.
 - **No double input:** the real Controller is hidden from games through HidHide.
@@ -84,9 +85,13 @@ battery level and a live drawing of its input, and to choose:
   to be restarted.
 - **Stop** and **Start**, the button at the top right. A Stopped Controller is not
   Bridged, and games see it as it is. heka still shows its input and battery.
-- Its [settings](#controller-settings), behind the button beside it.
+- **Turn off**, the power button beside it, for a Controller on Bluetooth. It ends the
+  Bluetooth Link, which switches the Controller off, and removes its Virtual
+  Controller at once. A Controller also on USB carries on over USB. Press **PS** to
+  connect again.
+- Its [settings](#controller-settings), behind the button before those.
 
-heka remembers all of these for each Controller. Up to 4 can be Bridged at once; a fifth
+heka remembers the Output Type, Stop and the settings for each Controller. Up to 4 can be Bridged at once; a fifth
 is listed, with its input and battery, but not Bridged.
 
 |                                             | Xbox | PS4 |
@@ -127,6 +132,10 @@ stays, with everything released, and carries on when the Controller returns.
   bar alone.
 - **Player lights** (DualSense only), the pattern of player 1 to 4 on the white lights
   under the touchpad. **Default** leaves them alone.
+- **Turn off when idle**, off unless you choose 5, 10, 15 or 30 minutes. A Controller on
+  Bluetooth is turned off after that long with no change to its buttons, sticks, triggers
+  or touchpad; moving it does not count. It does nothing while the Controller is read over
+  USB.
 
 Rumble and lights apply while the Controller is Bridged.
 

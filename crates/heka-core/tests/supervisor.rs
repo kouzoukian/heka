@@ -8,6 +8,7 @@ use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
+use heka_core::idle::IdleTime;
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
 use heka_core::link::{
     ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
@@ -15,6 +16,7 @@ use heka_core::link::{
 };
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange, Preferences, RumbleStrength};
+use heka_core::radio::{Radio, TurnOffError};
 use heka_core::settings::Settings;
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::supervisor::{BridgeError, Supervisor};
@@ -1188,4 +1190,332 @@ fn a_controller_without_a_bridge_is_not_rumble_tested() {
     std::thread::sleep(Duration::from_millis(150));
 
     assert!(sent_nothing(&link));
+}
+
+#[derive(Default)]
+struct Air {
+    turned_off: Vec<MacAddress>,
+    refuse: bool,
+}
+
+#[derive(Clone, Default)]
+struct FakeRadio(Arc<Mutex<Air>>);
+
+impl FakeRadio {
+    fn turned_off(&self) -> Vec<MacAddress> {
+        self.0.lock().unwrap().turned_off.clone()
+    }
+
+    fn refuse(&self, refuse: bool) {
+        self.0.lock().unwrap().refuse = refuse;
+    }
+}
+
+impl Radio for FakeRadio {
+    fn end_link(&self, mac: MacAddress) -> Result<(), TurnOffError> {
+        let mut air = self.0.lock().unwrap();
+        if air.refuse {
+            return Err(not_connected());
+        }
+        air.turned_off.push(mac);
+        Ok(())
+    }
+}
+
+fn not_connected() -> TurnOffError {
+    TurnOffError::Failed("the device is not connected".into())
+}
+
+fn with_radio() -> (Supervisor, FakeBus, FakeRadio) {
+    let (supervisor, bus) = setup();
+    let radio = FakeRadio::default();
+    let supervisor = supervisor.turning_off_with(Box::new(radio.clone()));
+    (supervisor, bus, radio)
+}
+
+fn turned_off(n: u8) -> Change {
+    Change::Removed {
+        mac: mac(n),
+        why: Removal::TurnedOff,
+    }
+}
+
+#[test]
+fn turning_off_a_bluetooth_controller_removes_its_virtual_controller_at_once() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = with_radio();
+    let link = LinkHandle::bluetooth();
+    let (id, _) = supervisor.link_arrived(mac(1), link.reader(), t0);
+    assert!(supervisor.controllers()[0].has_bluetooth);
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), [turned_off(1)]);
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+    assert!(bus.unplugged(0));
+    assert!(supervisor.controllers().is_empty());
+    assert_eq!(supervisor.take_turned_off_links(), [id]);
+    assert_eq!(supervisor.take_turned_off_links(), []);
+    assert_eq!(supervisor.link_gone(id, t0), []);
+    assert_eq!(supervisor.poll(t0), []);
+}
+
+#[test]
+fn a_link_that_died_before_heka_let_it_go_is_not_held() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, _radio) = with_radio();
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    link.pull_out();
+    wait_until(|| bus.last_state(0) == Some(ControllerState::NEUTRAL));
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), [turned_off(1)]);
+    assert!(bus.unplugged(0));
+}
+
+#[test]
+fn a_controller_also_on_usb_carries_on_over_usb_when_turned_off() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = with_radio();
+    let usb = LinkHandle::default();
+    supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+    supervisor.link_arrived(mac(1), usb.reader(), t0);
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), []);
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.phase, Phase::Bridged);
+    assert!(!view.has_bluetooth);
+    shows_input_from(&bus, 0, &usb);
+    assert!(!bus.unplugged(0));
+    assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn turning_off_a_stopped_controller_takes_it_off_the_list() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+    supervisor.stop(mac(1), t0);
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), []);
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+    assert!(supervisor.controllers().is_empty());
+}
+
+#[test]
+fn a_controller_without_a_bluetooth_link_is_not_turned_off() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    assert!(!supervisor.controllers()[0].has_bluetooth);
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), []);
+    assert_eq!(supervisor.turn_off(mac(2), t0), []);
+
+    assert_eq!(radio.turned_off(), []);
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
+}
+
+#[test]
+fn a_failure_to_turn_off_leaves_the_bridge_and_is_listed_until_it_succeeds() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = with_radio();
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    radio.refuse(true);
+
+    assert_eq!(supervisor.turn_off(mac(1), t0), []);
+
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.phase, Phase::Bridged);
+    assert_eq!(view.turn_off_error, Some(not_connected()));
+    assert_eq!(supervisor.take_turned_off_links(), []);
+    shows_input_from(&bus, 0, &link);
+
+    radio.refuse(false);
+    assert_eq!(supervisor.turn_off(mac(1), t0), [turned_off(1)]);
+}
+
+#[test]
+fn a_failure_to_turn_off_is_forgotten_with_the_bluetooth_link() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    let (bluetooth, _) = supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+    radio.refuse(true);
+    supervisor.turn_off(mac(1), t0);
+
+    supervisor.link_gone(bluetooth, t0);
+
+    assert_eq!(supervisor.controllers()[0].turn_off_error, None);
+}
+
+#[test]
+fn without_a_radio_turning_off_fails() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+
+    supervisor.turn_off(mac(1), t0);
+
+    assert_eq!(
+        supervisor.controllers()[0].turn_off_error,
+        Some(TurnOffError::NoRadio)
+    );
+}
+
+const FIVE_MINUTES: Duration = Duration::from_secs(300);
+const ALMOST: Duration = Duration::from_millis(299_999);
+
+fn idling(link: &LinkHandle, t0: Instant) -> (Supervisor, FakeBus, FakeRadio) {
+    let (mut supervisor, bus, radio) = with_radio();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_idle_time(mac(1), Some(IdleTime::Five));
+    link.send_input(common::derived(&[]));
+    wait_until(|| bus.last_state(0).is_some());
+    assert_eq!(supervisor.poll(t0), []);
+    (supervisor, bus, radio)
+}
+
+#[test]
+fn an_idle_bluetooth_controller_is_turned_off_after_its_idle_time() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = idling(&LinkHandle::bluetooth(), t0);
+    assert_eq!(supervisor.controllers()[0].idle_time, Some(IdleTime::Five));
+
+    assert_eq!(supervisor.poll(t0 + ALMOST), []);
+    assert_eq!(radio.turned_off(), []);
+    assert_eq!(supervisor.poll(t0 + FIVE_MINUTES), [turned_off(1)]);
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+    assert!(bus.unplugged(0));
+}
+
+#[test]
+fn a_controller_has_no_idle_time_until_it_is_given_one() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.link_arrived(mac(1), LinkHandle::bluetooth().reader(), t0);
+
+    supervisor.poll(t0);
+    supervisor.poll(t0 + Duration::from_secs(86_400));
+
+    assert_eq!(radio.turned_off(), []);
+}
+
+#[test]
+fn using_a_controller_starts_its_idle_time_over() {
+    let t0 = Instant::now();
+    let link = LinkHandle::bluetooth();
+    let (mut supervisor, bus, radio) = idling(&link, t0);
+
+    link.send_input(cross());
+    wait_until(|| bus.last_state(0).map(|s| s.buttons) == Some(Buttons::CROSS));
+    let used = t0 + Duration::from_secs(240);
+    assert_eq!(supervisor.poll(used), []);
+
+    assert_eq!(supervisor.poll(used + ALMOST), []);
+    assert_eq!(radio.turned_off(), []);
+    assert_eq!(supervisor.poll(used + FIVE_MINUTES), [turned_off(1)]);
+}
+
+#[test]
+fn moving_a_controller_without_touching_it_leaves_it_idle() {
+    let t0 = Instant::now();
+    let link = LinkHandle::bluetooth();
+    let (mut supervisor, bus, _radio) = idling(&link, t0);
+
+    let reports = bus.shown(0).lock().unwrap().updates.len();
+    link.send_input(common::derived(&[(16, 0x40), (17, 0x20)]));
+    wait_until(|| bus.shown(0).lock().unwrap().updates.len() > reports);
+    assert_ne!(
+        bus.last_state(0).unwrap().motion,
+        ControllerState::NEUTRAL.motion
+    );
+
+    assert_eq!(supervisor.poll(t0 + FIVE_MINUTES), [turned_off(1)]);
+}
+
+#[test]
+fn the_idle_time_does_nothing_over_usb_and_starts_when_usb_leaves() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = idling(&LinkHandle::bluetooth(), t0);
+    let (usb, _) = supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    let later = t0 + Duration::from_secs(3_600);
+    supervisor.poll(later);
+    supervisor.poll(later + FIVE_MINUTES);
+    assert_eq!(radio.turned_off(), []);
+
+    let unplugged = later + FIVE_MINUTES * 2;
+    supervisor.link_gone(usb, unplugged);
+    assert_eq!(supervisor.poll(unplugged), []);
+    assert_eq!(supervisor.poll(unplugged + ALMOST), []);
+    assert_eq!(supervisor.poll(unplugged + FIVE_MINUTES), [turned_off(1)]);
+}
+
+#[test]
+fn choosing_an_idle_time_starts_it_from_then() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = idling(&LinkHandle::bluetooth(), t0);
+
+    let chosen = t0 + ALMOST;
+    supervisor.set_idle_time(mac(1), Some(IdleTime::Ten));
+    supervisor.poll(chosen);
+    supervisor.set_idle_time(mac(1), Some(IdleTime::Five));
+    assert_eq!(supervisor.poll(chosen + FIVE_MINUTES), []);
+    assert_eq!(supervisor.poll(chosen + FIVE_MINUTES * 2), [turned_off(1)]);
+    assert_eq!(radio.turned_off(), [mac(1)]);
+}
+
+#[test]
+fn a_stopped_controller_is_turned_off_when_idle_too() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = idling(&LinkHandle::bluetooth(), t0);
+    supervisor.stop(mac(1), t0);
+
+    supervisor.poll(t0 + FIVE_MINUTES);
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+    assert!(supervisor.controllers().is_empty());
+}
+
+#[test]
+fn an_idle_controller_that_cannot_be_turned_off_is_tried_after_another_idle_time() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = idling(&LinkHandle::bluetooth(), t0);
+    radio.refuse(true);
+
+    supervisor.poll(t0 + FIVE_MINUTES);
+    assert_eq!(
+        supervisor.controllers()[0].turn_off_error,
+        Some(not_connected())
+    );
+    radio.refuse(false);
+
+    assert_eq!(
+        supervisor.poll(t0 + FIVE_MINUTES + Duration::from_millis(250)),
+        []
+    );
+    assert_eq!(supervisor.poll(t0 + FIVE_MINUTES * 2), [turned_off(1)]);
+}
+
+#[test]
+fn a_failure_to_turn_off_is_forgotten_when_the_bluetooth_link_stops_reading() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    radio.refuse(true);
+    supervisor.turn_off(mac(1), t0);
+
+    link.pull_out();
+    assert_eq!(
+        poll_until_changed(&mut supervisor, t0),
+        [Change::Held { mac: mac(1) }]
+    );
+
+    assert_eq!(supervisor.controllers()[0].turn_off_error, None);
 }

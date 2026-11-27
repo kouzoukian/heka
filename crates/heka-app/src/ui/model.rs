@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::app_settings::{AppChange, CloseAction};
 use heka_core::feedback::Motor;
+use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
@@ -36,6 +37,8 @@ pub enum Command {
     ChangePreference(MacAddress, PreferenceChange),
     TestRumble(MacAddress, Motor),
     EndRumbleTest(MacAddress),
+    TurnOff(MacAddress),
+    SetIdleTime(MacAddress, Option<IdleTime>),
     CheckDrivers,
     OpenLogFolder,
     SetStartWithWindows(bool),
@@ -139,6 +142,15 @@ impl Notice {
             text: text.into(),
         }
     }
+
+    pub fn cannot_turn_off(view: &ControllerView) -> Option<Self> {
+        let error = view.turn_off_error.as_ref()?;
+        let controller = view
+            .nickname
+            .clone()
+            .unwrap_or_else(|| text::named(view.model, &short_mac(view.mac)));
+        Some(Self::warning(text::cannot_turn_off(&controller, error)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +170,8 @@ pub struct ControllerEntry {
     pub preferences: Preferences,
     pub experimental: bool,
     pub active_link: Option<LinkKind>,
+    pub has_bluetooth: bool,
+    pub idle_time: Option<IdleTime>,
     pub battery: Option<Battery>,
     pub output_type: OutputType,
     pub state: EntryState,
@@ -176,8 +190,11 @@ impl ControllerEntry {
             nickname,
             preferences,
             active_link,
+            has_bluetooth,
+            idle_time,
             live,
             error,
+            turn_off_error: _,
         } = view;
         let state = match *phase {
             Phase::Bridged => EntryState::Bridged,
@@ -196,6 +213,8 @@ impl ControllerEntry {
             preferences: *preferences,
             experimental: *model == ControllerModel::DualShock4,
             active_link: *active_link,
+            has_bluetooth: *has_bluetooth,
+            idle_time: *idle_time,
             battery: input.and_then(|input| input.battery),
             output_type: *output_type,
             state,
@@ -218,8 +237,15 @@ impl ControllerEntry {
     }
 
     pub fn short_mac(&self) -> String {
-        let [.., fifth, sixth] = self.mac.0;
-        format!("{fifth:02X}:{sixth:02X}")
+        short_mac(self.mac)
+    }
+
+    pub fn turn_off(&self) -> Option<Command> {
+        self.has_bluetooth.then_some(Command::TurnOff(self.mac))
+    }
+
+    pub fn choose_idle_time(&self, idle_time: Option<IdleTime>) -> Command {
+        Command::SetIdleTime(self.mac, idle_time)
     }
 
     pub fn toggle(&self) -> Command {
@@ -249,6 +275,11 @@ impl ControllerEntry {
             EntryState::Bridged | EntryState::Stopped => None,
         }
     }
+}
+
+fn short_mac(mac: MacAddress) -> String {
+    let [.., fifth, sixth] = mac.0;
+    format!("{fifth:02X}:{sixth:02X}")
 }
 
 fn whole_seconds(duration: Duration) -> u64 {

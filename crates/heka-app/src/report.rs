@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use heka_core::hider::HidingWarning;
 use heka_core::mac::MacAddress;
+use heka_core::radio::TurnOffError;
 use heka_core::supervisor::{BridgeError, ControllerView};
 
 use crate::text;
@@ -9,23 +10,26 @@ use crate::text;
 #[derive(Debug, Default)]
 pub struct Reporter {
     bridge_errors: BTreeMap<MacAddress, BridgeError>,
+    turn_off_errors: BTreeMap<MacAddress, TurnOffError>,
     hiding: Vec<HidingWarning>,
     hid_error: Option<String>,
 }
 
 impl Reporter {
     pub fn controllers(&mut self, controllers: &[ControllerView]) -> Vec<String> {
-        let errors: BTreeMap<MacAddress, BridgeError> = controllers
-            .iter()
-            .filter_map(|view| Some((view.mac, view.error.clone()?)))
-            .collect();
-        let news = errors
-            .iter()
-            .filter(|&(mac, error)| self.bridge_errors.get(mac) != Some(error))
-            .map(|(&mac, error)| text::log::bridge_error(mac, error))
-            .collect();
-        self.bridge_errors = errors;
-        news
+        let mut lines = news(
+            &mut self.bridge_errors,
+            controllers,
+            |view| view.error.clone(),
+            text::log::bridge_error,
+        );
+        lines.extend(news(
+            &mut self.turn_off_errors,
+            controllers,
+            |view| view.turn_off_error.clone(),
+            text::log::cannot_turn_off,
+        ));
+        lines
     }
 
     pub fn hiding(&mut self, warnings: &[HidingWarning]) -> Vec<String> {
@@ -53,4 +57,23 @@ impl Reporter {
             None => text::log::LOOKING_AGAIN.into(),
         })
     }
+}
+
+fn news<E: PartialEq>(
+    reported: &mut BTreeMap<MacAddress, E>,
+    controllers: &[ControllerView],
+    error_of: impl Fn(&ControllerView) -> Option<E>,
+    words: impl Fn(MacAddress, &E) -> String,
+) -> Vec<String> {
+    let errors: BTreeMap<MacAddress, E> = controllers
+        .iter()
+        .filter_map(|view| Some((view.mac, error_of(view)?)))
+        .collect();
+    let news = errors
+        .iter()
+        .filter(|&(mac, error)| reported.get(mac) != Some(error))
+        .map(|(&mac, error)| words(mac, error))
+        .collect();
+    *reported = errors;
+    news
 }

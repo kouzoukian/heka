@@ -83,6 +83,10 @@ impl Backend for WindowBackend {
             .not_unplugged
             .iter()
             .map(|error| Notice::warning(text::not_unplugged(error)));
+        let not_turned_off = snapshot
+            .controllers
+            .iter()
+            .filter_map(Notice::cannot_turn_off);
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
@@ -98,6 +102,7 @@ impl Backend for WindowBackend {
                 .chain(unopened)
                 .chain(hiding)
                 .chain(not_unplugged)
+                .chain(not_turned_off)
                 .collect(),
             controllers: snapshot
                 .controllers
@@ -119,6 +124,8 @@ impl Backend for WindowBackend {
             Command::ChangePreference(mac, change) => bridging.change_preference(mac, change),
             Command::TestRumble(mac, motor) => bridging.test_rumble(mac, motor),
             Command::EndRumbleTest(mac) => bridging.end_rumble_test(mac),
+            Command::TurnOff(mac) => bridging.turn_off(mac),
+            Command::SetIdleTime(mac, idle_time) => bridging.set_idle_time(mac, idle_time),
             Command::CheckDrivers => bridging.check_drivers(),
             Command::OpenLogFolder => open_log_folder(),
             Command::SetStartWithWindows(enabled) => self.set_start_with_windows(enabled),

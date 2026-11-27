@@ -10,6 +10,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Disableable, Sizable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::feedback::{Lightbar, Motor, PlayerLights};
+use heka_core::idle::IdleTime;
 use heka_core::preferences::{LightbarChoice, PreferenceChange, RumbleStrength};
 
 use crate::text;
@@ -84,6 +85,8 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
             )),
         )
         .children(player_lights)
+        .child(group(text::GROUP_POWER, theme))
+        .child(line(text::ROW_IDLE, text::IDLE_TIP).child(idle_switch(entry, send, theme)))
         .child(strip("settings-note", 1, theme).child(clamped(text::SETTINGS_NOTE.into())))
 }
 
@@ -215,6 +218,21 @@ fn player_lights_switch(entry: &ControllerEntry, send: &SendCommand, theme: &The
             words,
             entry.preferences.player_lights == lights,
             Some(entry.prefer(PreferenceChange::PlayerLights(lights))),
+        )
+    });
+    segmented(segments, send, theme)
+}
+
+fn idle_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+    let choices = std::iter::once(None).chain(IdleTime::ALL.map(Some));
+    let segments = choices.map(|time| {
+        let words: SharedString =
+            time.map_or(text::OFF.into(), |time| text::idle_time(time).into());
+        Segment::words(
+            id(entry, "idle", &words),
+            words,
+            entry.idle_time == time,
+            Some(entry.choose_idle_time(time)),
         )
     });
     segmented(segments, send, theme)

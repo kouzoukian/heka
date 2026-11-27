@@ -11,6 +11,7 @@ use heka_core::discovery::{
 use heka_core::lifecycle::{Change, Phase};
 use heka_core::link::{ControllerModel, LinkKind, LinkProblem, LinkRead, LinkReader, ReportFormat};
 use heka_core::mac::MacAddress;
+use heka_core::radio::{Radio, TurnOffError};
 use heka_core::settings::Settings;
 use heka_core::state::ControllerState;
 use heka_core::supervisor::Supervisor;
@@ -20,11 +21,11 @@ const USB: &str = "usb";
 const SCAN: Duration = Duration::from_millis(250);
 const MAC: MacAddress = MacAddress([0xA0, 0, 0, 0, 0, 1]);
 
-struct FakeLink(Arc<AtomicBool>);
+struct FakeLink(Arc<AtomicBool>, ReportFormat);
 
 impl LinkReader for FakeLink {
     fn format(&self) -> ReportFormat {
-        ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED)
+        self.1
     }
 
     fn read(&mut self, _: &mut [u8]) -> LinkRead {
@@ -39,6 +40,7 @@ impl LinkReader for FakeLink {
 #[derive(Clone)]
 enum Port {
     Opens,
+    OpensBluetooth,
     Refuses(&'static str),
     Virtual,
 }
@@ -73,13 +75,20 @@ impl Finder for Ports {
 
     fn open(&mut self, path: &&'static str) -> Result<FoundLink, OpenFailure> {
         self.attempts += 1;
-        match &self.present[path] {
-            Port::Opens => {
+        let port = &self.present[path];
+        match port {
+            Port::Opens | Port::OpensBluetooth => {
+                let format = match port {
+                    Port::OpensBluetooth => {
+                        ReportFormat::DualSenseBluetooth(Calibration::UNCALIBRATED)
+                    }
+                    _ => ReportFormat::DualSenseUsb(Calibration::UNCALIBRATED),
+                };
                 let lost = Arc::new(AtomicBool::new(false));
                 self.open.insert(path, Arc::clone(&lost));
                 Ok(FoundLink {
                     mac: MAC,
-                    reader: Box::new(FakeLink(lost)),
+                    reader: Box::new(FakeLink(lost, format)),
                     problems: vec![no_calibration()],
                 })
             }
@@ -345,4 +354,63 @@ fn a_virtual_controller_is_looked_at_once_and_never_listed() {
 
     assert_eq!(ports.attempts, 1);
     assert_eq!(unopened(&discovery), []);
+}
+
+struct Obliging;
+
+impl Radio for Obliging {
+    fn end_link(&self, _: MacAddress) -> Result<(), TurnOffError> {
+        Ok(())
+    }
+}
+
+fn turned_off_while_listed(
+    ports: &mut Ports,
+    t0: Instant,
+) -> (Supervisor, Discovery<&'static str>) {
+    let (supervisor, _, mut discovery) = setup();
+    let mut supervisor = supervisor.turning_off_with(Box::new(Obliging));
+    discovery.scan(ports, &mut supervisor, t0);
+    supervisor.turn_off(MAC, t0);
+    let found = discovery.scan(ports, &mut supervisor, t0);
+    assert!(matches!(found[..], [Found::Gone { .. }]), "{found:?}");
+    (supervisor, discovery)
+}
+
+#[test]
+fn a_turned_off_link_still_listed_is_left_alone_for_a_while() {
+    let t0 = Instant::now();
+    let mut ports = Ports::with("bluetooth", Port::OpensBluetooth);
+    let (mut supervisor, mut discovery) = turned_off_while_listed(&mut ports, t0);
+
+    let almost = t0 + LONGEST_RETRY_DELAY - Duration::from_millis(1);
+    assert!(
+        discovery
+            .scan(&mut ports, &mut supervisor, almost)
+            .is_empty()
+    );
+    assert_eq!(ports.attempts, 1);
+
+    discovery.scan(&mut ports, &mut supervisor, t0 + LONGEST_RETRY_DELAY);
+    assert_eq!(ports.attempts, 2);
+    assert_eq!(supervisor.controllers().len(), 1);
+}
+
+#[test]
+fn a_turned_off_link_that_left_is_opened_as_soon_as_it_returns() {
+    let t0 = Instant::now();
+    let mut ports = Ports::with("bluetooth", Port::OpensBluetooth);
+    let (mut supervisor, mut discovery) = turned_off_while_listed(&mut ports, t0);
+
+    ports.present.clear();
+    assert!(
+        discovery
+            .scan(&mut ports, &mut supervisor, t0 + SCAN)
+            .is_empty()
+    );
+    ports.present.insert("bluetooth", Port::OpensBluetooth);
+    discovery.scan(&mut ports, &mut supervisor, t0 + SCAN * 2);
+
+    assert_eq!(ports.attempts, 2);
+    assert_eq!(supervisor.controllers()[0].phase, Phase::Bridged);
 }

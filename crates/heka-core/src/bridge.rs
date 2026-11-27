@@ -8,6 +8,7 @@ use crate::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
     Rumble,
 };
+use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
 use crate::state::ControllerState;
@@ -18,16 +19,37 @@ const READ_BUFFER_LEN: usize = 128;
 
 #[derive(Debug, Default)]
 pub struct LiveInput {
-    latest: Mutex<Option<ControllerState>>,
+    seen: Mutex<Seen>,
+}
+
+#[derive(Debug, Default)]
+struct Seen {
+    latest: Option<ControllerState>,
+    activity: Activity,
+    times_used: u64,
 }
 
 impl LiveInput {
     pub fn latest(&self) -> Option<ControllerState> {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner)
+        self.seen().latest
+    }
+
+    pub fn times_used(&self) -> u64 {
+        self.seen().times_used
     }
 
     fn set(&self, state: Option<ControllerState>) {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = state;
+        let mut seen = self.seen();
+        if let Some(state) = &state
+            && seen.activity.observe(state)
+        {
+            seen.times_used += 1;
+        }
+        seen.latest = state;
+    }
+
+    fn seen(&self) -> MutexGuard<'_, Seen> {
+        self.seen.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

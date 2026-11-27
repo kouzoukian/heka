@@ -24,6 +24,7 @@ pub enum Removal {
     Expired,
     Failed,
     OutputTypeChanged,
+    TurnedOff,
     Quit,
 }
 
@@ -158,6 +159,26 @@ impl Lifecycle {
                 Vec::new()
             }
         }
+    }
+
+    pub fn link_turned_off(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let Some(index) = self.index(mac) else {
+            return Vec::new();
+        };
+        if self.entries[index].links > 1 {
+            self.entries[index].links -= 1;
+            return Vec::new();
+        }
+        let entry = self.entries.remove(index);
+        let mut changes = Vec::new();
+        if matches!(entry.phase, Phase::Bridged | Phase::Held { .. }) {
+            changes.push(Change::Removed {
+                mac,
+                why: Removal::TurnedOff,
+            });
+        }
+        self.fill_slots(now, &mut changes);
+        changes
     }
 
     pub fn stop(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {

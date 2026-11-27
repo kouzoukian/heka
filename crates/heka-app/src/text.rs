@@ -3,8 +3,10 @@ use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{
     HidHideError, HidingError, HidingUnavailable, IdentifyError, JournalError,
 };
+use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
+use heka_core::radio::TurnOffError;
 use heka_core::state::{Battery, Charge};
 use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
@@ -26,6 +28,7 @@ pub const STOPPED: &str = "Stopped";
 pub const NOT_BRIDGED: &str = "Not Bridged";
 pub const STOP: &str = "Stop";
 pub const START: &str = "Start";
+pub const TURN_OFF: &str = "Turn off";
 pub const USB: &str = "USB";
 pub const BLUETOOTH: &str = "Bluetooth";
 pub const NO_LINK: &str = "No Link";
@@ -48,6 +51,9 @@ pub const GROUP_LIGHTS: &str = "Lights";
 pub const ROW_LIGHTBAR: &str = "Light bar";
 pub const ROW_PLAYER_LIGHTS: &str = "Player lights";
 pub const ROW_HIDE: &str = "Hide from games";
+pub const GROUP_POWER: &str = "Power";
+pub const ROW_IDLE: &str = "Turn off when idle";
+pub const IDLE_TIP: &str = "Bluetooth only. Motion alone does not count as use.";
 pub const DEFAULT: &str = "Default";
 pub const ON: &str = "On";
 pub const OFF: &str = "Off";
@@ -71,6 +77,28 @@ pub const LIGHTBAR_TIP: &str =
 pub const PLAYER_LIGHTS_TIP: &str = "The white lights under the touchpad.";
 pub const HIDE_TIP: &str = "Off lets games see the Controller too, which can cause double input. Restart a running game after a change.";
 pub const SETTINGS_NOTE: &str = "Rumble and lights apply while the Controller is Bridged.";
+
+pub fn idle_time(time: IdleTime) -> String {
+    match time {
+        IdleTime::Thirty => format!("{} min", time.minutes()),
+        _ => time.minutes().to_string(),
+    }
+}
+
+pub fn named(model: ControllerModel, short_mac: &str) -> String {
+    format!("{} {short_mac}", controller(model))
+}
+
+pub fn cannot_turn_off(controller: &str, error: &TurnOffError) -> String {
+    format!("Could not turn off {controller}: {}", turn_off_error(error))
+}
+
+pub fn turn_off_error(error: &TurnOffError) -> String {
+    match error {
+        TurnOffError::NoRadio => "no Bluetooth radio was found".into(),
+        TurnOffError::Failed(error) => error.clone(),
+    }
+}
 
 pub fn percent(percent: u8) -> String {
     format!("{percent}%")
@@ -427,6 +455,7 @@ pub mod log {
     use heka_core::lifecycle::{Change, Removal};
     use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
     use heka_core::mac::MacAddress;
+    use heka_core::radio::TurnOffError;
     use heka_core::setup::{Driver, Setup};
     use heka_core::supervisor::BridgeError;
 
@@ -481,6 +510,7 @@ pub mod log {
                     Removal::Expired => "the Held time is over",
                     Removal::Failed => "the Bridge failed",
                     Removal::OutputTypeChanged => "the Output Type changed",
+                    Removal::TurnedOff => "the Controller was turned off",
                     Removal::Quit => "heka is quitting",
                 };
                 format!("{mac}: Virtual Controller removed, {why}")
@@ -521,6 +551,13 @@ pub mod log {
         format!(
             "{mac}: {}",
             super::bridge_failed(&super::bridge_error(error))
+        )
+    }
+
+    pub fn cannot_turn_off(mac: MacAddress, error: &TurnOffError) -> String {
+        format!(
+            "{mac}: could not turn off: {}",
+            super::turn_off_error(error)
         )
     }
 

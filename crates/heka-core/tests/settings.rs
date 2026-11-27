@@ -1,4 +1,5 @@
 use heka_core::feedback::{Lightbar, PlayerLights};
+use heka_core::idle::IdleTime;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, Preferences, RumbleStrength};
 use heka_core::settings::{ControllerSettings, MAX_NICKNAME_CHARS, Settings};
@@ -16,6 +17,7 @@ fn a_missing_settings_file_gives_defaults() {
             stopped: false,
             output_type: OutputType::Xbox,
             nickname: None,
+            idle_time: None,
             preferences: Preferences {
                 rumble: RumbleStrength::FULL,
                 swap_motors: false,
@@ -202,4 +204,32 @@ fn only_controllers_set_to_be_seen_are_never_hidden() {
     );
 
     assert_eq!(settings.never_hidden().collect::<Vec<_>>(), [MAC]);
+}
+
+#[test]
+fn the_idle_time_is_saved_as_minutes_and_is_off_unless_chosen() {
+    let mut settings = Settings::default();
+    assert_eq!(settings.controller(MAC).idle_time, None);
+    settings.set_idle_time(MAC, Some(IdleTime::Ten));
+
+    let json = settings.to_json();
+    assert!(json.contains(r#""idle_time": 10"#), "{json}");
+    assert_eq!(Settings::load(Some(&json)), settings);
+
+    settings.set_idle_time(MAC, None);
+    assert!(!settings.to_json().contains("idle_time"));
+}
+
+#[test]
+fn an_idle_time_heka_does_not_offer_is_off_and_the_rest_is_kept() {
+    for value in ["20", "-5", r#""10""#, "null"] {
+        let text = format!(
+            r#"{{"controllers": {{"11:22:33:44:55:66": {{"stopped": true, "idle_time": {value}}}}}}}"#
+        );
+
+        let loaded = Settings::load(Some(&text)).controller(MAC);
+
+        assert_eq!(loaded.idle_time, None, "{value}");
+        assert!(loaded.stopped, "{value}");
+    }
 }

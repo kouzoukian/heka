@@ -5,9 +5,10 @@ const PE32_PLUS: u16 = 0x20b;
 const IMPORT_TABLE: usize = 1;
 const DELAY_IMPORT_TABLE: usize = 13;
 
-const WINDOWS_DLLS: [&str; 24] = [
+const WINDOWS_DLLS: [&str; 25] = [
     "advapi32.dll",
     "bcryptprimitives.dll",
+    "bluetoothapis.dll",
     "cfgmgr32.dll",
     "combase.dll",
     "comctl32.dll",

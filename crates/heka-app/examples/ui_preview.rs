@@ -46,6 +46,8 @@ impl Fake {
             preferences: Preferences::default(),
             experimental: false,
             active_link,
+            has_bluetooth: active_link == Some(LinkKind::Bluetooth),
+            idle_time: None,
             battery,
             output_type,
             state,
@@ -178,7 +180,9 @@ impl Backend for Fake {
             | Command::Start(mac)
             | Command::SetOutputType(mac, _)
             | Command::SetNickname(mac, _)
-            | Command::ChangePreference(mac, _) => *mac,
+            | Command::ChangePreference(mac, _)
+            | Command::TurnOff(mac)
+            | Command::SetIdleTime(mac, _) => *mac,
             Command::SetStartWithWindows(on) => {
                 self.start_with_windows.set(*on);
                 return;
@@ -219,6 +223,8 @@ impl Backend for Fake {
                 entry.nickname = (!name.is_empty()).then(|| name.to_owned());
             }
             Command::ChangePreference(_, change) => entry.preferences.change(change),
+            Command::TurnOff(mac) => controllers.retain(|entry| entry.mac != mac),
+            Command::SetIdleTime(_, idle_time) => entry.idle_time = idle_time,
             _ => {}
         }
     }

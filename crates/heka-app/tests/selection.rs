@@ -18,6 +18,8 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             preferences: Preferences::default(),
             experimental: false,
             active_link: None,
+            has_bluetooth: false,
+            idle_time: None,
             battery: None,
             output_type: OutputType::Xbox,
             state: EntryState::Stopped,

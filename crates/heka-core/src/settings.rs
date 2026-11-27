@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app_settings::AppSettings;
+use crate::idle::IdleTime;
 use crate::mac::MacAddress;
 use crate::preferences::Preferences;
 use crate::virtual_controller::OutputType;
@@ -17,6 +18,11 @@ pub struct ControllerSettings {
     pub output_type: OutputType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
+    #[serde(
+        deserialize_with = "IdleTime::offered",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idle_time: Option<IdleTime>,
     #[serde(flatten)]
     pub preferences: Preferences,
 }
@@ -88,6 +94,10 @@ impl Settings {
 
     pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {
         self.controllers.entry(mac).or_default().nickname = nickname(name);
+    }
+
+    pub fn set_idle_time(&mut self, mac: MacAddress, idle_time: Option<IdleTime>) {
+        self.controllers.entry(mac).or_default().idle_time = idle_time;
     }
 
     pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {

@@ -117,7 +117,10 @@ impl<P: Clone + Ord> Discovery<P> {
         self.troubled.retain(|path, _| present.contains(path));
         let mut found = Vec::new();
         for id in supervisor.take_dropped_links() {
-            self.reopen_later(id, &present, now, &mut found);
+            self.reopen_later(id, Duration::ZERO, &present, now, &mut found);
+        }
+        for id in supervisor.take_turned_off_links() {
+            self.reopen_later(id, LONGEST_RETRY_DELAY, &present, now, &mut found);
         }
         let gone: Vec<P> = self
             .known
@@ -148,6 +151,7 @@ impl<P: Clone + Ord> Discovery<P> {
     fn reopen_later(
         &mut self,
         dropped: LinkId,
+        at_least: Duration,
         present: &[P],
         now: Instant,
         found: &mut Vec<Found<P>>,
@@ -174,7 +178,7 @@ impl<P: Clone + Ord> Discovery<P> {
         if now.saturating_duration_since(since) >= STEADY_LINK_TIME {
             trouble.failures = 0;
         }
-        trouble.retry_at = Some(now + delay_after(trouble.failures));
+        trouble.retry_at = Some(now + delay_after(trouble.failures).max(at_least));
         trouble.failures += 1;
     }
 

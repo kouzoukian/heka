@@ -43,6 +43,14 @@ _Avoid_: grace period, suspended
 A Controller the player has told heka not to Bridge.
 _Avoid_: disabled, paused
 
+**Turn off**:
+To end a Controller's Bluetooth Link from the PC, by hand or after its idle time, so that it saves its battery.
+_Avoid_: disconnect, power off, Stop
+
+**Idle time**:
+How long a Controller on Bluetooth may go unused before heka turns it off. Chosen per Controller.
+_Avoid_: timeout, sleep timer
+
 **Hidden**:
 A Controller that heka can see and games cannot.
 _Avoid_: cloaked, blocked

@@ -47,11 +47,8 @@ pub fn pane(
     let tabs = match &showing {
         Showing::Live | Showing::ControllerSettings(_) => tab_strip(
             entry.map(|entry| controller_tab(entry, theme)),
-            entry.into_iter().flat_map(|entry| {
-                [
-                    settings_button(in_settings, toggle_settings, theme),
-                    toggle(entry, send),
-                ]
+            entry.map_or_else(Vec::new, |entry| {
+                controller_buttons(entry, in_settings, toggle_settings, send, theme)
             }),
             theme,
         ),
@@ -191,6 +188,27 @@ fn settings_button(in_settings: bool, toggle: &ToggleSettings, theme: &Theme) ->
         text::CONTROLLER_SETTINGS,
     );
     selected_button(button, in_settings, theme).on_click(move |_, window, cx| toggle(window, cx))
+}
+
+fn controller_buttons(
+    entry: &ControllerEntry,
+    in_settings: bool,
+    toggle_settings: &ToggleSettings,
+    send: &SendCommand,
+    theme: &Theme,
+) -> Vec<Button> {
+    let mut buttons = vec![settings_button(in_settings, toggle_settings, theme)];
+    buttons.extend(turn_off(entry, send));
+    buttons.push(toggle(entry, send));
+    buttons
+}
+
+fn turn_off(entry: &ControllerEntry, send: &SendCommand) -> Option<Button> {
+    let command = entry.turn_off()?;
+    let send = Rc::clone(send);
+    let id = SharedString::from(format!("turn-off-{}", entry.mac));
+    let button = tool_button(id, IconName::Power, text::TURN_OFF);
+    Some(button.on_click(move |_, _, _| send(command.clone())))
 }
 
 fn toggle(entry: &ControllerEntry, send: &SendCommand) -> Button {

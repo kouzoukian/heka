@@ -10,6 +10,7 @@ use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::feedback::Motor;
 use heka_core::hider::{Hider, HidingWarning};
+use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
@@ -18,6 +19,7 @@ use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
+use heka_windows::bluetooth::BluetoothRadios;
 use heka_windows::drivers::InstalledDrivers;
 use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
@@ -53,6 +55,8 @@ enum Command {
     ChangePreference(MacAddress, PreferenceChange),
     TestRumble(MacAddress, Motor),
     EndRumbleTest(MacAddress),
+    TurnOff(MacAddress),
+    SetIdleTime(MacAddress, Option<IdleTime>),
     CheckDrivers,
     SetAppSettings(AppSettings),
     Quit,
@@ -124,6 +128,14 @@ impl Bridging {
         let _ = self.commands.send(Command::EndRumbleTest(mac));
     }
 
+    pub fn turn_off(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::TurnOff(mac));
+    }
+
+    pub fn set_idle_time(&self, mac: MacAddress, idle_time: Option<IdleTime>) {
+        let _ = self.commands.send(Command::SetIdleTime(mac, idle_time));
+    }
+
     pub fn check_drivers(&self) {
         let _ = self.commands.send(Command::CheckDrivers);
     }
@@ -154,7 +166,8 @@ impl Drop for Bridging {
 
 fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
-    let mut supervisor = Supervisor::without_bus(settings);
+    let mut supervisor =
+        Supervisor::without_bus(settings).turning_off_with(Box::new(BluetoothRadios));
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     log_all(text::log::drivers(&detected));
     follow(&mut hider, &changes);
@@ -207,6 +220,12 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
             }
             Ok(Command::EndRumbleTest(mac)) => {
                 supervisor.end_rumble_test(mac);
+                Vec::new()
+            }
+            Ok(Command::TurnOff(mac)) => supervisor.turn_off(mac, now),
+            Ok(Command::SetIdleTime(mac, idle_time)) => {
+                unsaved = true;
+                supervisor.set_idle_time(mac, idle_time);
                 Vec::new()
             }
             Ok(Command::SetAppSettings(app)) => {

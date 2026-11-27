@@ -5,10 +5,12 @@ use std::time::Instant;
 use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::feedback::Motor;
+use crate::idle::{IdleTime, IdleTimer};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::mac::MacAddress;
 use crate::preferences::{LivePreferences, PreferenceChange, Preferences};
+use crate::radio::{Radio, TurnOffError};
 use crate::settings::Settings;
 use crate::threads::{SystemThreads, Threads};
 use crate::virtual_controller::{
@@ -45,8 +47,17 @@ pub struct ControllerView {
     pub nickname: Option<String>,
     pub preferences: Preferences,
     pub active_link: Option<LinkKind>,
+    pub has_bluetooth: bool,
+    pub idle_time: Option<IdleTime>,
     pub live: Arc<LiveInput>,
     pub error: Option<BridgeError>,
+    pub turn_off_error: Option<TurnOffError>,
+}
+
+#[derive(Clone, Copy)]
+enum Departure {
+    Lost,
+    TurnedOff,
 }
 
 struct LinkSlot {
@@ -67,6 +78,8 @@ struct Slot {
     held: Option<Plugged>,
     error: Option<BridgeError>,
     watch_error: Option<BridgeError>,
+    idle: IdleTimer,
+    turn_off_error: Option<TurnOffError>,
 }
 
 impl Slot {
@@ -77,6 +90,18 @@ impl Slot {
 
     fn active_id(&self) -> Option<LinkId> {
         self.active().map(|link| link.id)
+    }
+
+    fn bluetooth_links(&self) -> impl Iterator<Item = LinkId> + '_ {
+        self.links
+            .iter()
+            .filter(|link| link.kind == LinkKind::Bluetooth)
+            .map(|link| link.id)
+    }
+
+    fn reads_bluetooth(&self) -> bool {
+        self.reading
+            .is_some_and(|id| self.bluetooth_links().any(|link| link == id))
     }
 
     fn reads_inactive_link(&self) -> bool {
@@ -104,8 +129,15 @@ impl Slot {
 
     fn forget_read(&mut self) -> Option<LinkId> {
         let id = self.reading.take()?;
-        self.links.retain(|link| link.id != id);
+        self.drop_link(id);
         Some(id)
+    }
+
+    fn drop_link(&mut self, id: LinkId) {
+        if self.bluetooth_links().any(|link| link == id) {
+            self.turn_off_error = None;
+        }
+        self.links.retain(|link| link.id != id);
     }
 }
 
@@ -117,6 +149,8 @@ pub struct Supervisor {
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
     dropped: Vec<LinkId>,
+    radio: Option<Box<dyn Radio>>,
+    turned_off: Vec<LinkId>,
 }
 
 impl Supervisor {
@@ -137,11 +171,18 @@ impl Supervisor {
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
             dropped: Vec::new(),
+            radio: None,
+            turned_off: Vec::new(),
         }
     }
 
     pub fn spawning_with(mut self, threads: Arc<dyn Threads>) -> Self {
         self.threads = threads;
+        self
+    }
+
+    pub fn turning_off_with(mut self, radio: Box<dyn Radio>) -> Self {
+        self.radio = Some(radio);
         self
     }
 
@@ -175,6 +216,10 @@ impl Supervisor {
         std::mem::take(&mut self.dropped)
     }
 
+    pub fn take_turned_off_links(&mut self) -> Vec<LinkId> {
+        std::mem::take(&mut self.turned_off)
+    }
+
     pub fn take_virtual_failures(&mut self) -> Vec<VirtualFailure> {
         self.failures.take()
     }
@@ -193,8 +238,11 @@ impl Supervisor {
                     nickname: settings.nickname,
                     preferences: settings.preferences,
                     active_link: slot.and_then(Slot::active).map(|link| link.kind),
+                    has_bluetooth: slot.is_some_and(|slot| slot.bluetooth_links().next().is_some()),
+                    idle_time: settings.idle_time,
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone().or(slot.watch_error.clone())),
+                    turn_off_error: slot.and_then(|slot| slot.turn_off_error.clone()),
                 }
             })
             .collect()
@@ -227,6 +275,35 @@ impl Supervisor {
     }
 
     pub fn link_gone(&mut self, id: LinkId, now: Instant) -> Vec<Change> {
+        self.remove_link(id, Departure::Lost, now)
+    }
+
+    pub fn turn_off(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let Some(slot) = self.slots.get_mut(&mac) else {
+            return Vec::new();
+        };
+        let links: Vec<LinkId> = slot.bluetooth_links().collect();
+        if links.is_empty() {
+            return Vec::new();
+        }
+        let ended = self
+            .radio
+            .as_ref()
+            .ok_or(TurnOffError::NoRadio)
+            .and_then(|radio| radio.end_link(mac));
+        slot.turn_off_error = ended.clone().err();
+        if ended.is_err() {
+            return Vec::new();
+        }
+        let mut done = Vec::new();
+        for id in links {
+            self.turned_off.push(id);
+            done.extend(self.remove_link(id, Departure::TurnedOff, now));
+        }
+        done
+    }
+
+    fn remove_link(&mut self, id: LinkId, departure: Departure, now: Instant) -> Vec<Change> {
         let Some((&mac, _)) = self
             .slots
             .iter()
@@ -252,19 +329,38 @@ impl Supervisor {
             }
             slot.reading = None;
         }
-        slot.links.retain(|link| link.id != id);
-        let changes = match moving {
-            Some(controller) => self.lost_read_link(mac, controller, now),
-            None => {
-                let mut changes = Vec::new();
-                if failed {
-                    changes.extend(self.lifecycle.bridge_failed(mac, now));
-                }
-                changes.extend(self.lifecycle.link_lost(mac, now));
-                changes
+        slot.drop_link(id);
+        let mut changes = Vec::new();
+        if failed {
+            changes.extend(self.lifecycle.bridge_failed(mac, now));
+        }
+        match (departure, moving) {
+            (Departure::Lost, Some(controller)) => {
+                changes.extend(self.lost_read_link(mac, controller, now));
             }
-        };
+            (Departure::Lost, None) => changes.extend(self.lifecycle.link_lost(mac, now)),
+            (Departure::TurnedOff, moving) => {
+                changes.extend(self.turned_off_link(mac, moving, now));
+            }
+        }
         self.apply(changes, now)
+    }
+
+    fn turned_off_link(
+        &mut self,
+        mac: MacAddress,
+        moving: Option<Plugged>,
+        now: Instant,
+    ) -> Vec<Change> {
+        let mut changes = self.lifecycle.link_turned_off(mac, now);
+        if let Some(controller) = moving {
+            if self.slot(mac).links.is_empty() {
+                let _ = controller.unplug();
+            } else {
+                changes.extend(self.move_bridge(mac, controller, now));
+            }
+        }
+        changes
     }
 
     pub fn poll(&mut self, now: Instant) -> Vec<Change> {
@@ -319,7 +415,28 @@ impl Supervisor {
         }
         let changes = self.lifecycle.tick(now);
         done.extend(self.apply(changes, now));
+        done.extend(self.turn_off_idle(now));
         done
+    }
+
+    fn turn_off_idle(&mut self, now: Instant) -> Vec<Change> {
+        let settings = self.lifecycle.settings();
+        let mut idle = Vec::new();
+        for (&mac, slot) in &mut self.slots {
+            let reads_bluetooth = slot.reads_bluetooth();
+            match settings.controller(mac).idle_time {
+                Some(time) if reads_bluetooth => {
+                    let used = slot.live.times_used();
+                    if slot.idle.runs_out(time.duration(), used, now) {
+                        idle.push(mac);
+                    }
+                }
+                _ => slot.idle.restart(),
+            }
+        }
+        idle.into_iter()
+            .flat_map(|mac| self.turn_off(mac, now))
+            .collect()
     }
 
     pub fn stop(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
@@ -348,6 +465,13 @@ impl Supervisor {
 
     pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {
         self.lifecycle.settings_mut().set_nickname(mac, name);
+    }
+
+    pub fn set_idle_time(&mut self, mac: MacAddress, idle_time: Option<IdleTime>) {
+        self.lifecycle.settings_mut().set_idle_time(mac, idle_time);
+        if let Some(slot) = self.slots.get_mut(&mac) {
+            slot.idle.restart();
+        }
     }
 
     pub fn change_preference(&mut self, mac: MacAddress, change: PreferenceChange) -> Preferences {
@@ -395,11 +519,18 @@ impl Supervisor {
                 let _ = controller.unplug();
                 changes.extend(self.lifecycle.release_failed(mac, now));
             }
-        } else if let Err(error) = self.bridge_to(mac, controller) {
-            self.slot(mac).error = Some(error);
-            changes.extend(self.lifecycle.bridge_failed(mac, now));
+        } else {
+            changes.extend(self.move_bridge(mac, controller, now));
         }
         changes
+    }
+
+    fn move_bridge(&mut self, mac: MacAddress, controller: Plugged, now: Instant) -> Vec<Change> {
+        let Err(error) = self.bridge_to(mac, controller) else {
+            return Vec::new();
+        };
+        self.slot(mac).error = Some(error);
+        self.lifecycle.bridge_failed(mac, now)
     }
 
     fn follow_active_link(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
@@ -415,10 +546,7 @@ impl Supervisor {
             match bridge.stop() {
                 BridgeEnd::Stopped { link, controller } => {
                     slot.put_back(link);
-                    if let Err(error) = self.bridge_to(mac, controller) {
-                        self.slot(mac).error = Some(error);
-                        changes.extend(self.lifecycle.bridge_failed(mac, now));
-                    }
+                    changes.extend(self.move_bridge(mac, controller, now));
                 }
                 BridgeEnd::LinkLost { controller } => {
                     self.dropped.extend(slot.forget_read());

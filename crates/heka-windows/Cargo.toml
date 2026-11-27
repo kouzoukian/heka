@@ -16,6 +16,7 @@ vigem-rust.workspace = true
 [dependencies.windows-sys]
 workspace = true
 features = [
+    "Win32_Devices_Bluetooth",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
     "Win32_Foundation",

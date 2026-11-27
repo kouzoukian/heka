@@ -5,7 +5,7 @@
 `Lifecycle` is a pure state machine: Link and timer events go in, each carrying its time, and `Change`s come out. It owns no threads, Links or Virtual Controllers. A Controller is listed once however many Links it has, in arrival order, while connected or Held.
 
 - At most 4 Controllers are Bridged or Held at once. Waiting ones take free slots oldest first.
-- A Controller that loses every Link is Held for 30 seconds. Only losing the last Link matters.
+- A Controller that loses every Link is Held for 30 seconds, unless heka turned it off ([ADR 0019](0019-turning-off-a-bluetooth-controller.md)). Only losing the last Link matters.
 - After a failed Bridge another is tried 2 seconds later. A Held Controller whose Virtual Controller cannot be released is removed at once, as it would keep showing its last input.
 - Output Type, Stopped and the rest are remembered in the settings. Changing the Output Type of a Bridged Controller removes its Virtual Controller and Bridges a new one at once; of a Held one, removes it and forgets the Controller until it returns; otherwise it applies at the next Bridge.
 - Until Virtual Controllers can be made, the lifecycle lists Controllers and Bridges none.

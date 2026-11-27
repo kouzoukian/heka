@@ -11,6 +11,7 @@ The zip is written by the `tar` that comes with Windows, picking the format from
 - Add a DLL to `WINDOWS_DLLS` only if every Windows 10 and 11 PC has it. The Visual C++ runtime is not one of them.
 - API sets (`api-ms-win-*`) are part of Windows, except the C runtime's (`api-ms-win-crt-*`), whose presence means the runtime was not linked in.
 - `icuuc.dll` came with Windows 10 version 1703, the newest version any listed DLL needs.
+- `bluetoothapis.dll` finds the Bluetooth radios that turn a Controller off.
 - `gdiplus.dll` draws the icons of the menus `gpui-component` opens on text fields.
 
 ## Which crates are noticed

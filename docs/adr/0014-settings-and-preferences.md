@@ -2,7 +2,7 @@
 
 ## Settings
 
-Per Controller, keyed by MAC address, heka remembers Stopped, the Output Type, the player's name for it and its Preferences, as JSON at `%APPDATA%\heka\settings.json`. The Preferences are written beside the other fields.
+Per Controller, keyed by MAC address, heka remembers Stopped, the Output Type, the player's name for it, its idle time ([ADR 0019](0019-turning-off-a-bluetooth-controller.md)) and its Preferences, as JSON at `%APPDATA%\heka\settings.json`. The Preferences are written beside the other fields.
 
 - Reading never fails: a missing, unreadable or corrupt file gives the defaults, a broken entry gives that Controller the defaults, and unknown fields are ignored, so a later version may add fields.
 - A file that is not a JSON object is copied to `settings.json.unreadable` when read, because remembering the window writes over it without the player changing anything.

@@ -11,6 +11,7 @@ icon_assets!(
         Bluetooth,
         Gamepad2,
         Palette,
+        Power,
         ScrollText,
         SlidersHorizontal,
         Unplug,

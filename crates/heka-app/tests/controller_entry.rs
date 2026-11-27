@@ -9,10 +9,12 @@ use heka_core::discovery::{OpenError, Unopened};
 use heka_core::feedback::{Motor, PlayerLights};
 use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{HidHideError, HidingError};
+use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind, LinkRead, LinkReader, ReportError, ReportFormat};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{PreferenceChange, Preferences, RumbleStrength};
+use heka_core::radio::TurnOffError;
 use heka_core::settings::Settings;
 use heka_core::setup::{Driver, DriverError, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
@@ -30,8 +32,11 @@ fn view(phase: Phase) -> ControllerView {
         nickname: None,
         preferences: Preferences::default(),
         active_link: Some(LinkKind::Usb),
+        has_bluetooth: false,
+        idle_time: None,
         live: Arc::new(LiveInput::default()),
         error: None,
+        turn_off_error: None,
     }
 }
 
@@ -435,5 +440,56 @@ fn the_errors_heka_core_returns_are_worded_for_the_player() {
             DriverError::HidHide(HidHideError::UnexpectedSize(0))
         ),
         "HidHide cannot be used: HidHide failed: HidHide returned 0 bytes for a BOOLEAN"
+    );
+}
+
+#[test]
+fn only_an_entry_with_a_bluetooth_link_can_be_turned_off() {
+    let now = Instant::now();
+    assert_eq!(entry_of(&view(Phase::Bridged), now).turn_off(), None);
+
+    let mut on_both = view(Phase::Stopped);
+    on_both.has_bluetooth = true;
+
+    assert_eq!(
+        entry_of(&on_both, now).turn_off(),
+        Some(Command::TurnOff(MAC))
+    );
+}
+
+#[test]
+fn an_entry_carries_its_idle_time_and_asks_for_another() {
+    let mut chosen = view(Phase::Bridged);
+    chosen.idle_time = Some(IdleTime::Ten);
+
+    let entry = entry_of(&chosen, Instant::now());
+
+    assert_eq!(entry.idle_time, Some(IdleTime::Ten));
+    assert_eq!(
+        entry.choose_idle_time(None),
+        Command::SetIdleTime(MAC, None)
+    );
+}
+
+#[test]
+fn a_failure_to_turn_off_is_a_warning_naming_the_controller() {
+    let mut failed = view(Phase::Bridged);
+    assert_eq!(Notice::cannot_turn_off(&failed), None);
+    failed.turn_off_error = Some(TurnOffError::Failed("access is denied".into()));
+
+    assert_eq!(
+        Notice::cannot_turn_off(&failed),
+        Some(Notice::warning(
+            "Could not turn off DualSense 00:01: access is denied"
+        ))
+    );
+
+    failed.nickname = Some("Sofa".into());
+    failed.turn_off_error = Some(TurnOffError::NoRadio);
+    assert_eq!(
+        Notice::cannot_turn_off(&failed),
+        Some(Notice::warning(
+            "Could not turn off Sofa: no Bluetooth radio was found"
+        ))
     );
 }
