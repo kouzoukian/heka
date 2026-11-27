@@ -19,5 +19,6 @@ pub mod segmented;
 pub mod settings;
 pub mod shortcuts;
 pub mod sticks;
+pub mod touchpad;
 pub mod triggers;
 pub mod view;

@@ -1,78 +1,20 @@
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+mod rig;
 
-use heka_core::desktop::{Chord, Desk, DesktopError, DesktopEvent, DesktopOutput, Key};
-use heka_core::profile::{Mapper, Profile};
-use heka_core::running::RunningMapper;
+use heka_core::desktop::{Chord, DesktopEvent, Key};
+use heka_core::profile::Profile;
 use heka_core::state::{ControllerState, Stick};
 use heka_core::stick_use::{Direction, StickRole, StickUse, StickUseChange};
 use heka_core::tuning::{Curve, StickChange, StickSide};
 use heka_core::xbox::XboxReport;
+use rig::{Rig, moved, scrolled};
 
-#[derive(Clone, Default)]
-struct FakeDesktop(Arc<Mutex<Vec<DesktopEvent>>>);
-
-impl FakeDesktop {
-    fn take(&self) -> Vec<DesktopEvent> {
-        std::mem::take(&mut self.0.lock().unwrap())
+fn pointer_over(rig: &mut Rig, millis: u64, step: u64, state: ControllerState) -> (i32, i32) {
+    rig.report_after(0, state);
+    rig.take();
+    for _ in 0..millis / step {
+        rig.report_after(step, state);
     }
-}
-
-impl DesktopOutput for FakeDesktop {
-    fn send(&mut self, events: &[DesktopEvent]) -> Result<(), DesktopError> {
-        self.0.lock().unwrap().extend_from_slice(events);
-        Ok(())
-    }
-}
-
-struct Rig {
-    running: RunningMapper,
-    mapper: Mapper,
-    desktop: FakeDesktop,
-    now: Instant,
-}
-
-impl Rig {
-    fn new(profile: &Profile) -> Self {
-        let desktop = FakeDesktop::default();
-        let desk = Arc::new(Desk::new(Box::new(desktop.clone())));
-        Self {
-            running: RunningMapper::new(desk),
-            mapper: Mapper::new(profile),
-            desktop,
-            now: Instant::now(),
-        }
-    }
-
-    fn report_after(&mut self, millis: u64, state: ControllerState) -> ControllerState {
-        self.now += Duration::from_millis(millis);
-        let shown = self.running.report(&self.mapper, &state, self.now);
-        self.running.act();
-        shown
-    }
-
-    fn pointer_over(&mut self, millis: u64, step: u64, state: ControllerState) -> (i32, i32) {
-        self.report_after(0, state);
-        self.desktop.take();
-        for _ in 0..millis / step {
-            self.report_after(step, state);
-        }
-        moved(&self.desktop.take())
-    }
-}
-
-fn moved(events: &[DesktopEvent]) -> (i32, i32) {
-    events.iter().fold((0, 0), |(x, y), event| match event {
-        DesktopEvent::Move { x: dx, y: dy } => (x + dx, y + dy),
-        _ => (x, y),
-    })
-}
-
-fn scrolled(events: &[DesktopEvent]) -> (i32, i32) {
-    events.iter().fold((0, 0), |(x, y), event| match event {
-        DesktopEvent::Scroll { x: dx, y: dy } => (x + dx, y + dy),
-        _ => (x, y),
-    })
+    moved(&rig.take())
 }
 
 fn using(side: StickSide, used_as: StickUse) -> Profile {
@@ -107,7 +49,7 @@ fn a_stick_drives_the_virtual_controller_unless_it_is_used_otherwise() {
     let shown = rig.report_after(0, left(255, 0));
 
     assert_eq!(shown, left(255, 0));
-    assert_eq!(rig.desktop.take(), []);
+    assert_eq!(rig.take(), []);
 }
 
 #[test]
@@ -154,7 +96,7 @@ fn with_the_sticks_swapped_the_virtual_stick_of_a_used_stick_rests() {
 fn a_stick_pushed_fully_moves_the_pointer_a_thousand_pixels_a_second() {
     let mut rig = Rig::new(&using(StickSide::Left, StickUse::Mouse));
 
-    let (x, y) = rig.pointer_over(1000, 4, left(255, 128));
+    let (x, y) = pointer_over(&mut rig, 1000, 4, left(255, 128));
 
     assert!((999..=1000).contains(&x), "{x}");
     assert_eq!(y, 0);
@@ -164,7 +106,7 @@ fn a_stick_pushed_fully_moves_the_pointer_a_thousand_pixels_a_second() {
 fn the_pointer_moves_as_far_however_often_reports_arrive() {
     let travel = |step| {
         let mut rig = Rig::new(&using(StickSide::Left, StickUse::Mouse));
-        rig.pointer_over(1000, step, left(0, 128)).0
+        pointer_over(&mut rig, 1000, step, left(0, 128)).0
     };
 
     for step in [1, 4, 8, 10, 20] {
@@ -183,7 +125,7 @@ fn slow_movement_adds_up_instead_of_being_rounded_away() {
     profile.change_stick(StickSide::Left, StickChange::Curve(Curve::Softer));
     let mut rig = Rig::new(&profile);
 
-    let (x, _) = rig.pointer_over(10_000, 1, left(192, 128));
+    let (x, _) = pointer_over(&mut rig, 10_000, 1, left(192, 128));
 
     assert!((90..=130).contains(&x), "{x}");
 }
@@ -193,7 +135,7 @@ fn speed_curve_and_dead_zone_shape_the_pointer() {
     let travel = |change: &dyn Fn(&mut Profile), x| {
         let mut profile = using(StickSide::Left, StickUse::Mouse);
         change(&mut profile);
-        Rig::new(&profile).pointer_over(1000, 4, left(x, 128)).0
+        pointer_over(&mut Rig::new(&profile), 1000, 4, left(x, 128)).0
     };
     let fast = travel(
         &|profile| profile.change_stick_use(StickSide::Left, StickUseChange::Speed(200)),
@@ -218,18 +160,18 @@ fn speed_curve_and_dead_zone_shape_the_pointer() {
 fn a_resting_stick_without_a_dead_zone_leaves_the_pointer_still() {
     let mut rig = Rig::new(&using(StickSide::Left, StickUse::Mouse));
 
-    assert_eq!(rig.pointer_over(5000, 4, left(132, 124)), (0, 0));
+    assert_eq!(pointer_over(&mut rig, 5000, 4, left(132, 124)), (0, 0));
 }
 
 #[test]
 fn a_pause_between_reports_does_not_make_the_pointer_jump() {
     let mut rig = Rig::new(&using(StickSide::Left, StickUse::Mouse));
     rig.report_after(0, left(255, 128));
-    rig.desktop.take();
+    rig.take();
 
     rig.report_after(3000, left(255, 128));
 
-    let (x, _) = moved(&rig.desktop.take());
+    let (x, _) = moved(&rig.take());
     assert!((99..=100).contains(&x), "{x}");
 }
 
@@ -238,11 +180,11 @@ fn a_stick_scrolls_the_way_it_is_pushed() {
     let scroll = |state| {
         let mut rig = Rig::new(&using(StickSide::Left, StickUse::Scroll));
         rig.report_after(0, state);
-        rig.desktop.take();
+        rig.take();
         for _ in 0..250 {
             rig.report_after(4, state);
         }
-        scrolled(&rig.desktop.take())
+        scrolled(&rig.take())
     };
 
     let (x, up) = scroll(left(128, 0));
@@ -257,22 +199,19 @@ fn a_stick_presses_the_keys_of_its_direction_and_two_on_a_diagonal() {
     let mut rig = Rig::new(&using(StickSide::Left, StickUse::Wasd));
 
     rig.report_after(0, left(128, 0));
-    assert_eq!(rig.desktop.take(), [key(W, true)]);
+    assert_eq!(rig.take(), [key(W, true)]);
 
     rig.report_after(4, left(230, 26));
-    assert_eq!(rig.desktop.take(), [key(D, true)]);
+    assert_eq!(rig.take(), [key(D, true)]);
 
     rig.report_after(4, left(128, 255));
-    assert_eq!(
-        rig.desktop.take(),
-        [key(W, false), key(D, false), key(S, true)]
-    );
+    assert_eq!(rig.take(), [key(W, false), key(D, false), key(S, true)]);
 
     rig.report_after(4, left(0, 128));
-    assert_eq!(rig.desktop.take(), [key(S, false), key(A, true)]);
+    assert_eq!(rig.take(), [key(S, false), key(A, true)]);
 
     rig.report_after(4, left(128, 128));
-    assert_eq!(rig.desktop.take(), [key(A, false)]);
+    assert_eq!(rig.take(), [key(A, false)]);
 }
 
 #[test]
@@ -280,10 +219,10 @@ fn a_key_stick_needs_a_quarter_of_its_travel_even_with_a_smaller_dead_zone() {
     let mut rig = Rig::new(&using(StickSide::Left, StickUse::Wasd));
 
     rig.report_after(0, left(155, 128));
-    assert_eq!(rig.desktop.take(), []);
+    assert_eq!(rig.take(), []);
 
     rig.report_after(4, left(170, 128));
-    assert_eq!(rig.desktop.take(), [key(D, true)]);
+    assert_eq!(rig.take(), [key(D, true)]);
 }
 
 #[test]
@@ -297,7 +236,7 @@ fn arrows_press_the_arrow_keys() {
     rig.report_after(0, up);
 
     assert_eq!(
-        rig.desktop.take(),
+        rig.take(),
         [DesktopEvent::Key {
             key: Key::extended(0x48),
             down: true
@@ -314,7 +253,7 @@ fn four_chosen_keys_follow_the_stick() {
 
     rig.report_after(0, left(128, 0));
     assert_eq!(
-        rig.desktop.take(),
+        rig.take(),
         [
             DesktopEvent::Key {
                 key: Key::LEFT_SHIFT,
@@ -325,7 +264,7 @@ fn four_chosen_keys_follow_the_stick() {
     );
     rig.report_after(4, left(255, 128));
     assert_eq!(
-        rig.desktop.take(),
+        rig.take(),
         [
             key(W, false),
             DesktopEvent::Key {

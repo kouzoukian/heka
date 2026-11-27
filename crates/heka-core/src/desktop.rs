@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize, Serializer};
@@ -199,6 +200,18 @@ pub enum DesktopEvent {
 pub struct Nudge {
     pub pointer: (i32, i32),
     pub scroll: (i32, i32),
+}
+
+impl Add for Nudge {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        let sum = |a: (i32, i32), b: (i32, i32)| (a.0 + b.0, a.1 + b.1);
+        Self {
+            pointer: sum(self.pointer, other.pointer),
+            scroll: sum(self.scroll, other.scroll),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -166,6 +166,7 @@ use it. Changes apply at once.
 - **Triggers:** for each trigger, dead zone, max zone, output curve, a **hair trigger**
   point past which any press is full, and the point at which a trigger bound to a button
   counts as pressed.
+- **Touchpad:** to the Virtual Controller, or [moving the mouse](#touchpad-as-mouse).
 - **Output Type:** the Controller's own, Xbox or PS4.
 
 Profiles can be renamed, duplicated, deleted, exported to a file and imported from one.
@@ -185,6 +186,18 @@ A stick used for anything but the Virtual Controller rests centred on it.
 
 A resting stick is never quite centred, so a pointing stick ignores at least 6% of its
 travel and a key stick at least 25%.
+
+#### Touchpad as mouse
+
+Under **Touchpad**, set **Touchpad goes to** to **Mouse**. The Virtual Controller then
+no longer sees fingers on it.
+
+- One finger moves the pointer. Choose the **sensitivity** and **Invert vertical**.
+- **Tap to left click**, on to begin with, and **Two-finger right click**, off, click
+  when you touch briefly without moving.
+- Dragging two fingers scrolls, both ways.
+- The click of the touchpad keeps its Binding under **Buttons**. Bind it to **Mouse
+  left** to drag by pressing it down.
 
 #### Keyboard and mouse
 

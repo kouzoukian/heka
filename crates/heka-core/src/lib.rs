@@ -34,6 +34,7 @@ pub mod state;
 pub mod stick_use;
 pub mod supervisor;
 pub mod threads;
+pub mod touchpad;
 pub mod tuning;
 pub mod virtual_controller;
 pub mod watch;

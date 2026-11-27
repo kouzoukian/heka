@@ -220,6 +220,9 @@ impl Backend for WindowBackend {
             Command::ChangeStickUse(profile, side, change) => {
                 bridging.change_stick_use(profile, side, change);
             }
+            Command::ChangeTouchpad(profile, change) => {
+                bridging.change_touchpad(profile, change);
+            }
             Command::ChangeTrigger(profile, side, change) => {
                 bridging.change_trigger(profile, side, change);
             }

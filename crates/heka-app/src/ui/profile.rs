@@ -26,6 +26,7 @@ use crate::ui::rules::rule_strip;
 use crate::ui::segmented::{Pick, Segment, picked, segmented};
 use crate::ui::settings::{explained, group};
 use crate::ui::sticks::sticks_section;
+use crate::ui::touchpad::touchpad_section;
 use crate::ui::triggers::triggers_section;
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
@@ -68,6 +69,7 @@ pub enum Section {
     Buttons,
     Sticks,
     Triggers,
+    Touchpad,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +134,10 @@ pub fn profile_page(
             }
             None => scrolled(default_note(text::TRIGGERS_DEFAULT, theme)),
         },
+        Section::Touchpad => match chosen {
+            Some(profile) => touchpad_section(profile, entry, send, theme).into_any_element(),
+            None => scrolled(default_note(text::TOUCHPAD_DEFAULT, theme)),
+        },
     };
     div()
         .flex()
@@ -169,6 +175,7 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
         (Section::Buttons, text::SECTION_BUTTONS),
         (Section::Sticks, text::SECTION_STICKS),
         (Section::Triggers, text::SECTION_TRIGGERS),
+        (Section::Touchpad, text::SECTION_TOUCHPAD),
     ]
     .map(|(section, words)| {
         let act = Rc::clone(&view.act);

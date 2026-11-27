@@ -542,7 +542,10 @@ fn run(
                 }
                 running.act();
             }
-            LinkRead::Timeout => {}
+            LinkRead::Timeout => {
+                running.tick(mapper.current(), Instant::now());
+                running.act();
+            }
             LinkRead::Lost => {
                 let _ = release(controller.as_mut(), &failures);
                 break InputEnd::LinkLost(controller);

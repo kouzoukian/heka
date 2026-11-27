@@ -24,6 +24,7 @@ use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::touchpad::TouchpadChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
@@ -87,6 +88,7 @@ enum Command {
     SetSwapSticks(String, bool),
     ChangeTrigger(String, TriggerSide, TriggerChange),
     ChangeStickUse(String, StickSide, StickUseChange),
+    ChangeTouchpad(String, TouchpadChange),
     Quit,
 }
 
@@ -237,6 +239,10 @@ impl Bridging {
         let _ = self
             .commands
             .send(Command::ChangeStickUse(profile, side, change));
+    }
+
+    pub fn change_touchpad(&self, profile: String, change: TouchpadChange) {
+        let _ = self.commands.send(Command::ChangeTouchpad(profile, change));
     }
 
     pub fn quit(&self) {
@@ -411,6 +417,11 @@ fn supervise(
             Ok(Command::ChangeStickUse(id, side, change)) => {
                 edit_profile(&mut supervisor, &id, now, |profile| {
                     profile.change_stick_use(side, change);
+                })
+            }
+            Ok(Command::ChangeTouchpad(id, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_touchpad(change);
                 })
             }
             Ok(Command::ChangeTrigger(id, side, change)) => {

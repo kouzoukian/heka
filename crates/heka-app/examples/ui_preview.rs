@@ -58,6 +58,7 @@ impl Fake {
             battery,
             raw_sticks: None,
             raw_triggers: None,
+            raw_touch: None,
             report_rate: None,
             output_type,
             profile: None,
@@ -173,6 +174,7 @@ impl Backend for Fake {
                 entry.pad = Some(moving_pad(t));
                 entry.raw_sticks = entry.pad.map(|pad| [pad.left_stick, pad.right_stick]);
                 entry.raw_triggers = entry.pad.map(|pad| [pad.left_trigger, pad.right_trigger]);
+                entry.raw_touch = entry.pad.map(|pad| pad.touch);
                 entry.report_rate = Some(250);
             }
             if let EntryState::Held { .. } = entry.state {
@@ -319,6 +321,12 @@ impl Backend for Fake {
             Command::ChangeStickUse(id, side, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_stick_use(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeTouchpad(id, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_touchpad(*change);
                 }
                 return;
             }

@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::desktop::{Chord, DesktopState, MouseButton, WheelStep};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
 use crate::stick_use::{StickRole, StickUseChange, Velocity};
+use crate::touchpad::{TouchpadChange, TouchpadSettings};
 use crate::tuning::{
     StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
     tuned_stick,
@@ -249,6 +250,8 @@ pub struct Profile {
     pub left_trigger: TriggerTuning,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
     pub right_trigger: TriggerTuning,
+    #[serde(skip_serializing_if = "TouchpadSettings::is_default")]
+    touchpad: TouchpadSettings,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -274,6 +277,7 @@ impl Profile {
             right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            touchpad: TouchpadSettings::default(),
         }
     }
 
@@ -301,6 +305,7 @@ impl Profile {
             "right_stick_use",
             "left_trigger",
             "right_trigger",
+            "touchpad",
         ]
         .iter()
         .any(|key| root.contains_key(*key));
@@ -344,6 +349,10 @@ impl Profile {
             right_stick_use: stick_use("right_stick_use"),
             left_trigger: trigger("left_trigger"),
             right_trigger: trigger("right_trigger"),
+            touchpad: root
+                .get("touchpad")
+                .map(TouchpadSettings::load)
+                .unwrap_or_default(),
         })
     }
 
@@ -399,6 +408,14 @@ impl Profile {
         }
     }
 
+    pub fn touchpad(&self) -> &TouchpadSettings {
+        &self.touchpad
+    }
+
+    pub fn change_touchpad(&mut self, change: TouchpadChange) {
+        self.touchpad.change(change);
+    }
+
     pub fn trigger(&self, side: TriggerSide) -> &TriggerTuning {
         match side {
             TriggerSide::Left => &self.left_trigger,
@@ -423,6 +440,7 @@ impl Profile {
             && self.right_stick_use.is_default()
             && self.left_trigger.is_neutral()
             && self.right_trigger.is_neutral()
+            && self.touchpad.is_default()
     }
 }
 
@@ -452,6 +470,7 @@ pub struct Mapper {
     right_stick_use: StickRole,
     left_trigger: TriggerTuning,
     right_trigger: TriggerTuning,
+    touchpad: TouchpadSettings,
 }
 
 impl Default for Mapper {
@@ -465,6 +484,7 @@ impl Default for Mapper {
             right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            touchpad: TouchpadSettings::default(),
         }
     }
 }
@@ -479,6 +499,7 @@ impl Mapper {
             right_stick_use: profile.right_stick_use,
             left_trigger: profile.left_trigger,
             right_trigger: profile.right_trigger,
+            touchpad: profile.touchpad,
             ..Self::default()
         };
         for input in Input::ALL {
@@ -547,9 +568,18 @@ impl Mapper {
             left_stick,
             right_stick,
             fine_sticks,
+            touch: if self.touchpad.moves_the_mouse() {
+                [None; 2]
+            } else {
+                state.touch
+            },
             ..*state
         };
         Mapped { shown, desktop }
+    }
+
+    pub fn mouse_touchpad(&self) -> Option<&TouchpadSettings> {
+        self.touchpad.moves_the_mouse().then_some(&self.touchpad)
     }
 
     pub fn velocity(&self, state: &ControllerState) -> Velocity {

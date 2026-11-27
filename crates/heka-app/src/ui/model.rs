@@ -19,13 +19,14 @@ use heka_core::shortcuts::{ShortcutChange, Shortcuts};
 use heka_core::state::{Battery, Stick};
 use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::ControllerView;
+use heka_core::touchpad::TouchpadChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::WindowPlacement;
 
 use crate::log::Recent;
 use crate::text;
-use crate::ui::pad::PadModel;
+use crate::ui::pad::{PadModel, TouchDot};
 
 pub trait Backend {
     fn screen(&self, now: Instant) -> Screen;
@@ -78,6 +79,7 @@ pub enum Command {
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
     ChangeStickUse(String, StickSide, StickUseChange),
+    ChangeTouchpad(String, TouchpadChange),
     ChangeTrigger(String, TriggerSide, TriggerChange),
     AddGameRule(String, String),
     SetGameRule(String, String),
@@ -240,6 +242,7 @@ pub struct ControllerEntry {
     pub battery: Option<Battery>,
     pub raw_sticks: Option<[Stick; 2]>,
     pub raw_triggers: Option<[u8; 2]>,
+    pub raw_touch: Option<[Option<TouchDot>; 2]>,
     pub report_rate: Option<u32>,
     pub output_type: OutputType,
     pub profile: Option<String>,
@@ -295,6 +298,7 @@ impl ControllerEntry {
             battery: input.and_then(|input| input.battery),
             raw_sticks: sample.raw.map(|raw| [raw.left_stick, raw.right_stick]),
             raw_triggers: sample.raw.map(|raw| [raw.left_trigger, raw.right_trigger]),
+            raw_touch: sample.raw.map(|raw| PadModel::from_state(&raw).touch),
             report_rate: sample.report_rate.map(|rate| rate.round() as u32),
             output_type: *output_type,
             profile: profile.clone(),

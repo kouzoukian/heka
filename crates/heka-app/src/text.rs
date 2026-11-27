@@ -474,6 +474,23 @@ pub const OUTPUT_OWN: &str = "Controller's own";
 pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
 pub const BINDING_NOTHING: &str = "Nothing";
 pub const SECTION_PROFILES: &str = "Profiles";
+pub const SECTION_TOUCHPAD: &str = "Touchpad";
+pub const ROW_TOUCHPAD_USE: &str = "Touchpad goes to";
+pub const TOUCHPAD_USE_TIP: &str = "The Virtual Controller or the mouse, not both";
+pub const TOUCHPAD_CONTROLLER: &str = "Controller";
+pub const TOUCHPAD_MOUSE: &str = "Mouse";
+pub const TOUCHPAD_SENSITIVITY_TIP: &str = "How far the pointer moves for a finger's travel";
+pub const ROW_INVERT_VERTICAL: &str = "Invert vertical";
+pub const INVERT_VERTICAL_TIP: &str = "A finger moving up moves the pointer down";
+pub const ROW_TAP_CLICK: &str = "Tap to left click";
+pub const TAP_CLICK_TIP: &str = "A short touch clicks the left button";
+pub const ROW_TWO_FINGER_CLICK: &str = "Two-finger right click";
+pub const TWO_FINGER_CLICK_TIP: &str = "A two-finger tap clicks the right button";
+pub const TOUCHPAD_SCROLL_NOTE: &str = "Drag two fingers to scroll.";
+pub const TOUCHPAD_CLICK_NOTE: &str =
+    "Touchpad click Bindings are under Buttons and work either way.";
+pub const TOUCHPAD_DEFAULT: &str =
+    "The Default Profile does not change the touchpad. Choose another Profile, or make a new one.";
 pub const SECTION_BUTTONS: &str = "Buttons";
 pub const SECTION_STICKS: &str = "Sticks";
 pub const SIDE_LEFT: &str = "Left stick";
