@@ -1,5 +1,5 @@
 use heka_core::profile::{Binding, DEFAULT_NAME, Input, Output, Profile};
-use heka_core::profiles::Profiles;
+use heka_core::profiles::{Profiles, suggest_name};
 
 fn file(id: &str, text: &str) -> (String, String) {
     (id.to_owned(), text.to_owned())
@@ -151,4 +151,17 @@ fn files_are_named_after_ids() {
     assert_eq!(Profiles::id_of_file("racing.json.tmp"), None);
     assert_eq!(Profiles::id_of_file("racing.txt"), None);
     assert_eq!(Profiles::id_of_file(".json"), None);
+}
+
+#[test]
+fn a_suggested_name_is_the_first_free_number() {
+    assert_eq!(suggest_name([]), "Profile 1");
+    assert_eq!(suggest_name(["Profile 1"]), "Profile 2");
+    assert_eq!(suggest_name(["Profile 1", "Profile 3"]), "Profile 2");
+    assert_eq!(suggest_name(["Racing", "Shooter"]), "Profile 1");
+}
+
+#[test]
+fn a_suggested_name_ignores_case() {
+    assert_eq!(suggest_name(["PROFILE 1", "profile 2"]), "Profile 3");
 }

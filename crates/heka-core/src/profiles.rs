@@ -107,3 +107,11 @@ fn file_safe(name: &str) -> String {
         id.to_owned()
     }
 }
+
+pub fn suggest_name<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    let taken: Vec<String> = names.into_iter().map(str::to_lowercase).collect();
+    (1..)
+        .map(|number| format!("Profile {number}"))
+        .find(|name| !taken.contains(&name.to_lowercase()))
+        .expect("a free number exists")
+}

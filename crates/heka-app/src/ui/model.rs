@@ -277,7 +277,8 @@ impl ControllerEntry {
     }
 
     pub fn choose(&self, output_type: OutputType) -> Option<Command> {
-        (output_type != self.output_type).then_some(Command::SetOutputType(self.mac, output_type))
+        (!self.output_type_from_profile && output_type != self.output_type)
+            .then_some(Command::SetOutputType(self.mac, output_type))
     }
 
     pub fn detail(&self) -> Option<String> {

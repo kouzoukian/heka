@@ -6,6 +6,7 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
+use heka_core::profile::{Binding, Input, Output};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
@@ -457,6 +458,79 @@ pub const NOTICES_FILE: &str = "THIRD-PARTY-NOTICES.txt";
 pub const NOTICES_TIP: &str =
     "The licenses of everything built into heka.exe, in the file beside it.";
 pub const ROW_SOURCE: &str = "Source";
+
+pub const PROFILE: &str = "Profile";
+pub const GROUP_PROFILES: &str = "Profiles";
+pub const GROUP_BINDINGS: &str = "Bindings";
+pub const DEFAULT_PROFILE: &str = "Default";
+pub const NEW_PROFILE: &str = "New Profile";
+pub const DEFAULT_PROFILE_FIXED: &str = "The Default Profile cannot be changed. Choose another Profile, or make a new one, to remap buttons.";
+pub const ROW_PROFILE_OUTPUT: &str = "Output Type";
+pub const PROFILE_OUTPUT_TIP: &str = "The Output Type while this Profile is chosen";
+pub const OUTPUT_OWN: &str = "Controller's own";
+pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
+pub const BINDING_NOTHING: &str = "Nothing";
+pub const BINDING_TIP: &str = "What this input drives on the Virtual Controller";
+
+pub fn input_name(input: Input) -> &'static str {
+    match input {
+        Input::Cross => "Cross",
+        Input::Circle => "Circle",
+        Input::Square => "Square",
+        Input::Triangle => "Triangle",
+        Input::DpadUp => "Up",
+        Input::DpadDown => "Down",
+        Input::DpadLeft => "Left",
+        Input::DpadRight => "Right",
+        Input::L1 => "L1",
+        Input::R1 => "R1",
+        Input::L2 => "L2",
+        Input::R2 => "R2",
+        Input::L3 => "L3",
+        Input::R3 => "R3",
+        Input::Create => "Create",
+        Input::Options => "Options",
+        Input::Ps => "PS",
+        Input::Touchpad => "Touchpad",
+        Input::TouchpadLeft => "Touchpad, left half",
+        Input::TouchpadRight => "Touchpad, right half",
+        Input::Mute => "Mute",
+        Input::LeftFn => "Left Fn",
+        Input::RightFn => "Right Fn",
+        Input::LeftBack => "Left back",
+        Input::RightBack => "Right back",
+    }
+}
+
+pub fn output_name(output: Output) -> &'static str {
+    match output {
+        Output::Cross => "Cross",
+        Output::Circle => "Circle",
+        Output::Square => "Square",
+        Output::Triangle => "Triangle",
+        Output::DpadUp => "Up",
+        Output::DpadDown => "Down",
+        Output::DpadLeft => "Left",
+        Output::DpadRight => "Right",
+        Output::L1 => "L1",
+        Output::R1 => "R1",
+        Output::L3 => "L3",
+        Output::R3 => "R3",
+        Output::Create => "Create",
+        Output::Options => "Options",
+        Output::Ps => "PS",
+        Output::LeftTrigger => "L2, pressed fully",
+        Output::RightTrigger => "R2, pressed fully",
+    }
+}
+
+pub fn binding_words(binding: Binding) -> &'static str {
+    match binding {
+        Binding::Default => DEFAULT,
+        Binding::Nothing => BINDING_NOTHING,
+        Binding::To(output) => output_name(output),
+    }
+}
 
 pub mod log {
     use std::path::Path;

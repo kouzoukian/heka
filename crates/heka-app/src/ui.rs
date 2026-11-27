@@ -11,6 +11,7 @@ pub mod pad;
 pub mod panel;
 pub mod picker;
 pub mod placement;
+pub mod profile;
 pub mod segmented;
 pub mod settings;
 pub mod view;

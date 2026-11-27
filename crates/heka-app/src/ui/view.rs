@@ -15,11 +15,13 @@ use gpui_kit_assets::IconName;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
+use heka_core::profile::Input;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 
-use crate::ui::detail::{Showing, ToggleSettings, selected_button, tool_button};
+use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
+use crate::ui::profile::{ProfileView, ToggleBinding};
 use crate::ui::settings::Fields;
 use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
@@ -46,6 +48,7 @@ pub enum Page {
     #[default]
     Controller,
     ControllerSettings,
+    Profile,
     AppSettings,
     Log,
     About,
@@ -58,7 +61,7 @@ impl Page {
 
     pub fn of_a_controller(self) -> Self {
         match self {
-            Self::Controller | Self::ControllerSettings => self,
+            Self::Controller | Self::ControllerSettings | Self::Profile => self,
             Self::AppSettings | Self::Log | Self::About => Self::Controller,
         }
     }
@@ -108,6 +111,7 @@ struct MainView {
     colour: Entity<ColorPickerState>,
     held_colour: Lightbar,
     filled: Option<MacAddress>,
+    editing: Option<Input>,
 }
 
 impl MainView {
@@ -178,6 +182,7 @@ impl MainView {
             colour,
             held_colour: Lightbar::DEFAULT,
             filled: None,
+            editing: None,
         }
     }
 
@@ -193,6 +198,7 @@ impl MainView {
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
         self.selection.choose(mac, &self.screen.controllers);
         self.page = self.page.of_a_controller();
+        self.editing = None;
         cx.notify();
     }
 
@@ -200,8 +206,18 @@ impl MainView {
         self.show(self.page.toggled(page), cx);
     }
 
+    fn toggle_binding(&mut self, input: Input, cx: &mut Context<Self>) {
+        self.editing = if self.editing == Some(input) {
+            None
+        } else {
+            Some(input)
+        };
+        cx.notify();
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
+        self.editing = None;
         self.leave_settings();
         cx.notify();
     }
@@ -274,11 +290,27 @@ impl MainView {
                 view.toggle_page(Page::ControllerSettings, cx)
             });
         });
+        let view = cx.weak_entity();
+        let toggle_profile: ToggleSettings = Rc::new(move |_, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.toggle_page(Page::Profile, cx));
+        });
+        let toggles = Toggles {
+            settings: toggle_settings,
+            profile: toggle_profile,
+        };
+        let view = cx.weak_entity();
+        let toggle_binding: ToggleBinding = Rc::new(move |input, _, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.toggle_binding(input, cx));
+        });
         let showing = match self.page {
             Page::Controller => Showing::Live,
             Page::ControllerSettings => Showing::ControllerSettings(Fields {
                 name: &self.name,
                 colour: &self.colour,
+            }),
+            Page::Profile => Showing::Profile(ProfileView {
+                editing: self.editing,
+                toggle: toggle_binding,
             }),
             Page::AppSettings => Showing::AppSettings(self.screen.app),
             Page::Log => Showing::Log(&self.screen.log),
@@ -297,7 +329,7 @@ impl MainView {
                 &self.screen,
                 entry,
                 showing,
-                &toggle_settings,
+                &toggles,
                 &send,
                 cx,
             ))
