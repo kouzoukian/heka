@@ -68,8 +68,8 @@ fn everything_held() -> PadModel {
         left_trigger: 255,
         right_trigger: 1,
         touch: [
-            Some(TouchDot::from_units(0, 0, 1919, 1079)),
-            Some(TouchDot::from_units(1919, 1079, 1919, 1079)),
+            Some(TouchDot::from_units(0, 0)),
+            Some(TouchDot::from_units(1919, 1079)),
         ],
     }
 }

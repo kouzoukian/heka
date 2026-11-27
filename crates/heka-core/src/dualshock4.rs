@@ -5,8 +5,8 @@ use crate::feedback::Feedback;
 use crate::link::ReportError;
 use crate::mac::{InvalidMacAddress, MacAddress};
 use crate::state::{
-    Battery, Buttons, Charge, ControllerState, DUALSENSE_TOUCHPAD_HEIGHT,
-    DUALSHOCK4_TOUCHPAD_HEIGHT, Finger, Motion, Stick, rescale_touch_y,
+    Battery, Buttons, Charge, ControllerState, DUALSHOCK4_TOUCHPAD_HEIGHT, Finger, Motion, Stick,
+    TOUCHPAD_HEIGHT, rescale_touch_y,
 };
 
 pub const PRODUCT_ID_DUALSHOCK4: u16 = 0x05C4;
@@ -217,11 +217,7 @@ fn newest_touch(touch: &[u8], capacity: usize) -> [Option<Finger>; 2] {
     std::array::from_fn(|i| {
         let point = &touch[points + 4 * i..points + 4 * i + 4];
         dualsense::touch_point(point).map(|finger| Finger {
-            y: rescale_touch_y(
-                finger.y,
-                DUALSHOCK4_TOUCHPAD_HEIGHT,
-                DUALSENSE_TOUCHPAD_HEIGHT,
-            ),
+            y: rescale_touch_y(finger.y, DUALSHOCK4_TOUCHPAD_HEIGHT, TOUCHPAD_HEIGHT),
             ..finger
         })
     })

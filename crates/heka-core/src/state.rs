@@ -109,7 +109,8 @@ pub struct Battery {
     pub charge: Charge,
 }
 
-pub(crate) const DUALSENSE_TOUCHPAD_HEIGHT: u16 = 1080;
+pub const TOUCHPAD_WIDTH: u16 = 1920;
+pub const TOUCHPAD_HEIGHT: u16 = 1080;
 pub(crate) const DUALSHOCK4_TOUCHPAD_HEIGHT: u16 = 942;
 
 pub(crate) fn rescale_touch_y(y: u16, from: u16, to: u16) -> u16 {

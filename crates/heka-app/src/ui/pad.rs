@@ -1,7 +1,4 @@
-use heka_core::state::{Buttons, ControllerState, Stick};
-
-const LAST_TOUCH_X: u16 = 1919;
-const LAST_TOUCH_Y: u16 = 1079;
+use heka_core::state::{Buttons, ControllerState, Stick, TOUCHPAD_HEIGHT, TOUCHPAD_WIDTH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TouchDot {
@@ -10,14 +7,14 @@ pub struct TouchDot {
 }
 
 impl TouchDot {
-    pub fn from_units(x: u16, y: u16, last_x: u16, last_y: u16) -> Self {
-        let share = |value: u16, last: u16| {
-            let last = u32::from(last.max(1));
+    pub fn from_units(x: u16, y: u16) -> Self {
+        let share = |value: u16, size: u16| {
+            let last = u32::from(size - 1);
             (u32::from(value).min(last) * 1000 / last) as u16
         };
         Self {
-            x: share(x, last_x),
-            y: share(y, last_y),
+            x: share(x, TOUCHPAD_WIDTH),
+            y: share(y, TOUCHPAD_HEIGHT),
         }
     }
 
@@ -63,11 +60,8 @@ impl PadModel {
             right_stick,
             left_trigger,
             right_trigger,
-            touch: touch.map(|finger| {
-                finger.map(|finger| {
-                    TouchDot::from_units(finger.x, finger.y, LAST_TOUCH_X, LAST_TOUCH_Y)
-                })
-            }),
+            touch: touch
+                .map(|finger| finger.map(|finger| TouchDot::from_units(finger.x, finger.y))),
         }
     }
 

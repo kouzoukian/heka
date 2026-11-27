@@ -298,7 +298,7 @@ fn moving_pad(t: f32) -> PadModel {
     let step = (t * 2.) as usize % Buttons::NAMED.len();
     let mut buttons = Buttons::NAMED[step].0;
     buttons |= Buttons::CROSS | Buttons::DPAD_LEFT;
-    let finger = |x: f32, y: f32| Some(TouchDot::from_units(x as u16, y as u16, 1919, 1079));
+    let finger = |x: f32, y: f32| Some(TouchDot::from_units(x as u16, y as u16));
     PadModel {
         buttons,
         left_stick: Stick {

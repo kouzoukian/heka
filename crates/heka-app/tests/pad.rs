@@ -72,7 +72,7 @@ fn a_trigger_fills_from_empty_to_full() {
 
 #[test]
 fn a_finger_is_placed_as_a_share_of_the_touchpad_and_kept_on_it() {
-    let at = |x, y| TouchDot::from_units(x, y, 1919, 1079).share();
+    let at = |x, y| TouchDot::from_units(x, y).share();
 
     assert_eq!(at(0, 0), (0.0, 0.0));
     assert_eq!(at(1919, 1079), (1.0, 1.0));

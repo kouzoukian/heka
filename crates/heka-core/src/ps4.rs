@@ -1,7 +1,6 @@
 use crate::calibration::Calibration;
 use crate::state::{
-    Buttons, ControllerState, DUALSENSE_TOUCHPAD_HEIGHT, DUALSHOCK4_TOUCHPAD_HEIGHT, Finger,
-    rescale_touch_y,
+    Buttons, ControllerState, DUALSHOCK4_TOUCHPAD_HEIGHT, Finger, TOUCHPAD_HEIGHT, rescale_touch_y,
 };
 
 pub const REPORT_LEN: usize = 63;
@@ -145,11 +144,7 @@ fn touch_point(finger: Option<Finger>) -> [u8; 4] {
     let Some(finger) = finger else {
         return [TOUCH_INACTIVE, 0, 0, 0];
     };
-    let y = rescale_touch_y(
-        finger.y,
-        DUALSENSE_TOUCHPAD_HEIGHT,
-        DUALSHOCK4_TOUCHPAD_HEIGHT,
-    );
+    let y = rescale_touch_y(finger.y, TOUCHPAD_HEIGHT, DUALSHOCK4_TOUCHPAD_HEIGHT);
     [
         finger.id & !TOUCH_INACTIVE,
         (finger.x & 0xFF) as u8,
