@@ -12,8 +12,9 @@ use heka_core::preferences::{PreferenceChange, Preferences};
 use heka_core::profile::{Binding, Input, Profile};
 use heka_core::release::Version;
 use heka_core::setup::Missing;
-use heka_core::state::Battery;
+use heka_core::state::{Battery, Stick};
 use heka_core::supervisor::ControllerView;
+use heka_core::tuning::{StickChange, StickSide};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::WindowPlacement;
 
@@ -57,6 +58,8 @@ pub enum Command {
     DeleteProfile(String),
     ImportProfile(PathBuf),
     ExportProfile(String, PathBuf),
+    ChangeStick(String, StickSide, StickChange),
+    SetSwapSticks(String, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -195,6 +198,8 @@ pub struct ControllerEntry {
     pub has_bluetooth: bool,
     pub idle_time: Option<IdleTime>,
     pub battery: Option<Battery>,
+    pub raw_sticks: Option<[Stick; 2]>,
+    pub report_rate: Option<u32>,
     pub output_type: OutputType,
     pub profile: Option<String>,
     pub output_type_from_profile: bool,
@@ -230,7 +235,8 @@ impl ControllerEntry {
             Phase::Stopped => EntryState::Stopped,
             Phase::Waiting => EntryState::NotBridged,
         };
-        let input = live.latest();
+        let sample = live.sample();
+        let input = sample.shown;
         Self {
             mac: *mac,
             name: text::controller(*model),
@@ -242,6 +248,8 @@ impl ControllerEntry {
             has_bluetooth: *has_bluetooth,
             idle_time: *idle_time,
             battery: input.and_then(|input| input.battery),
+            raw_sticks: sample.raw.map(|raw| [raw.left_stick, raw.right_stick]),
+            report_rate: sample.report_rate.map(|rate| rate.round() as u32),
             output_type: *output_type,
             profile: profile.clone(),
             output_type_from_profile: *output_type_from_profile,

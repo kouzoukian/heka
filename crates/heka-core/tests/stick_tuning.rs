@@ -1,6 +1,6 @@
 use heka_core::profile::{Mapper, Profile};
 use heka_core::state::{Buttons, ControllerState, Stick};
-use heka_core::tuning::{Curve, StickTuning};
+use heka_core::tuning::{Curve, StickChange, StickSide, StickTuning};
 use heka_core::xbox::XboxReport;
 
 fn state(left: (u8, u8), right: (u8, u8)) -> ControllerState {
@@ -512,5 +512,81 @@ fn tuning_makes_a_profile_not_plain() {
 
     profile.swap_sticks = false;
     profile.right_stick.curve = Curve::Soft;
+    assert!(!profile.is_plain());
+}
+
+#[test]
+fn a_change_sets_one_setting_and_keeps_the_rest() {
+    let mut tuning = StickTuning::default();
+
+    tuning.change(StickChange::DeadZone(12));
+    tuning.change(StickChange::AntiDeadZone(5));
+    tuning.change(StickChange::MaxZone(90));
+    tuning.change(StickChange::Sensitivity(130));
+    tuning.change(StickChange::Curve(Curve::Sharp));
+    tuning.change(StickChange::InvertX(true));
+    tuning.change(StickChange::InvertY(true));
+
+    assert_eq!(
+        tuning,
+        StickTuning {
+            dead_zone: 12,
+            anti_dead_zone: 5,
+            max_zone: 90,
+            sensitivity: 130,
+            curve: Curve::Sharp,
+            invert_x: true,
+            invert_y: true,
+        }
+    );
+}
+
+#[test]
+fn a_change_out_of_range_is_brought_into_range() {
+    let mut tuning = StickTuning::default();
+
+    tuning.change(StickChange::Sensitivity(900));
+    tuning.change(StickChange::DeadZone(80));
+
+    assert_eq!(tuning.sensitivity, 200);
+    assert_eq!(tuning.dead_zone, 50);
+    assert_eq!(tuning.max_zone, 100);
+}
+
+#[test]
+fn a_dead_zone_as_wide_as_the_max_zone_lifts_the_max_zone() {
+    let mut tuning = StickTuning::default();
+    tuning.change(StickChange::MaxZone(50));
+
+    tuning.change(StickChange::DeadZone(30));
+    assert_eq!(tuning.max_zone, 50);
+    tuning.change(StickChange::DeadZone(50));
+
+    assert_eq!(tuning.max_zone, 51);
+}
+
+#[test]
+fn changing_back_to_the_defaults_is_neutral_again() {
+    let mut tuning = StickTuning::default();
+    tuning.change(StickChange::InvertX(true));
+    tuning.change(StickChange::Sensitivity(150));
+
+    tuning.change(StickChange::InvertX(false));
+    tuning.change(StickChange::Sensitivity(100));
+
+    assert!(tuning.is_neutral());
+}
+
+#[test]
+fn a_profile_changes_the_stick_it_is_told_to() {
+    let mut profile = Profile::named("Test");
+
+    profile.change_stick(StickSide::Right, StickChange::InvertY(true));
+    profile.change_stick(StickSide::Left, StickChange::Curve(Curve::Soft));
+
+    assert!(profile.stick(StickSide::Right).invert_y);
+    assert!(!profile.stick(StickSide::Left).invert_y);
+    assert_eq!(profile.stick(StickSide::Left).curve, Curve::Soft);
+    assert_eq!(profile.stick(StickSide::Right).curve, Curve::Linear);
     assert!(!profile.is_plain());
 }

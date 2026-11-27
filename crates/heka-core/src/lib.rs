@@ -20,6 +20,7 @@ pub mod profile;
 pub mod profiles;
 pub mod ps4;
 pub mod radio;
+pub mod rate;
 pub mod release;
 pub mod settings;
 pub mod setup;

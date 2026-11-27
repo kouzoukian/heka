@@ -53,6 +53,8 @@ impl Fake {
             has_bluetooth: active_link == Some(LinkKind::Bluetooth),
             idle_time: None,
             battery,
+            raw_sticks: None,
+            report_rate: None,
             output_type,
             profile: None,
             output_type_from_profile: false,
@@ -252,6 +254,18 @@ impl Backend for Fake {
                         entry.profile = None;
                         entry.output_type_from_profile = false;
                     }
+                }
+                return;
+            }
+            Command::ChangeStick(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_stick(*side, *change);
+                }
+                return;
+            }
+            Command::SetSwapSticks(id, swap) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.swap_sticks = *swap;
                 }
                 return;
             }

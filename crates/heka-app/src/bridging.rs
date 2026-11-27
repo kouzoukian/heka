@@ -22,6 +22,7 @@ use heka_core::profiles::Profiles;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::tuning::{StickChange, StickSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
 use heka_windows::drivers::InstalledDrivers;
@@ -75,6 +76,8 @@ enum Command {
     DeleteProfile(String),
     ImportProfile(PathBuf),
     ExportProfile(String, PathBuf),
+    ChangeStick(String, StickSide, StickChange),
+    SetSwapSticks(String, bool),
     Quit,
 }
 
@@ -201,6 +204,16 @@ impl Bridging {
 
     pub fn export_profile(&self, profile: String, path: PathBuf) {
         let _ = self.commands.send(Command::ExportProfile(profile, path));
+    }
+
+    pub fn change_stick(&self, profile: String, side: StickSide, change: StickChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeStick(profile, side, change));
+    }
+
+    pub fn set_swap_sticks(&self, profile: String, swap: bool) {
+        let _ = self.commands.send(Command::SetSwapSticks(profile, swap));
     }
 
     pub fn quit(&self) {
@@ -356,6 +369,16 @@ fn supervise(
                     profile_notice = Some(message);
                 }
                 Vec::new()
+            }
+            Ok(Command::ChangeStick(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_stick(side, change);
+                })
+            }
+            Ok(Command::SetSwapSticks(id, swap)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.swap_sticks = swap;
+                })
             }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);

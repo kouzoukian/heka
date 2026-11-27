@@ -69,3 +69,9 @@ Each stick of a Profile has a dead zone, an anti-dead zone, a max zone, a sensit
 - A Profile's tuning belongs to the physical stick named. Swapping then gives the Virtual Controller's left stick what the right stick did after its own tuning.
 - Sticks are 8 bits in a Controller state with the centre at 128, and the Xbox report is 16 bits. Curves would lose that precision in 8 bits, so a tuned state also carries `FineSticks`, the same four axes in 16 bits with the centre at 0 and the Controller's direction of Y. The Xbox translator uses them when there, and the PS4 translator, which has bytes too, keeps using the bytes. A stick that is not tuned gets the 16-bit value the Xbox translator has always given its byte, so the report of an untuned stick is the same whether or not the other one is tuned. A Controller state read from a report never carries them.
 - With neutral sticks and no swap the Mapper passes the sticks on untouched, so the reports are identical to before. With only a swap it exchanges the bytes. The tuning is a fixed number of float operations on the input thread and takes no lock.
+
+## The readout
+
+`LiveInput` holds the Controller's own state beside what the Virtual Controller receives, and how many reports a second the Controller sends, all behind the one lock the input thread already takes for each report. The rate is measured by `RateMeter` over whole seconds: it needs a second of reports before it shows anything, follows a change within a second, and is forgotten when the Link ends. The window reads all three with one `sample`.
+
+The Profile editor's readout draws the Controller's own stick position and the tuned one, from the same sample, so the two always belong together.

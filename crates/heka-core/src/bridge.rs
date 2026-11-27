@@ -12,6 +12,7 @@ use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::live_mapper::LiveMapper;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
+use crate::rate::RateMeter;
 use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
@@ -26,13 +27,39 @@ pub struct LiveInput {
 #[derive(Debug, Default)]
 struct Seen {
     latest: Option<ControllerState>,
+    raw: Option<ControllerState>,
     activity: Activity,
     times_used: u64,
+    meter: RateMeter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveSample {
+    pub raw: Option<ControllerState>,
+    pub shown: Option<ControllerState>,
+    pub report_rate: Option<f32>,
 }
 
 impl LiveInput {
     pub fn latest(&self) -> Option<ControllerState> {
         self.seen().latest
+    }
+
+    pub fn latest_raw(&self) -> Option<ControllerState> {
+        self.seen().raw
+    }
+
+    pub fn report_rate(&self) -> Option<f32> {
+        self.seen().meter.per_second()
+    }
+
+    pub fn sample(&self) -> LiveSample {
+        let seen = self.seen();
+        LiveSample {
+            raw: seen.raw,
+            shown: seen.latest,
+            report_rate: seen.meter.per_second(),
+        }
     }
 
     pub fn times_used(&self) -> u64 {
@@ -41,11 +68,16 @@ impl LiveInput {
 
     fn set(&self, physical: Option<&ControllerState>, shown: Option<ControllerState>) {
         let mut seen = self.seen();
-        if let Some(state) = physical
-            && seen.activity.observe(state)
-        {
-            seen.times_used += 1;
+        match physical {
+            Some(state) => {
+                if seen.activity.observe(state) {
+                    seen.times_used += 1;
+                }
+                seen.meter.tick(Instant::now());
+            }
+            None => seen.meter.reset(),
         }
+        seen.raw = physical.copied();
         seen.latest = shown;
     }
 

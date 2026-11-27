@@ -1868,3 +1868,40 @@ fn a_profile_created_after_a_delete_does_not_take_the_old_controllers() {
     assert_eq!(again, id);
     wait_for_buttons(&bus, 0, Buttons::CROSS);
 }
+
+#[test]
+fn the_live_input_keeps_the_controllers_own_state_beside_what_the_virtual_controller_gets() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    let sample = live.sample();
+    assert_eq!(sample.raw.unwrap().buttons, Buttons::CROSS);
+    assert_eq!(sample.shown.unwrap().buttons, Buttons::CIRCLE);
+    assert_eq!(live.latest_raw().unwrap().buttons, Buttons::CROSS);
+    assert_eq!(sample.report_rate, None);
+}
+
+#[test]
+fn the_live_input_forgets_the_state_when_the_link_is_gone() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+
+    link.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    assert_eq!(live.sample().raw, None);
+    assert_eq!(live.sample().shown, None);
+}

@@ -21,6 +21,8 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             has_bluetooth: false,
             idle_time: None,
             battery: None,
+            raw_sticks: None,
+            report_rate: None,
             output_type: OutputType::Xbox,
             profile: None,
             output_type_from_profile: false,

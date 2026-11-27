@@ -66,7 +66,37 @@ impl Default for StickTuning {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StickSide {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StickChange {
+    DeadZone(u8),
+    AntiDeadZone(u8),
+    MaxZone(u8),
+    Sensitivity(u16),
+    Curve(Curve),
+    InvertX(bool),
+    InvertY(bool),
+}
+
 impl StickTuning {
+    pub fn change(&mut self, change: StickChange) {
+        match change {
+            StickChange::DeadZone(percent) => self.dead_zone = percent,
+            StickChange::AntiDeadZone(percent) => self.anti_dead_zone = percent,
+            StickChange::MaxZone(percent) => self.max_zone = percent,
+            StickChange::Sensitivity(percent) => self.sensitivity = percent,
+            StickChange::Curve(curve) => self.curve = curve,
+            StickChange::InvertX(invert) => self.invert_x = invert,
+            StickChange::InvertY(invert) => self.invert_y = invert,
+        }
+        *self = self.clamped();
+    }
+
     pub fn is_neutral(&self) -> bool {
         *self == Self::default()
     }

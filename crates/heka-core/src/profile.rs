@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
-use crate::tuning::{StickTuning, fine, tuned_stick};
+use crate::tuning::{StickChange, StickSide, StickTuning, fine, tuned_stick};
 use crate::virtual_controller::OutputType;
 
 pub const DEFAULT_NAME: &str = "Default";
@@ -306,6 +306,20 @@ impl Profile {
             Binding::Nothing => self.bindings.insert(input, None),
             Binding::To(output) => self.bindings.insert(input, Some(output)),
         };
+    }
+
+    pub fn stick(&self, side: StickSide) -> &StickTuning {
+        match side {
+            StickSide::Left => &self.left_stick,
+            StickSide::Right => &self.right_stick,
+        }
+    }
+
+    pub fn change_stick(&mut self, side: StickSide, change: StickChange) {
+        match side {
+            StickSide::Left => self.left_stick.change(change),
+            StickSide::Right => self.right_stick.change(change),
+        }
     }
 
     pub fn is_plain(&self) -> bool {

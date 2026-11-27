@@ -177,6 +177,10 @@ impl Backend for WindowBackend {
             Command::DeleteProfile(profile) => bridging.delete_profile(profile),
             Command::ImportProfile(path) => bridging.import_profile(path),
             Command::ExportProfile(profile, path) => bridging.export_profile(profile, path),
+            Command::ChangeStick(profile, side, change) => {
+                bridging.change_stick(profile, side, change);
+            }
+            Command::SetSwapSticks(profile, swap) => bridging.set_swap_sticks(profile, swap),
         }
     }
 
