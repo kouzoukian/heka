@@ -19,7 +19,7 @@ use heka_core::preferences::{LightbarChoice, PreferenceChange};
 use heka_core::profile::{Input, MAX_NAME_CHARS};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
-use heka_core::tuning::StickSide;
+use heka_core::tuning::{StickSide, TriggerSide};
 
 use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
@@ -119,6 +119,7 @@ struct MainView {
     manage: Manage,
     section: Section,
     side: StickSide,
+    trigger_side: TriggerSide,
 }
 
 impl MainView {
@@ -203,6 +204,7 @@ impl MainView {
             manage: Manage::Idle,
             section: Section::default(),
             side: StickSide::Left,
+            trigger_side: TriggerSide::Left,
         }
     }
 
@@ -263,6 +265,7 @@ impl MainView {
                 self.editing = None;
             }
             ProfileAction::Side(side) => self.side = side,
+            ProfileAction::TriggerSide(side) => self.trigger_side = side,
             ProfileAction::Duplicate => {
                 self.manage = Manage::Idle;
                 self.backend.command(Command::DuplicateProfile(chosen));
@@ -440,6 +443,7 @@ impl MainView {
                 editing: self.editing,
                 section: self.section,
                 side: self.side,
+                trigger_side: self.trigger_side,
                 manage: self.manage.clone(),
                 rename: &self.rename,
                 toggle: toggle_binding,

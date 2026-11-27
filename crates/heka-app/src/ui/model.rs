@@ -14,7 +14,7 @@ use heka_core::release::Version;
 use heka_core::setup::Missing;
 use heka_core::state::{Battery, Stick};
 use heka_core::supervisor::ControllerView;
-use heka_core::tuning::{StickChange, StickSide};
+use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::WindowPlacement;
 
@@ -60,6 +60,7 @@ pub enum Command {
     ExportProfile(String, PathBuf),
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
+    ChangeTrigger(String, TriggerSide, TriggerChange),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -199,6 +200,7 @@ pub struct ControllerEntry {
     pub idle_time: Option<IdleTime>,
     pub battery: Option<Battery>,
     pub raw_sticks: Option<[Stick; 2]>,
+    pub raw_triggers: Option<[u8; 2]>,
     pub report_rate: Option<u32>,
     pub output_type: OutputType,
     pub profile: Option<String>,
@@ -249,6 +251,7 @@ impl ControllerEntry {
             idle_time: *idle_time,
             battery: input.and_then(|input| input.battery),
             raw_sticks: sample.raw.map(|raw| [raw.left_stick, raw.right_stick]),
+            raw_triggers: sample.raw.map(|raw| [raw.left_trigger, raw.right_trigger]),
             report_rate: sample.report_rate.map(|rate| rate.round() as u32),
             output_type: *output_type,
             profile: profile.clone(),

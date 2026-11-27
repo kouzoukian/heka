@@ -93,3 +93,7 @@ Each trigger of a Profile has a dead zone, a max zone, a curve, an optional hair
 - The Controller's own click of L2 or R2 is left as it sends it. With a hair trigger and no Binding on the trigger the click is set as well when the hair trigger fires, so that a game which reads the button of a PS4 pad and a game which reads the travel see the same press.
 - A press point matters only to a trigger that has a Binding. Its input then counts as pressed from that share of the travel, using the Controller's own travel and not its click, so that a Binding to a button can be set to a light or a deep press. Without a press point such a Binding follows the click, as before. A trigger without a Binding keeps its click whatever the press point.
 - A Binding on the trigger takes away its travel, and a button that presses a trigger fully gives full travel, whatever the tuning.
+
+## The Triggers section
+
+The Triggers section of the Profile page follows the Sticks section: a switch for the left or right trigger, a readout that stays in view, and rows beneath it that scroll. The readout is two bars, the Controller's own travel and the tuned travel the Virtual Controller receives, each with its share in percent and the report rate beside them, and a thin line across the first bar where the hair trigger point is. Dead zone, max zone, hair trigger and press point are chosen from steps; the hair trigger starts at Off and the press point at Click, which stands for the Controller's own click. A value a file holds outside the steps is offered as one more step.

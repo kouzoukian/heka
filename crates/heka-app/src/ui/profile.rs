@@ -10,7 +10,7 @@ use gpui_component::{ActiveTheme, Selectable, Sizable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::profile::{Binding, Input, Output};
 use heka_core::profiles::suggest_name;
-use heka_core::tuning::StickSide;
+use heka_core::tuning::{StickSide, TriggerSide};
 use heka_core::virtual_controller::OutputType;
 
 use crate::text;
@@ -22,6 +22,7 @@ use crate::ui::panel::faint;
 use crate::ui::segmented::{Pick, Segment, picked, segmented};
 use crate::ui::settings::{explained, group};
 use crate::ui::sticks::sticks_section;
+use crate::ui::triggers::triggers_section;
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
 
@@ -39,12 +40,14 @@ pub enum Section {
     Profiles,
     Buttons,
     Sticks,
+    Triggers,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileAction {
     Show(Section),
     Side(StickSide),
+    TriggerSide(TriggerSide),
     Duplicate,
     StartRename,
     CommitRename,
@@ -61,6 +64,7 @@ pub struct ProfileView<'a> {
     pub editing: Option<Input>,
     pub section: Section,
     pub side: StickSide,
+    pub trigger_side: TriggerSide,
     pub manage: Manage,
     pub rename: &'a Entity<InputState>,
     pub toggle: ToggleBinding,
@@ -87,6 +91,13 @@ pub fn profile_page(
                 sticks_section(profile, entry, view.side, &view.act, send, theme).into_any_element()
             }
             None => scrolled(default_note(text::STICKS_DEFAULT, theme)),
+        },
+        Section::Triggers => match chosen {
+            Some(profile) => {
+                triggers_section(profile, entry, view.trigger_side, &view.act, send, theme)
+                    .into_any_element()
+            }
+            None => scrolled(default_note(text::TRIGGERS_DEFAULT, theme)),
         },
     };
     div()
@@ -123,6 +134,7 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
         (Section::Profiles, text::SECTION_PROFILES),
         (Section::Buttons, text::SECTION_BUTTONS),
         (Section::Sticks, text::SECTION_STICKS),
+        (Section::Triggers, text::SECTION_TRIGGERS),
     ]
     .map(|(section, words)| {
         let act = Rc::clone(&view.act);

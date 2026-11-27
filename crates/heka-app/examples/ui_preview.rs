@@ -54,6 +54,7 @@ impl Fake {
             idle_time: None,
             battery,
             raw_sticks: None,
+            raw_triggers: None,
             report_rate: None,
             output_type,
             profile: None,
@@ -156,6 +157,7 @@ impl Backend for Fake {
             if entry.active_link.is_some() {
                 entry.pad = Some(moving_pad(t));
                 entry.raw_sticks = entry.pad.map(|pad| [pad.left_stick, pad.right_stick]);
+                entry.raw_triggers = entry.pad.map(|pad| [pad.left_trigger, pad.right_trigger]);
                 entry.report_rate = Some(250);
             }
             if let EntryState::Held { .. } = entry.state {
@@ -262,6 +264,12 @@ impl Backend for Fake {
             Command::ChangeStick(id, side, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_stick(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeTrigger(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_trigger(*side, *change);
                 }
                 return;
             }

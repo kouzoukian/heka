@@ -181,6 +181,9 @@ impl Backend for WindowBackend {
                 bridging.change_stick(profile, side, change);
             }
             Command::SetSwapSticks(profile, swap) => bridging.set_swap_sticks(profile, swap),
+            Command::ChangeTrigger(profile, side, change) => {
+                bridging.change_trigger(profile, side, change);
+            }
         }
     }
 

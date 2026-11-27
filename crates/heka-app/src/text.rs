@@ -491,6 +491,22 @@ pub const ROW_INVERT_X: &str = "Invert X";
 pub const ROW_INVERT_Y: &str = "Invert Y";
 pub const ROW_SWAP_STICKS: &str = "Swap sticks";
 pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub const SECTION_TRIGGERS: &str = "Triggers";
+pub const SIDE_LEFT_TRIGGER: &str = "Left trigger";
+pub const SIDE_RIGHT_TRIGGER: &str = "Right trigger";
+pub const ROW_HAIR_TRIGGER: &str = "Hair trigger";
+pub const HAIR_TRIGGER_TIP: &str = "A press past this point reads as fully pressed";
+pub const ROW_PRESS_POINT: &str = "Button press at";
+pub const PRESS_POINT_TIP: &str =
+    "Where this trigger counts as pressed when it is bound to a button";
+pub const PRESS_CLICK: &str = "Click";
+pub const TRIGGERS_DEFAULT: &str =
+    "The Default Profile does not tune triggers. Choose another Profile, or make a new one.";
+
+pub fn travel_percent(travel: u8) -> String {
+    format!("{}%", (u32::from(travel) * 100 + 127) / 255)
+}
+
 pub const READOUT_RAW: &str = "Raw";
 pub const READOUT_TUNED: &str = "Tuned";
 pub const STICKS_DEFAULT: &str =

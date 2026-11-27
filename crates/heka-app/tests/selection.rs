@@ -22,6 +22,7 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             idle_time: None,
             battery: None,
             raw_sticks: None,
+            raw_triggers: None,
             report_rate: None,
             output_type: OutputType::Xbox,
             profile: None,
