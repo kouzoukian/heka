@@ -8,8 +8,11 @@ use crate::feedback::Motor;
 use crate::idle::{IdleTime, IdleTimer};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
+use crate::live_mapper::LiveMapper;
 use crate::mac::MacAddress;
 use crate::preferences::{LivePreferences, PreferenceChange, Preferences};
+use crate::profile::{Mapper, Profile};
+use crate::profiles::Profiles;
 use crate::radio::{Radio, TurnOffError};
 use crate::settings::Settings;
 use crate::threads::{SystemThreads, Threads};
@@ -49,6 +52,8 @@ pub struct ControllerView {
     pub active_link: Option<LinkKind>,
     pub has_bluetooth: bool,
     pub idle_time: Option<IdleTime>,
+    pub profile: Option<String>,
+    pub output_type_from_profile: bool,
     pub live: Arc<LiveInput>,
     pub error: Option<BridgeError>,
     pub turn_off_error: Option<TurnOffError>,
@@ -71,6 +76,7 @@ struct Slot {
     model: ControllerModel,
     live: Arc<LiveInput>,
     preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
     links: Vec<LinkSlot>,
     reading: Option<LinkId>,
     bridge: Option<Bridge>,
@@ -145,6 +151,7 @@ pub struct Supervisor {
     bus: Option<Box<dyn VirtualBus>>,
     lifecycle: Lifecycle,
     slots: HashMap<MacAddress, Slot>,
+    profiles: Profiles,
     next_link_id: u64,
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
@@ -167,6 +174,7 @@ impl Supervisor {
             bus,
             lifecycle,
             slots: HashMap::new(),
+            profiles: Profiles::default(),
             next_link_id: 0,
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
@@ -234,12 +242,14 @@ impl Supervisor {
                     mac,
                     model: slot.map(|slot| slot.model).unwrap_or_default(),
                     phase,
-                    output_type: settings.output_type,
+                    output_type: self.lifecycle.output_type_of(mac),
                     nickname: settings.nickname,
                     preferences: settings.preferences,
                     active_link: slot.and_then(Slot::active).map(|link| link.kind),
                     has_bluetooth: slot.is_some_and(|slot| slot.bluetooth_links().next().is_some()),
                     idle_time: settings.idle_time,
+                    output_type_from_profile: self.profile_output(mac).is_some(),
+                    profile: settings.profile,
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone().or(slot.watch_error.clone())),
                     turn_off_error: slot.and_then(|slot| slot.turn_off_error.clone()),
@@ -268,7 +278,11 @@ impl Supervisor {
             kind: format.kind(),
             open: Some(link),
         });
-        let changes = self.lifecycle.link_arrived(mac, now);
+        let profile_output = self.profile_output(mac);
+        let mut changes = self
+            .lifecycle
+            .override_output_type(mac, profile_output, now);
+        changes.extend(self.lifecycle.link_arrived(mac, now));
         let mut done = self.apply(changes, now);
         done.extend(self.follow_active_link(mac, now));
         (id, done)
@@ -459,6 +473,52 @@ impl Supervisor {
         self.apply(changes, now)
     }
 
+    pub fn profiles(&self) -> &Profiles {
+        &self.profiles
+    }
+
+    pub fn set_profiles(&mut self, profiles: Profiles, now: Instant) -> Vec<Change> {
+        self.profiles = profiles;
+        let mut macs: Vec<MacAddress> = self.lifecycle.controllers().map(|(mac, _)| mac).collect();
+        macs.extend(self.slots.keys().copied());
+        macs.sort_unstable();
+        macs.dedup();
+        let changes = macs
+            .into_iter()
+            .flat_map(|mac| self.refresh_profile(mac, now))
+            .collect();
+        self.apply(changes, now)
+    }
+
+    pub fn choose_profile(
+        &mut self,
+        mac: MacAddress,
+        profile: Option<String>,
+        now: Instant,
+    ) -> Vec<Change> {
+        self.lifecycle.settings_mut().set_profile(mac, profile);
+        let changes = self.refresh_profile(mac, now);
+        self.apply(changes, now)
+    }
+
+    fn profile_of(&self, mac: MacAddress) -> Profile {
+        let choice = self.settings().controller(mac).profile;
+        self.profiles.effective(choice.as_deref())
+    }
+
+    fn profile_output(&self, mac: MacAddress) -> Option<OutputType> {
+        self.profile_of(mac).output_type
+    }
+
+    fn refresh_profile(&mut self, mac: MacAddress, now: Instant) -> Vec<Change> {
+        let profile = self.profile_of(mac);
+        if let Some(slot) = self.slots.get(&mac) {
+            slot.mapper.set(Mapper::new(&profile));
+        }
+        self.lifecycle
+            .override_output_type(mac, profile.output_type, now)
+    }
+
     pub fn set_app_settings(&mut self, app: AppSettings) {
         self.lifecycle.settings_mut().set_app(app);
     }
@@ -593,7 +653,7 @@ impl Supervisor {
                 }
                 Change::Held { .. } => {}
                 Change::Returned { mac } => {
-                    let output_type = self.settings().controller(mac).output_type;
+                    let output_type = self.lifecycle.output_type_of(mac);
                     queue.extend(self.carry_out_bridge(mac, output_type, true, now));
                 }
                 Change::Removed { mac, why } => queue.extend(self.remove(mac, why, now)),
@@ -672,13 +732,16 @@ impl Supervisor {
 
     fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), BridgeError> {
         let preferences = self.settings().controller(mac).preferences;
+        let mapper = Mapper::new(&self.profile_of(mac));
         let threads = Arc::clone(&self.threads);
         let slot = self.slot(mac);
         let link = slot
             .take_active()
             .expect("an unbridged Controller keeps its Active Link open");
         slot.preferences.set(preferences);
+        slot.mapper.set(mapper);
         controller.follow(Arc::clone(&slot.preferences));
+        controller.map_with(Arc::clone(&slot.mapper));
         match Bridge::resume_on(threads.as_ref(), link, controller, Arc::clone(&slot.live)) {
             Ok(bridge) => {
                 slot.bridge = Some(bridge);

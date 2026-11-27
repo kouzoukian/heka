@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::mac::MacAddress;
@@ -57,6 +58,7 @@ struct Entry {
 #[derive(Debug)]
 pub struct Lifecycle {
     settings: Settings,
+    overrides: HashMap<MacAddress, OutputType>,
     entries: Vec<Entry>,
     bridging_paused: bool,
 }
@@ -65,6 +67,7 @@ impl Lifecycle {
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
+            overrides: HashMap::new(),
             entries: Vec::new(),
             bridging_paused: false,
         }
@@ -94,6 +97,27 @@ impl Lifecycle {
 
     pub fn controllers(&self) -> impl Iterator<Item = (MacAddress, Phase)> + '_ {
         self.entries.iter().map(|entry| (entry.mac, entry.phase))
+    }
+
+    pub fn output_type_of(&self, mac: MacAddress) -> OutputType {
+        self.overrides
+            .get(&mac)
+            .copied()
+            .unwrap_or_else(|| self.settings.controller(mac).output_type)
+    }
+
+    pub fn override_output_type(
+        &mut self,
+        mac: MacAddress,
+        output_type: Option<OutputType>,
+        now: Instant,
+    ) -> Vec<Change> {
+        let before = self.output_type_of(mac);
+        match output_type {
+            Some(output_type) => self.overrides.insert(mac, output_type),
+            None => self.overrides.remove(&mac),
+        };
+        self.replug_if_changed(mac, before, now)
     }
 
     pub fn phase(&self, mac: MacAddress) -> Option<Phase> {
@@ -230,14 +254,28 @@ impl Lifecycle {
         output_type: OutputType,
         now: Instant,
     ) -> Vec<Change> {
+        if self.index(mac).is_none() || self.settings.controller(mac).output_type == output_type {
+            return Vec::new();
+        }
+        let before = self.output_type_of(mac);
+        self.settings.set_output_type(mac, output_type);
+        self.replug_if_changed(mac, before, now)
+    }
+
+    fn replug_if_changed(
+        &mut self,
+        mac: MacAddress,
+        before: OutputType,
+        now: Instant,
+    ) -> Vec<Change> {
         let mut changes = Vec::new();
+        let output_type = self.output_type_of(mac);
         let Some(index) = self.index(mac) else {
             return changes;
         };
-        if self.settings.controller(mac).output_type == output_type {
+        if output_type == before {
             return changes;
         }
-        self.settings.set_output_type(mac, output_type);
         let removed = Change::Removed {
             mac,
             why: Removal::OutputTypeChanged,
@@ -334,9 +372,14 @@ impl Lifecycle {
                 entry.phase = Phase::Bridged;
                 entry.retry_at = None;
                 used += 1;
+                let output_type = self
+                    .overrides
+                    .get(&entry.mac)
+                    .copied()
+                    .unwrap_or_else(|| self.settings.controller(entry.mac).output_type);
                 changes.push(Change::Bridged {
                     mac: entry.mac,
-                    output_type: self.settings.controller(entry.mac).output_type,
+                    output_type,
                 });
             }
         }

@@ -195,6 +195,8 @@ impl ControllerEntry {
             active_link,
             has_bluetooth,
             idle_time,
+            profile: _,
+            output_type_from_profile: _,
             live,
             error,
             turn_off_error: _,

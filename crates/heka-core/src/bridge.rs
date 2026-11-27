@@ -10,6 +10,7 @@ use crate::feedback::{
 };
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::live_mapper::LiveMapper;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
 use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
@@ -38,14 +39,14 @@ impl LiveInput {
         self.seen().times_used
     }
 
-    fn set(&self, state: Option<ControllerState>) {
+    fn set(&self, physical: Option<&ControllerState>, shown: Option<ControllerState>) {
         let mut seen = self.seen();
-        if let Some(state) = &state
+        if let Some(state) = physical
             && seen.activity.observe(state)
         {
             seen.times_used += 1;
         }
-        seen.latest = state;
+        seen.latest = shown;
     }
 
     fn seen(&self) -> MutexGuard<'_, Seen> {
@@ -75,6 +76,7 @@ pub struct Plugged {
     no_feedback: Option<String>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -90,12 +92,17 @@ impl Plugged {
             no_feedback,
             asked: Feedback::OFF,
             preferences: Arc::default(),
+            mapper: Arc::default(),
             failures: Arc::default(),
         }
     }
 
     pub fn follow(&mut self, preferences: Arc<LivePreferences>) {
         self.preferences = preferences;
+    }
+
+    pub fn map_with(&mut self, mapper: Arc<LiveMapper>) {
+        self.mapper = mapper;
     }
 
     pub fn report_to(&mut self, failures: Arc<VirtualFailures>) {
@@ -225,6 +232,7 @@ pub struct Bridge {
     spare_writer: Option<Box<dyn LinkWriter>>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -258,6 +266,7 @@ impl Bridge {
             no_feedback: _,
             asked,
             preferences,
+            mapper,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -269,6 +278,7 @@ impl Bridge {
             spare_writer: None,
             asked,
             preferences: Arc::clone(&preferences),
+            mapper: Arc::clone(&mapper),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -298,7 +308,7 @@ impl Bridge {
             "heka-bridge",
             (reader, controller),
             move |(reader, controller): InputParts| {
-                let end = run(reader, controller, &live, &flags.stop, &failures);
+                let end = run(reader, controller, &live, &flags.stop, &failures, &mapper);
                 if matches!(end, InputEnd::LinkLost(_)) {
                     flags.link_lost.store(true, Ordering::Release);
                 }
@@ -371,6 +381,7 @@ impl Bridge {
             no_feedback: None,
             asked,
             preferences: Arc::clone(&self.preferences),
+            mapper: Arc::clone(&self.mapper),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -413,8 +424,10 @@ fn run(
     live: &LiveInput,
     stop: &AtomicBool,
     failures: &VirtualFailures,
+    mapper: &LiveMapper,
 ) -> InputEnd {
     let format = link.format();
+    let mut mapper = mapper.follow();
     let mut buf = [0u8; READ_BUFFER_LEN];
     let end = loop {
         if stop.load(Ordering::Acquire) {
@@ -425,8 +438,9 @@ fn run(
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
-                live.set(Some(state));
-                if let Err(error) = controller.update(&state) {
+                let shown = mapper.map(&state);
+                live.set(Some(&state), Some(shown));
+                if let Err(error) = controller.update(&shown) {
                     let _ = unplug(controller, failures);
                     break InputEnd::Failed(link, error);
                 }
@@ -438,7 +452,7 @@ fn run(
             }
         }
     };
-    live.set(None);
+    live.set(None, None);
     end
 }
 

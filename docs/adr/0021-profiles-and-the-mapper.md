@@ -27,3 +27,11 @@ Because it depends only on the Controller's present state, a change of Profile n
 `Profiles` in `heka-core` holds the Profiles read from the folder, by id, and touches no file: the app passes in file names and text and writes back the one that changed. A new id comes from the name: lower-case ASCII letters and digits with single hyphens, at most 40 characters, a number added when taken. `default` is never an id, so no file can pose as the Default Profile, and names Windows reserves for devices (`con`, `nul`, `com1` and the like) are prefixed.
 
 The player's choice is the id, kept in the Controller's entry in `settings.json` beside its other fields ([ADR 0014](0014-settings-and-preferences.md)). No choice, a blank one, and an id whose file is gone all give the Default Profile, and the id is kept, so a file that comes back is used again.
+
+## Following a Profile
+
+A running Bridge follows its Controller's Profile the way it follows Preferences ([ADR 0014](0014-settings-and-preferences.md)): the Supervisor keeps a `LiveMapper` for each Controller and sets it whenever the choice or the Profile changes, and the input thread picks the change up with its next report. A version counter lets the thread skip the lock until something has changed, so a report that finds no change takes no lock and allocates nothing.
+
+- The window's drawing shows what the Virtual Controller receives: `LiveInput` holds the mapped state. The idle timer ([ADR 0019](0019-turning-off-a-bluetooth-controller.md)) still watches the Controller's own state, so a button bound to nothing counts as use.
+- A Profile's Output Type replaces the Controller's own while the Profile is chosen, and `Lifecycle` asks for the one that applies, so a new Bridge, a returning Held Controller and a change of Profile all agree. The Virtual Controller is replaced only when that type differs from the one it has; the player's own Output Type choice is kept untouched under the Profile's.
+- Replacing the set of Profiles refreshes every Controller. A Profile that has gone gives the Default Profile until it returns.

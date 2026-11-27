@@ -13,6 +13,7 @@ pub mod hiding;
 pub mod idle;
 pub mod lifecycle;
 pub mod link;
+pub mod live_mapper;
 pub mod mac;
 pub mod preferences;
 pub mod profile;

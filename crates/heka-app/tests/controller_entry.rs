@@ -34,6 +34,8 @@ fn view(phase: Phase) -> ControllerView {
         active_link: Some(LinkKind::Usb),
         has_bluetooth: false,
         idle_time: None,
+        profile: None,
+        output_type_from_profile: false,
         live: Arc::new(LiveInput::default()),
         error: None,
         turn_off_error: None,

@@ -29,6 +29,8 @@ fn view(error: Option<BridgeError>) -> ControllerView {
         active_link: None,
         has_bluetooth: false,
         idle_time: None,
+        profile: None,
+        output_type_from_profile: false,
         live: Arc::new(LiveInput::default()),
         error,
         turn_off_error: None,
