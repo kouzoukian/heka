@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::profile::Profile;
+use crate::profile::{DEFAULT_NAME, MAX_NAME_CHARS, Profile, ProfileError};
 
 const RESERVED_ID: &str = "default";
 const MAX_ID_CHARS: usize = 40;
@@ -56,10 +56,39 @@ impl Profiles {
     }
 
     pub fn create(&mut self, name: &str) -> String {
-        let profile = Profile::named(name);
-        let id = self.free_id(&profile.name);
-        self.items.insert(id.clone(), profile);
-        id
+        let name = self.distinct_name(name, None);
+        self.insert(Profile::named(&name))
+    }
+
+    pub fn duplicate(&mut self, id: Option<&str>) -> Option<String> {
+        let mut copy = match id {
+            Some(id) => self.get(id)?.clone(),
+            None => Profile::default(),
+        };
+        copy.name = self.distinct_name(&format!("{} copy", copy.name), None);
+        Some(self.insert(copy))
+    }
+
+    pub fn rename(&mut self, id: &str, name: &str) -> bool {
+        if name.trim().is_empty() || !self.items.contains_key(id) {
+            return false;
+        }
+        let name = self.distinct_name(name, Some(id));
+        if let Some(profile) = self.items.get_mut(id) {
+            profile.name = name;
+        }
+        true
+    }
+
+    pub fn import(&mut self, text: &str, fallback_name: &str) -> Result<String, ProfileError> {
+        let mut profile = Profile::parse(text, fallback_name)?;
+        profile.name = self.distinct_name(&profile.name, None);
+        Ok(self.insert(profile))
+    }
+
+    pub fn export(&self, id: &str) -> Option<(String, String)> {
+        let profile = self.get(id)?;
+        Some((Self::file_name(id), profile.to_json()))
     }
 
     pub fn remove(&mut self, id: &str) -> bool {
@@ -73,6 +102,41 @@ impl Profiles {
     pub fn id_of_file(file_name: &str) -> Option<&str> {
         let id = file_name.strip_suffix(".json")?;
         (!id.is_empty()).then_some(id)
+    }
+
+    fn insert(&mut self, profile: Profile) -> String {
+        let id = self.free_id(&profile.name);
+        self.items.insert(id.clone(), profile);
+        id
+    }
+
+    fn distinct_name(&self, name: &str, ignoring: Option<&str>) -> String {
+        let base = if name.trim().is_empty() {
+            "Profile".to_owned()
+        } else {
+            Profile::named(name).name
+        };
+        let taken = |candidate: &str| {
+            let candidate = candidate.to_lowercase();
+            candidate == DEFAULT_NAME.to_lowercase()
+                || self
+                    .items
+                    .iter()
+                    .filter(|(id, _)| Some(id.as_str()) != ignoring)
+                    .any(|(_, profile)| profile.name.to_lowercase() == candidate)
+        };
+        if !taken(&base) {
+            return base;
+        }
+        (2..)
+            .map(|number| {
+                let suffix = format!(" {number}");
+                let room = MAX_NAME_CHARS.saturating_sub(suffix.chars().count());
+                let cut: String = base.chars().take(room).collect();
+                format!("{}{suffix}", cut.trim_end())
+            })
+            .find(|candidate| !taken(candidate))
+            .expect("a free number exists")
     }
 
     fn free_id(&self, name: &str) -> String {

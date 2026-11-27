@@ -280,3 +280,39 @@ fn a_v1_file_without_profiles_loads_with_no_choice() {
     assert_eq!(controller.profile, None);
     assert!(controller.stopped);
 }
+
+#[test]
+fn the_controllers_using_a_profile_can_be_listed() {
+    let other = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x77]);
+    let third = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x88]);
+    let mut settings = Settings::default();
+    settings.set_profile(MAC, Some("racing".into()));
+    settings.set_profile(other, Some("racing".into()));
+    settings.set_profile(third, Some("shooter".into()));
+
+    let mut users = settings.controllers_using("racing");
+    users.sort();
+
+    assert_eq!(users, [MAC, other]);
+    assert_eq!(settings.controllers_using("gone"), []);
+}
+
+#[test]
+fn forgetting_a_profile_sends_its_controllers_back_to_the_default_one() {
+    let other = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x77]);
+    let third = MacAddress([0x11, 0x22, 0x33, 0x44, 0x55, 0x88]);
+    let mut settings = Settings::default();
+    settings.set_profile(MAC, Some("racing".into()));
+    settings.set_profile(other, Some("racing".into()));
+    settings.set_profile(third, Some("shooter".into()));
+
+    assert_eq!(settings.forget_profile("racing"), 2);
+
+    assert_eq!(settings.controller(MAC).profile, None);
+    assert_eq!(settings.controller(other).profile, None);
+    assert_eq!(
+        settings.controller(third).profile.as_deref(),
+        Some("shooter")
+    );
+    assert_eq!(settings.forget_profile("racing"), 0);
+}

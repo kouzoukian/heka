@@ -175,6 +175,12 @@ pub enum Binding {
     To(Output),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileError {
+    NotJson(String),
+    NotAProfile,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Profile {
     pub name: String,
@@ -202,6 +208,25 @@ impl Profile {
         let Value::Object(root) = serde_json::from_str(text).ok()? else {
             return None;
         };
+        Self::from_object(&root, fallback_name)
+    }
+
+    pub fn parse(text: &str, fallback_name: &str) -> Result<Self, ProfileError> {
+        let value: Value =
+            serde_json::from_str(text).map_err(|error| ProfileError::NotJson(error.to_string()))?;
+        let Value::Object(root) = value else {
+            return Err(ProfileError::NotAProfile);
+        };
+        let looks_like_one = ["name", "output_type", "bindings"]
+            .iter()
+            .any(|key| root.contains_key(*key));
+        if !looks_like_one {
+            return Err(ProfileError::NotAProfile);
+        }
+        Self::from_object(&root, fallback_name).ok_or(ProfileError::NotAProfile)
+    }
+
+    fn from_object(root: &serde_json::Map<String, Value>, fallback_name: &str) -> Option<Self> {
         let name = root
             .get("name")
             .and_then(Value::as_str)

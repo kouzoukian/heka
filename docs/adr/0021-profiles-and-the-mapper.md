@@ -41,3 +41,12 @@ A running Bridge follows its Controller's Profile the way it follows Preferences
 The pane has a Profile page beside Controller settings, for the selected Controller. Choosing a Profile in its list assigns it to that Controller and shows it for editing, as in the approved mockup (`docs/mockups/v2.html`). A Binding opens in place under its row, with every output as a button and Default and Nothing first; choosing one saves at once, closes the row, and reaches every Controller that uses the Profile. A row is faint while its Binding is the default and bright once changed. The Default Profile shows no Bindings and says it cannot be changed.
 
 While the chosen Profile sets an Output Type, the Output Type switch on the Controller page asks for nothing and its tooltip says why. The Profile's own Output Type is chosen on the Profile page, among the Controller's own, Xbox and PS4.
+
+## Managing Profiles
+
+Names are distinct, compared without regard to case, and the Default Profile's name is taken: a name already in use gets a number added (`Racing 2`), cut so that it still fits 24 characters. This holds for a new Profile, a duplicate, a rename and an import alike.
+
+- A duplicate is named `<name> copy` and is a Profile of its own. The Default Profile can be duplicated and nothing else: it has no id, so it can be neither renamed nor deleted.
+- Renaming changes the name only. The file, and so the id that Controllers remember, stays.
+- Deleting a Profile clears the choice of every Controller that used it, so they use the Default Profile, and `Settings::controllers_using` tells the window how many to name beforehand. Clearing the choice, rather than leaving the id as for a missing file, keeps a later Profile that happens to get the same id from taking those Controllers over.
+- Export is the Profile's JSON under its file name. Import reads a file that is a JSON object with a `name`, `output_type` or `bindings`; anything else is refused with a reason, as not JSON or not a Profile, and changes nothing. Bindings that cannot be read are dropped as when reading the folder. DS4Windows files are not read.

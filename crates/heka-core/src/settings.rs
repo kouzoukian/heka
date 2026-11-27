@@ -107,6 +107,22 @@ impl Settings {
         self.controllers.entry(mac).or_default().profile = profile.filter(|id| !id.is_empty());
     }
 
+    pub fn controllers_using(&self, profile: &str) -> Vec<MacAddress> {
+        self.controllers
+            .iter()
+            .filter(|(_, settings)| settings.profile.as_deref() == Some(profile))
+            .map(|(&mac, _)| mac)
+            .collect()
+    }
+
+    pub fn forget_profile(&mut self, profile: &str) -> usize {
+        let users = self.controllers_using(profile);
+        for mac in &users {
+            self.set_profile(*mac, None);
+        }
+        users.len()
+    }
+
     pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {
         self.controllers.entry(mac).or_default().preferences = preferences;
     }
