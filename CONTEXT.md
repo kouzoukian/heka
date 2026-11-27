@@ -20,8 +20,19 @@ The controller heka presents to games in place of a Controller.
 _Avoid_: emulated device, output device
 
 **Output Type**:
-The kind of Virtual Controller a Controller drives: Xbox or PS4. Remembered per Controller.
-_Avoid_: mode, profile
+The kind of Virtual Controller a Controller drives: Xbox or PS4. Remembered per Controller. A Profile may override it.
+_Avoid_: mode
+
+**Profile**:
+A named set of choices for how a Controller's input becomes what games receive: its Bindings and, optionally, an Output Type. A Controller uses the Default Profile, which changes nothing and cannot be edited or deleted, until the player chooses another. Remembered per Controller.
+_Avoid_: mapping, configuration, preset
+
+**Binding**:
+What one input of a Profile drives on the Virtual Controller: another button, a d-pad direction, a trigger pressed all the way, or nothing.
+_Avoid_: mapping, assignment
+
+**Mapper**:
+The step that turns a Controller's state into the state its Virtual Controller shows, by the Controller's Profile.
 
 **Bridge**:
 The live pairing of one Controller with one Virtual Controller, carrying input to the game and Feedback back.
@@ -33,7 +44,7 @@ _Avoid_: output, notification
 
 **Preferences**:
 What the player chose for one Controller: how strongly it rumbles, whether its motors are swapped, the lightbar colour while no game sets one, its player lights and whether it is Hidden. They shape the Feedback on its way to the Controller.
-_Avoid_: profile, configuration
+_Avoid_: configuration
 
 **Held**:
 A Bridge whose Controller has lost every Link. The Virtual Controller stays, with everything released, for a limited time.
