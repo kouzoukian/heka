@@ -21,3 +21,9 @@ A Binding says what one input of the Controller drives on the Virtual Controller
 `Mapper` in `heka-core` is a pure function from a Controller state to the state the Virtual Controller shows. It runs on the input thread between parsing a report and `VirtualController::update`, holds no time and no history, and looks up each Binding in a fixed array, so it adds no allocation and no lock to the input path. Sticks, motion, touch and battery pass through unchanged; buttons and the two triggers are the only things it rewrites.
 
 Because it depends only on the Controller's present state, a change of Profile needs no release step: the next report produces the new state, and whatever the old Binding held is simply no longer produced. The Mapper replaces the Controller state and never the Virtual Controller, which is replaced only when the effective Output Type changes.
+
+## Storage
+
+`Profiles` in `heka-core` holds the Profiles read from the folder, by id, and touches no file: the app passes in file names and text and writes back the one that changed. A new id comes from the name: lower-case ASCII letters and digits with single hyphens, at most 40 characters, a number added when taken. `default` is never an id, so no file can pose as the Default Profile, and names Windows reserves for devices (`con`, `nul`, `com1` and the like) are prefixed.
+
+The player's choice is the id, kept in the Controller's entry in `settings.json` beside its other fields ([ADR 0014](0014-settings-and-preferences.md)). No choice, a blank one, and an id whose file is gone all give the Default Profile, and the id is kept, so a file that comes back is used again.

@@ -18,6 +18,7 @@ fn a_missing_settings_file_gives_defaults() {
             output_type: OutputType::Xbox,
             nickname: None,
             idle_time: None,
+            profile: None,
             preferences: Preferences {
                 rumble: RumbleStrength::FULL,
                 swap_motors: false,
@@ -232,4 +233,50 @@ fn an_idle_time_heka_does_not_offer_is_off_and_the_rest_is_kept() {
         assert_eq!(loaded.idle_time, None, "{value}");
         assert!(loaded.stopped, "{value}");
     }
+}
+
+#[test]
+fn a_controller_uses_no_profile_until_one_is_chosen() {
+    assert_eq!(Settings::load(None).controller(MAC).profile, None);
+}
+
+#[test]
+fn the_chosen_profile_survives_a_save_and_load() {
+    let mut settings = Settings::default();
+    settings.set_profile(MAC, Some("racing".into()));
+
+    let loaded = Settings::load(Some(&settings.to_json()));
+
+    assert_eq!(loaded.controller(MAC).profile.as_deref(), Some("racing"));
+}
+
+#[test]
+fn choosing_the_default_profile_forgets_the_choice() {
+    let mut settings = Settings::default();
+    settings.set_profile(MAC, Some("racing".into()));
+    settings.set_profile(MAC, None);
+
+    assert_eq!(settings.controller(MAC).profile, None);
+    assert!(!settings.to_json().contains("profile"));
+}
+
+#[test]
+fn a_blank_or_broken_profile_choice_is_no_choice() {
+    for entry in [r#""profile": """#, r#""profile": 5"#, r#""profile": null"#] {
+        let text =
+            format!(r#"{{"controllers": {{"11:22:33:44:55:66": {{"stopped": true, {entry}}}}}}}"#);
+        let controller = Settings::load(Some(&text)).controller(MAC);
+
+        assert_eq!(controller.profile, None, "{entry}");
+    }
+}
+
+#[test]
+fn a_v1_file_without_profiles_loads_with_no_choice() {
+    let text = r#"{"controllers": {"11:22:33:44:55:66": {"stopped": true, "rumble": 50}}}"#;
+
+    let controller = Settings::load(Some(text)).controller(MAC);
+
+    assert_eq!(controller.profile, None);
+    assert!(controller.stopped);
 }

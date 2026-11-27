@@ -16,6 +16,7 @@ pub mod link;
 pub mod mac;
 pub mod preferences;
 pub mod profile;
+pub mod profiles;
 pub mod ps4;
 pub mod radio;
 pub mod release;
