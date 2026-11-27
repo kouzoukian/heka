@@ -23,6 +23,9 @@ it twice. The live pairing of the two is a **Bridge**.
 
 - **Xbox 360 or DualShock 4 output**, chosen and remembered for each Controller.
 - **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
+- **Profiles:** remap buttons and tune sticks and triggers, chosen for each Controller.
+- **Profiles by game:** the program in front can apply its own Profile.
+- **Controller shortcuts:** hold **PS** to switch Profile or turn off a Controller.
 - **USB and Bluetooth.** A Controller on both is listed once and read over USB.
 - **Turn off a Controller on Bluetooth**, with a button or after it is left unused.
 - **Brief disconnections:** the Virtual Controller stays for 30 seconds while the
@@ -74,8 +77,9 @@ Controller and has never been tried on a real one. Please
 [report](https://github.com/kouzoukian/heka/issues) what works and what does not.
 
 heka reads the DualSense Edge's two Fn and two back buttons and lights them on the live
-drawing, but they do nothing in games. The DualShock 3,
-Sony's wireless USB adaptor and controllers from other makers are not supported.
+drawing. They do nothing in games until a [Profile](#profiles) binds them. The
+DualShock 3, Sony's wireless USB adaptor and controllers from other makers are not
+supported.
 
 ## Using heka
 
@@ -84,17 +88,18 @@ battery level and a live drawing of its input, and to choose:
 
 - Its **Output Type**, what its Virtual Controller is: **Xbox** (Xbox 360) or **PS4**
   (DualShock 4). Changing it replaces the Virtual Controller, so a running game may need
-  to be restarted.
+  to be restarted. A Profile may set its own, which applies while it is chosen.
+- Its [Profile](#profiles), behind the layers button.
 - **Stop** and **Start**, the button at the top right. A Stopped Controller is not
   Bridged, and games see it as it is. heka still shows its input and battery.
 - **Turn off**, the power button beside it, for a Controller on Bluetooth. It ends the
   Bluetooth Link, which switches the Controller off, and removes its Virtual
   Controller at once. A Controller also on USB carries on over USB. Press **PS** to
   connect again.
-- Its [settings](#controller-settings), behind the button before those.
+- Its [settings](#controller-settings).
 
-heka remembers the Output Type, Stop and the settings for each Controller. Up to 4 can be Bridged at once; a fifth
-is listed, with its input and battery, but not Bridged.
+heka remembers the Output Type, Stop, Profile and settings for each Controller. Up to 4
+can be Bridged at once; a fifth is listed, with its input and battery, but not Bridged.
 
 |                                             | Xbox | PS4 |
 | ------------------------------------------- | ---- | --- |
@@ -103,9 +108,10 @@ is listed, with its input and battery, but not Bridged.
 | Lightbar colour chosen by the game          | no   | yes |
 | Touchpad, gyroscope and accelerometer       | no   | yes |
 
-With the Xbox Output Type, Create (Share on a DualShock 4) is View, Options is Menu and
-PS is Guide. The touchpad click does nothing. The mute button does nothing with either
-Output Type. There is no remapping.
+With the Default Profile and the Xbox Output Type, Create (Share on a DualShock 4) is
+View, Options is Menu and PS is Guide, and the touchpad click does nothing. The mute
+button does nothing with either Output Type. A [Profile](#profiles) can change what each
+button does.
 
 A Controller connected over both USB and Bluetooth is listed once, and heka reads it over
 USB. A Controller that loses both is **Held** for 30 seconds: its Virtual Controller
@@ -141,6 +147,27 @@ stays, with everything released, and carries on when the Controller returns.
 
 Rumble and lights apply while the Controller is Bridged.
 
+### Profiles
+
+A **Profile** decides how a Controller's input becomes what games receive. Every
+Controller starts with the **Default** Profile, which changes nothing and cannot be
+edited. Make a new one, or duplicate one, and choose it for each Controller that should
+use it. Changes apply at once.
+
+- **Buttons:** each button, d-pad direction, L2 and R2, mute, touchpad click (whole, or
+  its left and right halves) and DualSense Edge button can drive another button, a d-pad
+  direction, a trigger pressed fully, or nothing.
+- **Sticks:** for each stick, dead zone, anti-dead zone, max zone, sensitivity, output
+  curve and inverted axes; the two sticks can be swapped. A live readout shows your input
+  beside the tuned one, with the Controller's reports per second.
+- **Triggers:** for each trigger, dead zone, max zone, output curve, a **hair trigger**
+  point past which any press is full, and the point at which a trigger bound to a button
+  counts as pressed.
+- **Output Type:** the Controller's own, Xbox or PS4.
+
+Profiles can be renamed, duplicated, deleted, exported to a file and imported from one.
+DS4Windows profiles cannot be imported.
+
 ### Log and About
 
 The last two buttons at the right of the status bar open them; press the same button again,
@@ -162,10 +189,35 @@ what concerns heka as a whole.
 - **Closing the window**: **Keep running** (the default) or **Quit**.
 - **Check for new releases**, on unless you turn it off. See
   [Files, updating and removing](#files-updating-and-removing).
-- **Settings folder**, where heka keeps `settings.json`.
+- **Settings folder**, where heka keeps `settings.json` and your Profiles.
+- [Controller shortcuts](#controller-shortcuts) and [Game rules](#game-rules).
 
 heka reopens its window at the size and place you left it, or centred if that is no longer
 on a screen.
+
+### Controller shortcuts
+
+Off until you turn them on in App settings. Hold **PS**, then press another button:
+
+| Action           | Until you change it                                      |
+| ---------------- | -------------------------------------------------------- |
+| Next Profile     | **PS** + **R1**                                          |
+| Previous Profile | **PS** + **L1**                                          |
+| Turn off         | **PS** + **Options**, held for two seconds, on Bluetooth |
+
+The other button does not reach the game, but **PS** does, so a game may react to it. A
+switch of Profile is announced in heka's window, not by a Windows notification.
+
+### Game rules
+
+A game rule gives a program a Profile: while that program is in front, every Controller
+uses it, and afterwards each returns to its own. Add rules in App settings, picking a
+running program or a file. A rule whose Profile sets an Output Type lasts until its
+program exits or another rule applies, so that a running game keeps its Virtual
+Controller when you switch away.
+
+While there is a rule, heka checks which program is in front. Rules also work for programs
+run as administrator in most cases, and heka says when it cannot see one.
 
 ### Tray
 
@@ -234,7 +286,7 @@ own rumble and light bar colours, and may create their own virtual controllers.
 
 ## Files, updating and removing
 
-heka sends no telemetry and does not update itself. It keeps its settings in
+heka sends no telemetry and does not update itself. It keeps its settings and Profiles in
 `%APPDATA%\heka`, and its log and its record of HidHide changes in `%LOCALAPPDATA%\heka`.
 
 At start and once a day, heka asks GitHub for its latest release. If that is newer than
