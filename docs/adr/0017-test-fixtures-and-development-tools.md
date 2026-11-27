@@ -4,7 +4,7 @@
 
 - **Captured** fixtures are raw bytes read from a real Controller, one report per line in hex, under `crates/heka-core/tests/fixtures`. **Derived** reports are a captured report, or a layout from Linux `hid-playstation.c`, with bytes changed at documented offsets. Test helpers say which is which by name (`captured_*`, `derived`, `ds4_*`, `bluetooth_from_usb`).
 - No real Controller's MAC address is stored in the repository.
-- Only a resting DualSense over USB is captured, so button reports and every Bluetooth report are derived (#57). No DualShock 4 was available, so all its reports are derived (#22).
+- A DualSense is captured over USB with each button, each stick at each edge, each trigger fully pulled and two fingers, and over Bluetooth with Cross held. Other changed inputs are derived. No DualShock 4 was available, so all its reports are derived (#22).
 
 ## Fixture provenance
 
@@ -13,6 +13,8 @@
 | `dualsense_usb_idle.hex` | 40 consecutive USB input reports of a resting DualSense (`054c:0ce6`, interface 3), captured 2026-11-26 with `capture_dualsense`: every button and trigger released, sticks resting. The first starts `01 7e 7d 7f 7c`, and byte 53 is `0x29`, charging state full. |
 | `dualsense_usb_calibration.hex` | Calibration feature report `0x05` of the same DualSense. |
 | `dualsense_usb_firmware_info.hex` | Firmware info feature report `0x20` of a real DualSense over USB, read with `capture_dualsense`; bytes 44..46 hold update version `0x0630`. |
+| `dualsense_usb_inputs.hex` | USB input reports of a real DualSense, captured 2026-11-27: five consecutive reports of each input, each line starting with the input's name and a colon, as `capture_dualsense --guided` writes them. `dpad_down` and `two_fingers` were cut from a longer capture made without `--guided`. |
+| `dualsense_bluetooth_inputs.hex` | 50 consecutive Bluetooth input reports `0x31` of a real DualSense, captured 2026-11-27 with `capture_dualsense --bluetooth` while Cross was held; the battery reads 85%, discharging. |
 
 ## Derived DualShock 4 reports
 
@@ -43,5 +45,5 @@ Tests use fakes at the `heka-core` seams, a fake clock (`Instant`s passed in), a
 
 - `cargo run -p heka-app --example ui_preview [-- --empty] [--missing] [--first N] [--settings] [--app-settings] [--release] [--log] [--about] [--window X,Y,WIDTH,HEIGHT] [--seconds N]`: the window over made-up data, touching no device or driver. `--empty` shows no Controller, `--missing` the setup screen for both drivers, `--first N` selects the Nth Controller, `--settings` opens its settings, `--app-settings` the app settings, `--release` announces a made-up new release, `--window` opens the window as if it had been left there, `--log` the log with made-up entries, `--about` the About view, `--seconds N` closes by itself. It prints the sampling rate every 2 seconds.
 - `cargo run -p heka-app --example tray_spike`: proves a `tray-icon` tray works in GPUI's event loop, ending within seconds and touching no device, driver or registry. It opens a window with `QuitMode::Explicit`, closes it, posts the tray's own left-click message (class `tray_icon_app`, message 6002, from `tray-icon` 0.25.1 `src/platform_impl/windows/mod.rs`) to the tray's hidden window, and reopens on the click.
-- `cargo run -p heka-windows --example capture_dualsense -- [--bluetooth] [COUNT] > reports.hex`: read-only. Lists DualSense collections, then the MAC address, firmware info, Feedback format and calibration of the first DualSense on USB, or on Bluetooth with `--bluetooth`, all on stderr, then writes COUNT reports (default 50, for at most 30 seconds) in fixture format. Hold the inputs to record while it runs. `--guided FILE` instead asks for the inputs one by one, records five reports of each under a `# name` line, and writes FILE once every step is done. It stops if one of those reports holds the Controller's address.
+- `cargo run -p heka-windows --example capture_dualsense -- [--bluetooth] [COUNT] > reports.hex`: read-only. Lists DualSense collections, then the MAC address, firmware info, Feedback format and calibration of the first DualSense on USB, or on Bluetooth with `--bluetooth`, all on stderr, then writes COUNT reports (default 50, for at most 30 seconds) in fixture format. Hold the inputs to record while it runs. `--guided FILE` instead asks for the inputs one by one, records five reports of each, writes FILE once every step is done, and starts each line with the input's name and a colon. It stops if one of those reports holds the Controller's address.
 - `cargo run -p heka-windows --example read_hidhide`: prints HidHide's configuration and what heka would hide, changing nothing.

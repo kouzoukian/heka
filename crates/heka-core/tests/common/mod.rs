@@ -13,6 +13,21 @@ pub fn reports(fixture: &str) -> Vec<Vec<u8>> {
         .collect()
 }
 
+pub fn captured_input(name: &str) -> Vec<Vec<u8>> {
+    let label = format!("{name}: ");
+    let labelled: Vec<&str> = include_str!("../fixtures/dualsense_usb_inputs.hex")
+        .lines()
+        .filter_map(|line| line.strip_prefix(&label))
+        .collect();
+    let found = reports(&labelled.join("\n"));
+    assert!(!found.is_empty(), "no captured reports of {name}");
+    found
+}
+
+pub fn captured_bluetooth_cross() -> Vec<Vec<u8>> {
+    reports(include_str!("../fixtures/dualsense_bluetooth_inputs.hex"))
+}
+
 pub fn captured_idle() -> Vec<Vec<u8>> {
     reports(include_str!("../fixtures/dualsense_usb_idle.hex"))
 }

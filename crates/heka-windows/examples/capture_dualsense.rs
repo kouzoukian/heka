@@ -179,9 +179,8 @@ fn record_steps(
 
     let mut out = std::fs::File::create(path)?;
     for ((name, _), reports) in STEPS.iter().zip(recorded) {
-        writeln!(out, "# {name}")?;
         for report in reports {
-            writeln!(out, "{}", hex(&report))?;
+            writeln!(out, "{name}: {}", hex(&report))?;
         }
     }
     eprintln!("\nwrote {}", path.display());
