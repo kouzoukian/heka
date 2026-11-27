@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fs, io, process};
 
 use heka_app::ui::model::{
@@ -18,6 +18,8 @@ use heka_windows::foreground;
 use crate::bridging::{Bridging, Status};
 use crate::releases::Releases;
 use crate::settings_file;
+
+const SHORTCUT_NOTICE_TIME: Duration = Duration::from_secs(5);
 
 pub struct WindowBackend {
     bridging: Arc<Bridging>,
@@ -106,6 +108,11 @@ impl Backend for WindowBackend {
             .profile_notice
             .iter()
             .map(|message| Notice::warning(message.clone()));
+        let shortcut_notice = snapshot
+            .shortcut_notice
+            .iter()
+            .filter(|(at, _)| now.saturating_duration_since(*at) < SHORTCUT_NOTICE_TIME)
+            .map(|(_, words)| Notice::info(words.clone()));
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
@@ -124,6 +131,7 @@ impl Backend for WindowBackend {
                 .chain(not_unplugged)
                 .chain(not_turned_off)
                 .chain(profile_notice)
+                .chain(shortcut_notice)
                 .collect(),
             controllers: snapshot
                 .controllers
@@ -140,6 +148,7 @@ impl Backend for WindowBackend {
                 })
                 .collect(),
             game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            shortcuts: self.app.borrow().shortcuts,
             rule_applies: snapshot
                 .controllers
                 .iter()
@@ -187,6 +196,9 @@ impl Backend for WindowBackend {
                 });
                 bridging.delete_profile(profile);
             }
+            Command::ChangeShortcut(change) => self.change_app(|app| {
+                app.shortcuts.change(change);
+            }),
             Command::AddGameRule(program, profile) => self.change_app(|app| {
                 app.game_rules.add(&program, &profile);
             }),

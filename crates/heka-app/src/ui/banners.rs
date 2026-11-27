@@ -45,6 +45,7 @@ pub fn clamped(words: SharedString) -> Div {
 pub fn notice_banner(place: usize, notice: &Notice, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let (name, color) = match notice.level {
+        Level::Info => (IconName::Info, theme.info),
         Level::Warning => (IconName::TriangleAlert, theme.warning),
         Level::Error => (IconName::CircleX, theme.danger),
     };

@@ -491,6 +491,16 @@ pub const ROW_INVERT_X: &str = "Invert X";
 pub const ROW_INVERT_Y: &str = "Invert Y";
 pub const ROW_SWAP_STICKS: &str = "Swap sticks";
 pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub fn shortcut_profile(controller: &str, profile: Option<&str>, rule: Option<&str>) -> String {
+    let profile = profile.unwrap_or(DEFAULT_PROFILE);
+    match rule {
+        Some(program) => format!(
+            "Profile for {controller}: {profile} (a rule applies: {program}; it returns afterwards)"
+        ),
+        None => format!("Profile for {controller}: {profile}"),
+    }
+}
+
 pub const GROUP_GAMES: &str = "Game rules";
 pub const GAMES_NOTE: &str =
     "A program in front applies its Profile to every Controller. Leaving it restores their own.";

@@ -199,6 +199,7 @@ impl Backend for Fake {
             controllers,
             profiles,
             game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            shortcuts: self.app.borrow().shortcuts,
             rule_applies: applying.map(|rule| rule.program),
             foreground_unreadable: false,
             log: Recent::clone(&self.log),
@@ -275,6 +276,10 @@ impl Backend for Fake {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_stick(*side, *change);
                 }
+                return;
+            }
+            Command::ChangeShortcut(change) => {
+                self.app.borrow_mut().shortcuts.change(*change);
                 return;
             }
             Command::AddGameRule(program, profile) => {

@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use heka_app::report::Reporter;
+use heka_app::ui::model::controller_name;
 use heka_app::{log, text};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
@@ -52,6 +53,7 @@ pub struct Snapshot {
     pub profiles: Profiles,
     pub profile_notice: Option<String>,
     pub profile_users: BTreeMap<String, usize>,
+    pub shortcut_notice: Option<(Instant, String)>,
     pub foreground_unreadable: bool,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
@@ -101,6 +103,7 @@ impl Bridging {
             profiles: Profiles::default(),
             profile_notice: None,
             profile_users: BTreeMap::new(),
+            shortcut_notice: None,
             foreground_unreadable: false,
             hiding: Vec::new(),
             unopened: Vec::new(),
@@ -271,6 +274,7 @@ fn supervise(
     let mut next_foreground = Instant::now();
     let mut watching_foreground = false;
     let mut foreground_unreadable = false;
+    let mut shortcut_notice: Option<(Instant, String)> = None;
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
@@ -452,6 +456,17 @@ fn supervise(
             hider.warnings()
         };
         let controllers = supervisor.controllers();
+        for note in supervisor.take_shortcut_notes() {
+            let name = controllers
+                .iter()
+                .find(|view| view.mac == note.mac)
+                .map(controller_name)
+                .unwrap_or_default();
+            let words =
+                text::shortcut_profile(&name, note.name.as_deref(), note.under_rule.as_deref());
+            log::line(&words);
+            shortcut_notice = Some((now, words));
+        }
         log_all(reporter.controllers(&controllers));
         log_all(reporter.hiding(&hiding));
         match &status {
@@ -468,6 +483,7 @@ fn supervise(
                 profiles: supervisor.profiles().clone(),
                 profile_notice: profile_notice.clone(),
                 profile_users: supervisor.settings().profile_users(),
+                shortcut_notice: shortcut_notice.clone(),
                 foreground_unreadable,
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),

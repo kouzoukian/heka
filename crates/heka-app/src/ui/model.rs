@@ -13,6 +13,7 @@ use heka_core::preferences::{PreferenceChange, Preferences};
 use heka_core::profile::{Binding, Input, Profile};
 use heka_core::release::Version;
 use heka_core::setup::Missing;
+use heka_core::shortcuts::{ShortcutChange, Shortcuts};
 use heka_core::state::{Battery, Stick};
 use heka_core::supervisor::ControllerView;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
@@ -69,6 +70,7 @@ pub enum Command {
     AddGameRule(String, String),
     SetGameRule(String, String),
     RemoveGameRule(String),
+    ChangeShortcut(ShortcutChange),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +89,7 @@ pub struct Screen {
     pub controllers: Vec<ControllerEntry>,
     pub profiles: Vec<ProfileEntry>,
     pub game_rules: Vec<GameRule>,
+    pub shortcuts: Shortcuts,
     pub rule_applies: Option<String>,
     pub foreground_unreadable: bool,
     pub log: Recent,
@@ -155,6 +158,7 @@ impl Selection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
+    Info,
     Warning,
     Error,
 }
@@ -173,6 +177,13 @@ impl Notice {
         }
     }
 
+    pub fn info(text: impl Into<String>) -> Self {
+        Self {
+            level: Level::Info,
+            text: text.into(),
+        }
+    }
+
     pub fn error(text: impl Into<String>) -> Self {
         Self {
             level: Level::Error,
@@ -182,12 +193,17 @@ impl Notice {
 
     pub fn cannot_turn_off(view: &ControllerView) -> Option<Self> {
         let error = view.turn_off_error.as_ref()?;
-        let controller = view
-            .nickname
-            .clone()
-            .unwrap_or_else(|| text::named(view.model, &short_mac(view.mac)));
-        Some(Self::warning(text::cannot_turn_off(&controller, error)))
+        Some(Self::warning(text::cannot_turn_off(
+            &controller_name(view),
+            error,
+        )))
     }
+}
+
+pub fn controller_name(view: &ControllerView) -> String {
+    view.nickname
+        .clone()
+        .unwrap_or_else(|| text::named(view.model, &short_mac(view.mac)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
