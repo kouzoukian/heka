@@ -75,3 +75,11 @@ Each stick of a Profile has a dead zone, an anti-dead zone, a max zone, a sensit
 `LiveInput` holds the Controller's own state beside what the Virtual Controller receives, and how many reports a second the Controller sends, all behind the one lock the input thread already takes for each report. The rate is measured by `RateMeter` over whole seconds: it needs a second of reports before it shows anything, follows a change within a second, and is forgotten when the Link ends. The window reads all three with one `sample`.
 
 The Profile editor's readout draws the Controller's own stick position and the tuned one, from the same sample, so the two always belong together.
+
+## Sections of the Profile page
+
+The Profile page has three sections, chosen by a switch at its top: Profiles (the list, the actions and the Profile's Output Type), Buttons (the Bindings) and Sticks. Only the part of a section that has many rows scrolls, so the Sticks section keeps its readout in view while its rows scroll beneath it. Which section and which stick are shown belong to the window and are kept while the Controller or Profile changes.
+
+- The Sticks section tunes the left or the right stick as chosen by a second switch. Its readout draws the Controller's own stick position and the tuned one as two dots in a circle, with rings at the dead zone and at the max zone, and says how many reports a second the Controller sends. With the sticks swapped, the tuned dot of a stick is the one the Virtual Controller shows on the other side, because that is where its tuning ends up.
+- Dead zone, anti-dead zone, max zone and sensitivity are chosen from steps (0, 5, 10, 15, 20 and 30% of travel for the dead zone and so on) rather than a slider, and a value that a file holds outside the steps is offered as one more step, so that it is shown as chosen and can be left. The curve is chosen from its five shapes, and each axis can be inverted.
+- The Default Profile has no tuning; its Sticks and Buttons sections say it cannot be changed.

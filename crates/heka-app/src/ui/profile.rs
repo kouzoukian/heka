@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Div, Entity, InteractiveElement, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, Div, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input as TextInput, InputState};
@@ -10,6 +10,7 @@ use gpui_component::{ActiveTheme, Selectable, Sizable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::profile::{Binding, Input, Output};
 use heka_core::profiles::suggest_name;
+use heka_core::tuning::StickSide;
 use heka_core::virtual_controller::OutputType;
 
 use crate::text;
@@ -18,8 +19,9 @@ use crate::ui::detail::row;
 use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
-use crate::ui::segmented::{Segment, segmented};
+use crate::ui::segmented::{Pick, Segment, picked, segmented};
 use crate::ui::settings::{explained, group};
+use crate::ui::sticks::sticks_section;
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
 
@@ -31,8 +33,18 @@ pub enum Manage {
     ConfirmingDelete(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Profiles,
+    Buttons,
+    Sticks,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileAction {
+    Show(Section),
+    Side(StickSide),
     Duplicate,
     StartRename,
     CommitRename,
@@ -47,6 +59,8 @@ pub type ProfileAct = Rc<dyn Fn(ProfileAction, &mut Window, &mut App)>;
 
 pub struct ProfileView<'a> {
     pub editing: Option<Input>,
+    pub section: Section,
+    pub side: StickSide,
     pub manage: Manage,
     pub rename: &'a Entity<InputState>,
     pub toggle: ToggleBinding,
@@ -65,6 +79,72 @@ pub fn profile_page(
         .profile
         .as_ref()
         .and_then(|id| screen.profiles.iter().find(|profile| &profile.id == id));
+    let body = match view.section {
+        Section::Profiles => scrolled(profiles_section(screen, entry, chosen, view, send, theme)),
+        Section::Buttons => scrolled(buttons_section(chosen, view, send, theme)),
+        Section::Sticks => match chosen {
+            Some(profile) => {
+                sticks_section(profile, entry, view.side, &view.act, send, theme).into_any_element()
+            }
+            None => scrolled(default_note(text::STICKS_DEFAULT, theme)),
+        },
+    };
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .child(section_switch(view, theme))
+        .child(body)
+}
+
+fn scrolled(content: Div) -> AnyElement {
+    div()
+        .id("profile-body")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .child(content)
+        .into_any_element()
+}
+
+fn default_note(words: &'static str, theme: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .child(strip("profile-fixed", 2, theme).child(clamped(words.into())))
+}
+
+fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
+    let items = [
+        (Section::Profiles, text::SECTION_PROFILES),
+        (Section::Buttons, text::SECTION_BUTTONS),
+        (Section::Sticks, text::SECTION_STICKS),
+    ]
+    .map(|(section, words)| {
+        let act = Rc::clone(&view.act);
+        let pick: Pick = Rc::new(move |window, cx| act(ProfileAction::Show(section), window, cx));
+        (
+            SharedString::from(format!("profile-section-{section:?}")),
+            words,
+            view.section == section,
+            pick,
+        )
+    });
+    row(theme).justify_start().child(picked(items, theme))
+}
+
+fn profiles_section(
+    screen: &Screen,
+    entry: &ControllerEntry,
+    chosen: Option<&ProfileEntry>,
+    view: &ProfileView<'_>,
+    send: &SendCommand,
+    theme: &Theme,
+) -> Div {
     let mut sorted: Vec<&ProfileEntry> = screen.profiles.iter().collect();
     sorted.sort_by_key(|profile| profile.profile.name.to_lowercase());
     let page = div()
@@ -96,8 +176,22 @@ pub fn profile_page(
         None => page.child(
             strip("profile-fixed", 2, theme).child(clamped(text::DEFAULT_PROFILE_FIXED.into())),
         ),
-        Some(profile) => page
-            .child(output_row(profile, send, theme))
+        Some(profile) => page.child(output_row(profile, send, theme)),
+    }
+}
+
+fn buttons_section(
+    chosen: Option<&ProfileEntry>,
+    view: &ProfileView<'_>,
+    send: &SendCommand,
+    theme: &Theme,
+) -> Div {
+    match chosen {
+        None => default_note(text::DEFAULT_PROFILE_FIXED, theme),
+        Some(profile) => div()
+            .flex()
+            .flex_col()
+            .flex_none()
             .child(group(text::GROUP_BINDINGS, theme))
             .children(
                 Input::ALL

@@ -85,6 +85,7 @@ pub fn pane(
             .min_h_0()
             .overflow_y_scroll()
     };
+    let fixed = || div().id("pane").flex().flex_col().flex_1().min_h_0();
     let controller = |body: Stateful<Div>| {
         body.children(
             screen
@@ -107,7 +108,7 @@ pub fn pane(
         (Some(entry), Showing::ControllerSettings(fields)) => controller(scrolling())
             .child(settings(entry, fields, send, cx))
             .into_any_element(),
-        (Some(entry), Showing::Profile(view)) => controller(scrolling())
+        (Some(entry), Showing::Profile(view)) => controller(fixed())
             .child(profile_page(screen, entry, &view, send, cx))
             .into_any_element(),
         (None, _) => controller(scrolling())

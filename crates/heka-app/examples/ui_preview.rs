@@ -155,6 +155,8 @@ impl Backend for Fake {
         for entry in &mut controllers {
             if entry.active_link.is_some() {
                 entry.pad = Some(moving_pad(t));
+                entry.raw_sticks = entry.pad.map(|pad| [pad.left_stick, pad.right_stick]);
+                entry.report_rate = Some(250);
             }
             if let EntryState::Held { .. } = entry.state {
                 entry.state = EntryState::Held {

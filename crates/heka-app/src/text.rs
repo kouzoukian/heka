@@ -11,6 +11,7 @@ use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
 use heka_core::supervisor::BridgeError;
+use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
 
 pub const APP_NAME: &str = "heka";
@@ -470,6 +471,52 @@ pub const PROFILE_OUTPUT_TIP: &str = "The Output Type while this Profile is chos
 pub const OUTPUT_OWN: &str = "Controller's own";
 pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
 pub const BINDING_NOTHING: &str = "Nothing";
+pub const SECTION_PROFILES: &str = "Profiles";
+pub const SECTION_BUTTONS: &str = "Buttons";
+pub const SECTION_STICKS: &str = "Sticks";
+pub const SIDE_LEFT: &str = "Left stick";
+pub const SIDE_RIGHT: &str = "Right stick";
+pub const ROW_DEAD_ZONE: &str = "Dead zone";
+pub const DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing";
+pub const ROW_ANTI_DEAD_ZONE: &str = "Anti-dead zone";
+pub const ANTI_DEAD_ZONE_TIP: &str =
+    "Where the smallest movement starts, for games with a dead zone of their own";
+pub const ROW_MAX_ZONE: &str = "Max zone";
+pub const MAX_ZONE_TIP: &str = "Travel at which the stick counts as fully pushed";
+pub const ROW_SENSITIVITY: &str = "Sensitivity";
+pub const SENSITIVITY_TIP: &str = "How far the stick's travel is stretched";
+pub const ROW_CURVE: &str = "Curve";
+pub const CURVE_TIP: &str = "How the travel is shaped between the centre and the edge";
+pub const ROW_INVERT_X: &str = "Invert X";
+pub const ROW_INVERT_Y: &str = "Invert Y";
+pub const ROW_SWAP_STICKS: &str = "Swap sticks";
+pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub const READOUT_RAW: &str = "Raw";
+pub const READOUT_TUNED: &str = "Tuned";
+pub const STICKS_DEFAULT: &str =
+    "The Default Profile does not tune sticks. Choose another Profile, or make a new one.";
+
+pub fn curve_name(curve: Curve) -> &'static str {
+    match curve {
+        Curve::Linear => "Linear",
+        Curve::Soft => "Soft",
+        Curve::Softer => "Softer",
+        Curve::Sharp => "Sharp",
+        Curve::Smooth => "Smooth",
+    }
+}
+
+pub fn percent_of(value: u16) -> String {
+    format!("{value}%")
+}
+
+pub fn report_rate(rate: Option<u32>) -> String {
+    match rate {
+        Some(rate) => format!("{rate} reports a second"),
+        None => "Report rate not known yet".to_owned(),
+    }
+}
+
 pub const DUPLICATE: &str = "Duplicate";
 pub const RENAME: &str = "Rename";
 pub const DELETE: &str = "Delete";

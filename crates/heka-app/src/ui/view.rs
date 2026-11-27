@@ -19,11 +19,12 @@ use heka_core::preferences::{LightbarChoice, PreferenceChange};
 use heka_core::profile::{Input, MAX_NAME_CHARS};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
+use heka_core::tuning::StickSide;
 
 use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
-use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, ToggleBinding};
+use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding};
 use crate::ui::settings::Fields;
 use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
@@ -116,6 +117,8 @@ struct MainView {
     editing: Option<Input>,
     rename: Entity<InputState>,
     manage: Manage,
+    section: Section,
+    side: StickSide,
 }
 
 impl MainView {
@@ -198,6 +201,8 @@ impl MainView {
             editing: None,
             rename,
             manage: Manage::Idle,
+            section: Section::default(),
+            side: StickSide::Left,
         }
     }
 
@@ -253,6 +258,11 @@ impl MainView {
     ) {
         let chosen = self.chosen_profile();
         match action {
+            ProfileAction::Show(section) => {
+                self.section = section;
+                self.editing = None;
+            }
+            ProfileAction::Side(side) => self.side = side,
             ProfileAction::Duplicate => {
                 self.manage = Manage::Idle;
                 self.backend.command(Command::DuplicateProfile(chosen));
@@ -428,6 +438,8 @@ impl MainView {
             }),
             Page::Profile => Showing::Profile(ProfileView {
                 editing: self.editing,
+                section: self.section,
+                side: self.side,
                 manage: self.manage.clone(),
                 rename: &self.rename,
                 toggle: toggle_binding,
