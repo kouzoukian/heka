@@ -224,6 +224,8 @@ impl ControllerEntry {
             has_bluetooth,
             idle_time,
             profile,
+            applied_profile: _,
+            rule_program: _,
             output_type_from_profile,
             live,
             error,

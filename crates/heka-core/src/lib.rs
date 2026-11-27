@@ -8,6 +8,7 @@ pub mod discovery;
 pub mod dualsense;
 pub mod dualshock4;
 pub mod feedback;
+pub mod game_rules;
 pub mod hider;
 pub mod hiding;
 pub mod idle;

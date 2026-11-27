@@ -97,3 +97,16 @@ Each trigger of a Profile has a dead zone, a max zone, a curve, an optional hair
 ## The Triggers section
 
 The Triggers section of the Profile page follows the Sticks section: a switch for the left or right trigger, a readout that stays in view, and rows beneath it that scroll. The readout is two bars, the Controller's own travel and the tuned travel the Virtual Controller receives, each with its share in percent and the report rate beside them, and a thin line across the first bar where the hair trigger point is. Dead zone, max zone, hair trigger and press point are chosen from steps; the hair trigger starts at Off and the press point at Click, which stands for the Controller's own click. A value a file holds outside the steps is offered as one more step.
+
+## Game rules
+
+A game rule names a program and a Profile and applies to every Controller. Programs are known by their executable's file name without regard to case, so `C:\Games\EldenRing.EXE` and `eldenring.exe` are one program; a program has one rule, the first read from the file. Rules live under `app` in `settings.json`, absent when there are none, and a broken one is dropped when read.
+
+`RuleSelector` in `heka-core` decides which rule applies from what is in front and what is running, and nothing else, so that the choice is tested without a Windows.
+
+- A program with a usable rule in front makes that rule apply. A rule is usable when its Profile exists; a rule whose Profile is missing is ignored as if it were not there.
+- heka's own window in front changes nothing, so opening heka to look at a rule does not end it.
+- Any other program, or none, ends the rule that applies, except that a rule whose Profile sets an Output Type stays while its program runs. Replacing the Virtual Controller of a running game would make the game lose its controller, so such a rule lasts until the program exits or another rule applies. A rule whose Profile leaves the Output Type alone ends when its program leaves the front, which restores each Controller's own Profile.
+- The applying rule is dropped when it is removed or when its Profile goes.
+
+The Supervisor lets the rule's Profile take the place of each Controller's own choice, and never writes it to the settings, so each Controller's own choice is what comes back. Choosing another Profile for a Controller while a rule applies is remembered and shows once the rule ends. A Controller that arrives while a rule applies gets it. When the Profile of the rule that applies is deleted, every Controller goes back at once. `ControllerView` says which Profile applies and which program's rule is the reason, for the window to show.

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::autostart;
+use crate::game_rules::GameRules;
 use crate::window_placement::WindowPlacement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -20,6 +21,8 @@ pub struct AppSettings {
     pub start_in_tray: bool,
     pub on_close: CloseAction,
     pub check_for_releases: bool,
+    #[serde(skip_serializing_if = "GameRules::is_empty")]
+    pub game_rules: GameRules,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowPlacement>,
 }
@@ -37,6 +40,7 @@ impl Default for AppSettings {
             start_in_tray: false,
             on_close: CloseAction::default(),
             check_for_releases: true,
+            game_rules: GameRules::default(),
             window: None,
         }
     }
@@ -52,6 +56,7 @@ impl AppSettings {
             on_close: field(entry, "on_close"),
             check_for_releases: given(entry, "check_for_releases")
                 .unwrap_or(Self::default().check_for_releases),
+            game_rules: GameRules::load(entry.get("game_rules")),
             window: given::<WindowPlacement>(entry, "window")
                 .filter(|window| window.bounds.width > 0 && window.bounds.height > 0),
         }

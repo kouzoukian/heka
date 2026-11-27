@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::feedback::Motor;
+use crate::game_rules::{Front, RuleSelector, Surroundings};
 use crate::idle::{IdleTime, IdleTimer};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
@@ -53,6 +54,8 @@ pub struct ControllerView {
     pub has_bluetooth: bool,
     pub idle_time: Option<IdleTime>,
     pub profile: Option<String>,
+    pub applied_profile: Option<String>,
+    pub rule_program: Option<String>,
     pub output_type_from_profile: bool,
     pub live: Arc<LiveInput>,
     pub error: Option<BridgeError>,
@@ -152,6 +155,8 @@ pub struct Supervisor {
     lifecycle: Lifecycle,
     slots: HashMap<MacAddress, Slot>,
     profiles: Profiles,
+    rule_selector: RuleSelector,
+    rule: Option<(String, String)>,
     next_link_id: u64,
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
@@ -175,6 +180,8 @@ impl Supervisor {
             lifecycle,
             slots: HashMap::new(),
             profiles: Profiles::default(),
+            rule_selector: RuleSelector::default(),
+            rule: None,
             next_link_id: 0,
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
@@ -250,6 +257,8 @@ impl Supervisor {
                     idle_time: settings.idle_time,
                     output_type_from_profile: self.profile_output(mac).is_some(),
                     profile: settings.profile,
+                    applied_profile: self.profile_id_of(mac),
+                    rule_program: self.rule_program(),
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone().or(slot.watch_error.clone())),
                     turn_off_error: slot.and_then(|slot| slot.turn_off_error.clone()),
@@ -479,6 +488,51 @@ impl Supervisor {
 
     pub fn set_profiles(&mut self, profiles: Profiles, now: Instant) -> Vec<Change> {
         self.profiles = profiles;
+        self.refresh_all_profiles(now)
+    }
+
+    pub fn set_foreground(
+        &mut self,
+        front: Front<'_>,
+        running: &dyn Fn(&str) -> bool,
+        now: Instant,
+    ) -> Vec<Change> {
+        struct Facts<'a> {
+            profiles: &'a Profiles,
+            running: &'a dyn Fn(&str) -> bool,
+        }
+        impl Surroundings for Facts<'_> {
+            fn profile_exists(&self, profile: &str) -> bool {
+                self.profiles.get(profile).is_some()
+            }
+
+            fn profile_sets_output_type(&self, profile: &str) -> bool {
+                self.profiles
+                    .get(profile)
+                    .is_some_and(|profile| profile.output_type.is_some())
+            }
+
+            fn is_running(&self, program: &str) -> bool {
+                (self.running)(program)
+            }
+        }
+        let mut selector = std::mem::take(&mut self.rule_selector);
+        let facts = Facts {
+            profiles: &self.profiles,
+            running,
+        };
+        let chosen = selector
+            .choose(&self.settings().app().game_rules, &facts, front)
+            .map(|rule| (rule.program.clone(), rule.profile.clone()));
+        self.rule_selector = selector;
+        if chosen == self.rule {
+            return Vec::new();
+        }
+        self.rule = chosen;
+        self.refresh_all_profiles(now)
+    }
+
+    fn refresh_all_profiles(&mut self, now: Instant) -> Vec<Change> {
         let mut macs: Vec<MacAddress> = self.lifecycle.controllers().map(|(mac, _)| mac).collect();
         macs.extend(self.slots.keys().copied());
         macs.sort_unstable();
@@ -492,8 +546,12 @@ impl Supervisor {
 
     pub fn delete_profile(&mut self, id: &str, now: Instant) -> Vec<Change> {
         self.profiles.remove(id);
+        let by_rule = self.rule.as_ref().is_some_and(|(_, profile)| profile == id);
         let users = self.settings().controllers_using(id);
         self.lifecycle.settings_mut().forget_profile(id);
+        if by_rule {
+            return self.refresh_all_profiles(now);
+        }
         let changes = users
             .into_iter()
             .flat_map(|mac| self.refresh_profile(mac, now))
@@ -512,8 +570,25 @@ impl Supervisor {
         self.apply(changes, now)
     }
 
+    fn profile_id_of(&self, mac: MacAddress) -> Option<String> {
+        let by_rule = self
+            .rule
+            .as_ref()
+            .map(|(_, profile)| profile)
+            .filter(|profile| self.profiles.get(profile).is_some());
+        by_rule
+            .cloned()
+            .or_else(|| self.settings().controller(mac).profile)
+    }
+
+    fn rule_program(&self) -> Option<String> {
+        let (program, profile) = self.rule.as_ref()?;
+        self.profiles.get(profile)?;
+        Some(program.clone())
+    }
+
     fn profile_of(&self, mac: MacAddress) -> Profile {
-        let choice = self.settings().controller(mac).profile;
+        let choice = self.profile_id_of(mac);
         self.profiles.effective(choice.as_deref())
     }
 

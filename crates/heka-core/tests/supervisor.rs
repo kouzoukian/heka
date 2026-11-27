@@ -4,10 +4,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use heka_core::app_settings::AppSettings;
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
+use heka_core::game_rules::Front;
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
 use heka_core::link::{
@@ -1904,4 +1906,203 @@ fn the_live_input_forgets_the_state_when_the_link_is_gone() {
 
     assert_eq!(live.sample().raw, None);
     assert_eq!(live.sample().shown, None);
+}
+
+fn with_rules(supervisor: &mut Supervisor, rules: &[(&str, &str)]) {
+    let mut app = AppSettings::default();
+    for (program, profile) in rules {
+        app.game_rules.add(program, profile);
+    }
+    supervisor.set_app_settings(app);
+}
+
+fn nothing_runs(_: &str) -> bool {
+    false
+}
+
+#[test]
+fn a_program_in_front_applies_its_rule_to_every_controller_and_leaving_restores_each_ones_own() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let first = LinkHandle::default();
+    let second = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    supervisor.link_arrived(mac(2), second.reader(), t0);
+    supervisor.choose_profile(mac(2), Some("silent".into()), t0);
+
+    let changes = supervisor.set_foreground(Front::Program("CS2.exe"), &nothing_runs, t0);
+
+    assert_eq!(changes, []);
+    first.send(cross());
+    second.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+    wait_for_buttons(&bus, 1, Buttons::CIRCLE);
+    let views = supervisor.controllers();
+    assert!(
+        views
+            .iter()
+            .all(|view| view.rule_program.as_deref() == Some("cs2.exe"))
+    );
+    assert!(
+        views
+            .iter()
+            .all(|view| view.applied_profile.as_deref() == Some("racing"))
+    );
+    assert_eq!(
+        supervisor.settings().controller(mac(2)).profile.as_deref(),
+        Some("silent")
+    );
+
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    first.send(cross());
+    second.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    wait_for_buttons(&bus, 1, Buttons::NONE);
+    let views = supervisor.controllers();
+    assert!(views.iter().all(|view| view.rule_program.is_none()));
+    assert_eq!(views[1].applied_profile.as_deref(), Some("silent"));
+    assert_eq!(views[0].applied_profile, None);
+}
+
+#[test]
+fn hekas_own_window_in_front_changes_nothing() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Own, &nothing_runs, t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+    supervisor.set_foreground(Front::Own, &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+}
+
+#[test]
+fn a_rule_that_sets_the_output_type_keeps_the_virtual_controller_across_alt_tab() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    let running = |program: &str| program == "eldenring.exe";
+
+    let entering = supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+    let alt_tab = supervisor.set_foreground(Front::Program("firefox.exe"), &running, t0);
+    let back = supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+
+    assert_eq!(
+        entering,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Ps4
+            },
+        ]
+    );
+    assert_eq!(alt_tab, []);
+    assert_eq!(back, []);
+    assert_eq!(bus.plugged(), 2);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+}
+
+#[test]
+fn such_a_rule_ends_when_its_program_exits_and_the_virtual_controller_goes_back() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    let running = |program: &str| program == "eldenring.exe";
+    supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+    supervisor.set_foreground(Front::Program("firefox.exe"), &running, t0);
+
+    let exited = supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    assert_eq!(exited.len(), 2);
+    assert_eq!(bus.plugged(), 3);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn a_controller_arriving_while_a_rule_applies_gets_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.set_foreground(Front::Program("eldenring.exe"), &nothing_runs, t0);
+
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    assert_eq!(bus.plugged(), 1);
+    assert_eq!(bus.shown(0).lock().unwrap().output_type, OutputType::Ps4);
+    assert_eq!(
+        supervisor.controllers()[0].rule_program.as_deref(),
+        Some("eldenring.exe")
+    );
+}
+
+#[test]
+fn a_rule_whose_profile_does_not_exist_applies_nothing() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "gone")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn deleting_the_profile_of_the_rule_that_applies_ends_its_effect_at_once() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+
+    let changes = supervisor.delete_profile("ps4", t0);
+
+    assert_eq!(changes.len(), 2);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn changing_a_controllers_own_choice_under_a_rule_is_kept_for_afterwards() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    supervisor.choose_profile(mac(1), Some("silent".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::NONE);
 }
