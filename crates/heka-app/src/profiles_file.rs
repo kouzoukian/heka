@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heka_app::{log, text};
 use heka_core::profile::Profile;
@@ -67,4 +67,30 @@ pub fn save(id: &str, profile: &Profile) {
     if let Err(error) = result {
         log::line(&text::log::cannot_save_profile(&path, &error.to_string()));
     }
+}
+
+pub fn remove(id: &str) {
+    let Some(folder) = folder() else {
+        return;
+    };
+    let path = folder.join(Profiles::file_name(id));
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => log::line(&text::log::cannot_remove_profile(&path, &error.to_string())),
+    }
+}
+
+pub fn read_import(path: &Path) -> Result<(String, String), String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| text::cannot_read_import(path, &error.to_string()))?;
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok((content, name))
+}
+
+pub fn write_export(path: &Path, content: &str) -> Result<(), String> {
+    fs::write(path, content).map_err(|error| text::cannot_export(path, &error.to_string()))
 }

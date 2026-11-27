@@ -490,6 +490,17 @@ impl Supervisor {
         self.apply(changes, now)
     }
 
+    pub fn delete_profile(&mut self, id: &str, now: Instant) -> Vec<Change> {
+        self.profiles.remove(id);
+        let users = self.settings().controllers_using(id);
+        self.lifecycle.settings_mut().forget_profile(id);
+        let changes = users
+            .into_iter()
+            .flat_map(|mac| self.refresh_profile(mac, now))
+            .collect();
+        self.apply(changes, now)
+    }
+
     pub fn choose_profile(
         &mut self,
         mac: MacAddress,

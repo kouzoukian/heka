@@ -1,4 +1,5 @@
 use std::ffi::CString;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -45,6 +46,7 @@ pub struct Snapshot {
     pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
     pub profiles: Profiles,
+    pub profile_notice: Option<String>,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
     pub not_unplugged: Vec<String>,
@@ -66,6 +68,11 @@ enum Command {
     CreateProfile(String),
     BindInput(String, Input, Binding),
     SetProfileOutputType(String, Option<OutputType>),
+    DuplicateProfile(Option<String>),
+    RenameProfile(String, String),
+    DeleteProfile(String),
+    ImportProfile(PathBuf),
+    ExportProfile(String, PathBuf),
     Quit,
 }
 
@@ -83,6 +90,7 @@ impl Bridging {
             setup: None,
             controllers: Vec::new(),
             profiles: Profiles::default(),
+            profile_notice: None,
             hiding: Vec::new(),
             unopened: Vec::new(),
             not_unplugged: Vec::new(),
@@ -172,6 +180,26 @@ impl Bridging {
             .send(Command::SetProfileOutputType(profile, output_type));
     }
 
+    pub fn duplicate_profile(&self, profile: Option<String>) {
+        let _ = self.commands.send(Command::DuplicateProfile(profile));
+    }
+
+    pub fn rename_profile(&self, profile: String, name: String) {
+        let _ = self.commands.send(Command::RenameProfile(profile, name));
+    }
+
+    pub fn delete_profile(&self, profile: String) {
+        let _ = self.commands.send(Command::DeleteProfile(profile));
+    }
+
+    pub fn import_profile(&self, path: PathBuf) {
+        let _ = self.commands.send(Command::ImportProfile(path));
+    }
+
+    pub fn export_profile(&self, profile: String, path: PathBuf) {
+        let _ = self.commands.send(Command::ExportProfile(profile, path));
+    }
+
     pub fn quit(&self) {
         let _ = self.commands.send(Command::Quit);
         let thread = self
@@ -212,6 +240,7 @@ fn supervise(
     let mut not_unplugged = Vec::new();
     let mut looked: Option<Instant> = None;
     let mut unsaved = false;
+    let mut profile_notice: Option<String> = None;
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
@@ -272,6 +301,7 @@ fn supervise(
                 supervisor.choose_profile(mac, profile, now)
             }
             Ok(Command::CreateProfile(name)) => {
+                profile_notice = None;
                 let mut profiles = supervisor.profiles().clone();
                 let id = profiles.create(&name);
                 save_profile(&profiles, &id);
@@ -286,6 +316,43 @@ fn supervise(
                 edit_profile(&mut supervisor, &id, now, |profile| {
                     profile.output_type = output_type;
                 })
+            }
+            Ok(Command::DuplicateProfile(source)) => {
+                profile_notice = None;
+                let mut profiles = supervisor.profiles().clone();
+                if let Some(id) = profiles.duplicate(source.as_deref()) {
+                    save_profile(&profiles, &id);
+                }
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::RenameProfile(id, name)) => {
+                profile_notice = None;
+                let mut profiles = supervisor.profiles().clone();
+                if profiles.rename(&id, &name) {
+                    save_profile(&profiles, &id);
+                }
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::DeleteProfile(id)) => {
+                profile_notice = None;
+                unsaved = true;
+                let changes = supervisor.delete_profile(&id, now);
+                profiles_file::remove(&id);
+                changes
+            }
+            Ok(Command::ImportProfile(path)) => {
+                profile_notice = None;
+                import_profile(&mut supervisor, &path, now, &mut profile_notice)
+            }
+            Ok(Command::ExportProfile(id, path)) => {
+                profile_notice = None;
+                if let Some((_, content)) = supervisor.profiles().export(&id)
+                    && let Err(message) = profiles_file::write_export(&path, &content)
+                {
+                    log::line(&message);
+                    profile_notice = Some(message);
+                }
+                Vec::new()
             }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
@@ -337,6 +404,7 @@ fn supervise(
                 setup: Some(detected.clone()),
                 controllers,
                 profiles: supervisor.profiles().clone(),
+                profile_notice: profile_notice.clone(),
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),
@@ -358,6 +426,35 @@ fn supervise(
 fn save_profile(profiles: &Profiles, id: &str) {
     if let Some(profile) = profiles.get(id) {
         profiles_file::save(id, profile);
+    }
+}
+
+fn import_profile(
+    supervisor: &mut Supervisor,
+    path: &Path,
+    now: Instant,
+    notice: &mut Option<String>,
+) -> Vec<Change> {
+    let (content, name) = match profiles_file::read_import(path) {
+        Ok(read) => read,
+        Err(message) => {
+            log::line(&message);
+            *notice = Some(message);
+            return Vec::new();
+        }
+    };
+    let mut profiles = supervisor.profiles().clone();
+    match profiles.import(&content, &name) {
+        Ok(id) => {
+            save_profile(&profiles, &id);
+            supervisor.set_profiles(profiles, now)
+        }
+        Err(error) => {
+            let message = text::cannot_import(path, &error);
+            log::line(&message);
+            *notice = Some(message);
+            Vec::new()
+        }
     }
 }
 

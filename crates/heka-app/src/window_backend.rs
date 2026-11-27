@@ -101,6 +101,10 @@ impl Backend for WindowBackend {
             .controllers
             .iter()
             .filter_map(Notice::cannot_turn_off);
+        let profile_notice = snapshot
+            .profile_notice
+            .iter()
+            .map(|message| Notice::warning(message.clone()));
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
@@ -118,6 +122,7 @@ impl Backend for WindowBackend {
                 .chain(hiding)
                 .chain(not_unplugged)
                 .chain(not_turned_off)
+                .chain(profile_notice)
                 .collect(),
             controllers: snapshot
                 .controllers
@@ -166,6 +171,11 @@ impl Backend for WindowBackend {
             Command::SetProfileOutputType(profile, output_type) => {
                 bridging.set_profile_output_type(profile, output_type);
             }
+            Command::DuplicateProfile(profile) => bridging.duplicate_profile(profile),
+            Command::RenameProfile(profile, name) => bridging.rename_profile(profile, name),
+            Command::DeleteProfile(profile) => bridging.delete_profile(profile),
+            Command::ImportProfile(path) => bridging.import_profile(path),
+            Command::ExportProfile(profile, path) => bridging.export_profile(profile, path),
         }
     }
 

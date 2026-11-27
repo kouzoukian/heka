@@ -1765,3 +1765,106 @@ fn an_edited_profile_applies_to_the_controllers_using_it() {
 
     wait_for_buttons(&bus, 0, Buttons::TRIANGLE);
 }
+
+#[test]
+fn deleting_a_profile_sends_its_controllers_back_to_the_default_one() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    let changes = supervisor.delete_profile("racing", t0);
+
+    assert_eq!(changes, []);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    assert!(supervisor.profiles().get("racing").is_none());
+    assert_eq!(supervisor.settings().controller(mac(1)).profile, None);
+    assert_eq!(supervisor.controllers()[0].profile, None);
+    assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn a_deleted_profile_that_set_the_output_type_gives_the_controllers_own_back() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    supervisor.choose_profile(mac(1), Some("ps4".into()), t0);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+
+    let changes = supervisor.delete_profile("ps4", t0);
+
+    assert_eq!(
+        changes,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Xbox
+            },
+        ]
+    );
+    assert_eq!(bus.plugged(), 3);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert!(!supervisor.controllers()[0].output_type_from_profile);
+}
+
+#[test]
+fn deleting_a_profile_leaves_the_controllers_that_do_not_use_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let first = LinkHandle::default();
+    let second = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    supervisor.link_arrived(mac(2), second.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    supervisor.choose_profile(mac(2), Some("silent".into()), t0);
+
+    supervisor.delete_profile("racing", t0);
+
+    second.send(cross());
+    wait_for_buttons(&bus, 1, Buttons::NONE);
+    assert_eq!(
+        supervisor.settings().controller(mac(2)).profile.as_deref(),
+        Some("silent")
+    );
+}
+
+#[test]
+fn a_profile_created_after_a_delete_does_not_take_the_old_controllers() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(Profiles::default(), t0);
+    let mut profiles = supervisor.profiles().clone();
+    let id = profiles.create("Racing");
+    profiles
+        .get_mut(&id)
+        .unwrap()
+        .bind(Input::Cross, Binding::To(Output::Circle));
+    supervisor.set_profiles(profiles, t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some(id.clone()), t0);
+
+    supervisor.delete_profile(&id, t0);
+    let mut profiles = supervisor.profiles().clone();
+    let again = profiles.create("Racing");
+    profiles
+        .get_mut(&again)
+        .unwrap()
+        .bind(Input::Cross, Binding::To(Output::Circle));
+    supervisor.set_profiles(profiles, t0);
+    link.send(cross());
+
+    assert_eq!(again, id);
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+}

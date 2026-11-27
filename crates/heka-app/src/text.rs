@@ -6,7 +6,7 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
-use heka_core::profile::{Binding, Input, Output};
+use heka_core::profile::{Binding, Input, Output, ProfileError};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
@@ -524,6 +524,25 @@ pub fn output_name(output: Output) -> &'static str {
     }
 }
 
+pub fn cannot_read_import(path: &std::path::Path, error: &str) -> String {
+    format!("Cannot read {}: {error}", path.display())
+}
+
+pub fn cannot_import(path: &std::path::Path, error: &ProfileError) -> String {
+    let why = match error {
+        ProfileError::NotJson(reason) => format!("it is not JSON ({reason})"),
+        ProfileError::NotAProfile => "it is not a Profile".to_owned(),
+    };
+    format!(
+        "Cannot import {}: {why}. Nothing was changed.",
+        path.display()
+    )
+}
+
+pub fn cannot_export(path: &std::path::Path, error: &str) -> String {
+    format!("Cannot write {}: {error}", path.display())
+}
+
 pub fn binding_words(binding: Binding) -> &'static str {
     match binding {
         Binding::Default => DEFAULT,
@@ -722,6 +741,10 @@ pub mod log {
 
     pub fn profile_skipped(path: &Path) -> String {
         format!("{} is not a profile and was left out", path.display())
+    }
+
+    pub fn cannot_remove_profile(path: &Path, error: &str) -> String {
+        format!("cannot remove {}: {error}", path.display())
     }
 
     pub fn cannot_save_profile(path: &Path, error: &str) -> String {

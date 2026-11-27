@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -51,6 +52,11 @@ pub enum Command {
     CreateProfile(String),
     BindInput(String, Input, Binding),
     SetProfileOutputType(String, Option<OutputType>),
+    DuplicateProfile(Option<String>),
+    RenameProfile(String, String),
+    DeleteProfile(String),
+    ImportProfile(PathBuf),
+    ExportProfile(String, PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

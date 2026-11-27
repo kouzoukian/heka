@@ -50,3 +50,9 @@ Names are distinct, compared without regard to case, and the Default Profile's n
 - Renaming changes the name only. The file, and so the id that Controllers remember, stays.
 - Deleting a Profile clears the choice of every Controller that used it, so they use the Default Profile, and `Settings::controllers_using` tells the window how many to name beforehand. Clearing the choice, rather than leaving the id as for a missing file, keeps a later Profile that happens to get the same id from taking those Controllers over.
 - Export is the Profile's JSON under its file name. Import reads a file that is a JSON object with a `name`, `output_type` or `bindings`; anything else is refused with a reason, as not JSON or not a Profile, and changes nothing. Bindings that cannot be read are dropped as when reading the folder. DS4Windows files are not read.
+
+## Files, import and export in the app
+
+The supervisor thread does all Profile file work, so the window never waits on the disk. Duplicating and renaming write the Profile's file; renaming rewrites the name inside it and leaves the file where it is. Deleting removes the file after the Supervisor has cleared the choices, and a file that is already gone is not an error.
+
+Import and export take a path, which the window gets from the platform's file dialogs (`prompt_for_paths` and `prompt_for_new_path` in GPUI). A failure to read or write the file, or a file that is not a Profile, is logged and shown as a warning in the window until the next Profile action, and changes nothing. All of its text is in `text.rs`.

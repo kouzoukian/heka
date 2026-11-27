@@ -232,6 +232,25 @@ impl Backend for Fake {
                 }
                 return;
             }
+            Command::DuplicateProfile(id) => {
+                self.profiles.borrow_mut().duplicate(id.as_deref());
+                return;
+            }
+            Command::RenameProfile(id, name) => {
+                self.profiles.borrow_mut().rename(id, name);
+                return;
+            }
+            Command::DeleteProfile(id) => {
+                self.profiles.borrow_mut().remove(id);
+                for entry in controllers.iter_mut() {
+                    if entry.profile.as_ref() == Some(id) {
+                        entry.profile = None;
+                        entry.output_type_from_profile = false;
+                    }
+                }
+                return;
+            }
+            Command::ImportProfile(_) | Command::ExportProfile(..) => return,
             Command::ChooseProfile(mac, _) => *mac,
             Command::TestRumble(..)
             | Command::EndRumbleTest(_)
