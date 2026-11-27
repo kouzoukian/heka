@@ -1,10 +1,11 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Div, Entity, Hsla, IntoElement, KeyBinding,
-    ParentElement, Render, Result, Styled, TitlebarOptions, Window, WindowHandle, WindowOptions,
-    actions, div, prelude::FluentBuilder as _, px, size,
+    ParentElement, PathPromptOptions, Render, Result, Styled, TitlebarOptions, Window,
+    WindowHandle, WindowOptions, actions, div, prelude::FluentBuilder as _, px, size,
 };
 use gpui_component::button::Button;
 use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
@@ -15,12 +16,20 @@ use gpui_kit_assets::IconName;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
+use heka_core::profile::{Input, MAX_NAME_CHARS};
+use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
+use heka_core::shortcuts::ShortcutAction;
+use heka_core::tuning::{StickSide, TriggerSide};
 
-use crate::ui::detail::{Showing, ToggleSettings, selected_button, tool_button};
+use crate::ui::app_settings::AppView;
+use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
+use crate::ui::games::{GamesAct, GamesAction, GamesView};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
-use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
+use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand, sorted_profiles};
+use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding};
 use crate::ui::settings::Fields;
+use crate::ui::shortcuts::{ShortcutsAct, ShortcutsAction, ShortcutsView};
 use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
 
@@ -46,6 +55,7 @@ pub enum Page {
     #[default]
     Controller,
     ControllerSettings,
+    Profile,
     AppSettings,
     Log,
     About,
@@ -58,7 +68,7 @@ impl Page {
 
     pub fn of_a_controller(self) -> Self {
         match self {
-            Self::Controller | Self::ControllerSettings => self,
+            Self::Controller | Self::ControllerSettings | Self::Profile => self,
             Self::AppSettings | Self::Log | Self::About => Self::Controller,
         }
     }
@@ -108,6 +118,15 @@ struct MainView {
     colour: Entity<ColorPickerState>,
     held_colour: Lightbar,
     filled: Option<MacAddress>,
+    editing: Option<Input>,
+    rename: Entity<InputState>,
+    manage: Manage,
+    section: Section,
+    side: StickSide,
+    trigger_side: TriggerSide,
+    rule_open: Option<String>,
+    programs: Option<Vec<String>>,
+    shortcut_open: Option<ShortcutAction>,
 }
 
 impl MainView {
@@ -125,6 +144,15 @@ impl MainView {
             if let (InputEvent::Change, Some(mac)) = (event, this.filled) {
                 let typed = name.read(cx).value().to_string();
                 this.backend.command(Command::SetNickname(mac, typed));
+            }
+        })
+        .detach();
+        let rename = cx.new(|cx| {
+            InputState::new(window, cx).validate(|text, _| text.chars().count() <= MAX_NAME_CHARS)
+        });
+        cx.subscribe(&rename, |this: &mut Self, _, event: &InputEvent, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                this.commit_rename(cx);
             }
         })
         .detach();
@@ -178,6 +206,15 @@ impl MainView {
             colour,
             held_colour: Lightbar::DEFAULT,
             filled: None,
+            editing: None,
+            rename,
+            manage: Manage::Idle,
+            section: Section::default(),
+            side: StickSide::Left,
+            trigger_side: TriggerSide::Left,
+            rule_open: None,
+            programs: None,
+            shortcut_open: None,
         }
     }
 
@@ -193,6 +230,8 @@ impl MainView {
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
         self.selection.choose(mac, &self.screen.controllers);
         self.page = self.page.of_a_controller();
+        self.editing = None;
+        self.manage = Manage::Idle;
         cx.notify();
     }
 
@@ -200,8 +239,184 @@ impl MainView {
         self.show(self.page.toggled(page), cx);
     }
 
+    fn toggle_binding(&mut self, input: Input, cx: &mut Context<Self>) {
+        self.editing = if self.editing == Some(input) {
+            None
+        } else {
+            Some(input)
+        };
+        cx.notify();
+    }
+
+    fn chosen_profile(&self) -> Option<String> {
+        self.selection
+            .shown(&self.screen.controllers)
+            .and_then(|entry| entry.profile.clone())
+    }
+
+    fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        if let Manage::Renaming(id) = std::mem::take(&mut self.manage) {
+            let name = self.rename.read(cx).value().to_string();
+            self.backend.command(Command::RenameProfile(id, name));
+        }
+        cx.notify();
+    }
+
+    fn profile_action(
+        &mut self,
+        action: ProfileAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = self.chosen_profile();
+        match action {
+            ProfileAction::Show(section) => {
+                self.section = section;
+                self.editing = None;
+            }
+            ProfileAction::Side(side) => self.side = side,
+            ProfileAction::TriggerSide(side) => self.trigger_side = side,
+            ProfileAction::Duplicate => {
+                self.manage = Manage::Idle;
+                self.backend.command(Command::DuplicateProfile(chosen));
+            }
+            ProfileAction::StartRename => {
+                if let Some(id) = chosen {
+                    let name = self
+                        .screen
+                        .profiles
+                        .iter()
+                        .find(|profile| profile.id == id)
+                        .map(|profile| profile.profile.name.clone())
+                        .unwrap_or_default();
+                    self.rename
+                        .update(cx, |input, cx| input.set_value(name, window, cx));
+                    self.manage = Manage::Renaming(id);
+                }
+            }
+            ProfileAction::CommitRename => self.commit_rename(cx),
+            ProfileAction::AskDelete => {
+                if let Some(id) = chosen {
+                    self.manage = Manage::ConfirmingDelete(id);
+                }
+            }
+            ProfileAction::ConfirmDelete => {
+                if let Manage::ConfirmingDelete(id) = std::mem::take(&mut self.manage) {
+                    self.backend.command(Command::DeleteProfile(id));
+                }
+            }
+            ProfileAction::Cancel => self.manage = Manage::Idle,
+            ProfileAction::Import => self.import_profile(cx),
+            ProfileAction::Export => {
+                if let Some(id) = chosen {
+                    self.export_profile(id, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn import_profile(&self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(text::IMPORT_PROMPT.into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = chosen.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let _ = this.update(cx, |this, _| {
+                    this.backend.command(Command::ImportProfile(path));
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn export_profile(&self, id: String, cx: &mut Context<Self>) {
+        let directory = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let name = Profiles::file_name(&id);
+        let chosen = cx.prompt_for_new_path(&directory, Some(&name));
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(path))) = chosen.await {
+                let _ = this.update(cx, |this, _| {
+                    this.backend.command(Command::ExportProfile(id, path));
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn games_action(&mut self, action: GamesAction, cx: &mut Context<Self>) {
+        match action {
+            GamesAction::OpenRule(program) => {
+                self.rule_open = if self.rule_open.as_deref() == Some(program.as_str()) {
+                    None
+                } else {
+                    Some(program)
+                };
+            }
+            GamesAction::OpenAdd => {
+                self.programs = match self.programs {
+                    Some(_) => None,
+                    None => Some(self.backend.running_programs()),
+                };
+            }
+            GamesAction::CloseAdd => self.programs = None,
+            GamesAction::ChooseFile => self.choose_program_file(cx),
+        }
+        cx.notify();
+    }
+
+    fn shortcuts_action(&mut self, action: ShortcutsAction, cx: &mut Context<Self>) {
+        let ShortcutsAction::Toggle(action) = action;
+        self.shortcut_open = if self.shortcut_open == Some(action) {
+            None
+        } else {
+            Some(action)
+        };
+        cx.notify();
+    }
+
+    fn choose_program_file(&self, cx: &mut Context<Self>) {
+        let Some(profile) = sorted_profiles(&self.screen.profiles)
+            .first()
+            .map(|profile| profile.id.clone())
+        else {
+            return;
+        };
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(text::CHOOSE_PROGRAM_PROMPT.into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = chosen.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let _ = this.update(cx, |this, cx| {
+                    let program = path.to_string_lossy().into_owned();
+                    this.backend.command(Command::AddGameRule(program, profile));
+                    this.programs = None;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
+        self.editing = None;
+        self.rule_open = None;
+        self.programs = None;
+        self.shortcut_open = None;
+        self.manage = Manage::Idle;
         self.leave_settings();
         cx.notify();
     }
@@ -274,13 +489,58 @@ impl MainView {
                 view.toggle_page(Page::ControllerSettings, cx)
             });
         });
+        let view = cx.weak_entity();
+        let toggle_profile: ToggleSettings = Rc::new(move |_, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.toggle_page(Page::Profile, cx));
+        });
+        let toggles = Toggles {
+            settings: toggle_settings,
+            profile: toggle_profile,
+        };
+        let view = cx.weak_entity();
+        let toggle_binding: ToggleBinding = Rc::new(move |input, _, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.toggle_binding(input, cx));
+        });
+        let view = cx.weak_entity();
+        let act: ProfileAct = Rc::new(move |action, window: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.profile_action(action, window, cx));
+        });
+        let view = cx.weak_entity();
+        let games_act: GamesAct = Rc::new(move |action, _: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.games_action(action, cx));
+        });
+        let view = cx.weak_entity();
+        let shortcuts_act: ShortcutsAct = Rc::new(move |action, _: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.shortcuts_action(action, cx));
+        });
         let showing = match self.page {
             Page::Controller => Showing::Live,
             Page::ControllerSettings => Showing::ControllerSettings(Fields {
                 name: &self.name,
                 colour: &self.colour,
             }),
-            Page::AppSettings => Showing::AppSettings(self.screen.app),
+            Page::Profile => Showing::Profile(ProfileView {
+                editing: self.editing,
+                section: self.section,
+                side: self.side,
+                trigger_side: self.trigger_side,
+                manage: self.manage.clone(),
+                rename: &self.rename,
+                toggle: toggle_binding,
+                act,
+            }),
+            Page::AppSettings => Showing::AppSettings(AppView {
+                entry: self.screen.app,
+                games: GamesView {
+                    rule_open: self.rule_open.as_deref(),
+                    programs: self.programs.as_deref(),
+                    act: games_act,
+                },
+                shortcuts: ShortcutsView {
+                    open: self.shortcut_open,
+                    act: shortcuts_act,
+                },
+            }),
             Page::Log => Showing::Log(&self.screen.log),
             Page::About => Showing::About,
         };
@@ -297,7 +557,7 @@ impl MainView {
                 &self.screen,
                 entry,
                 showing,
-                &toggle_settings,
+                &toggles,
                 &send,
                 cx,
             ))

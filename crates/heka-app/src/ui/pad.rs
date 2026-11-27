@@ -50,6 +50,7 @@ impl PadModel {
             right_stick,
             left_trigger,
             right_trigger,
+            fine_sticks: _,
             touch,
             battery: _,
             motion: _,

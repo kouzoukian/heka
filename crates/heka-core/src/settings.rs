@@ -23,6 +23,8 @@ pub struct ControllerSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub idle_time: Option<IdleTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     #[serde(flatten)]
     pub preferences: Preferences,
 }
@@ -48,6 +50,7 @@ impl Settings {
                 let mac = mac.parse().ok()?;
                 let mut entry = ControllerSettings::deserialize(entry).ok()?;
                 entry.nickname = entry.nickname.as_deref().and_then(nickname);
+                entry.profile = entry.profile.filter(|id| !id.is_empty());
                 Some((mac, entry))
             })
             .collect();
@@ -98,6 +101,36 @@ impl Settings {
 
     pub fn set_idle_time(&mut self, mac: MacAddress, idle_time: Option<IdleTime>) {
         self.controllers.entry(mac).or_default().idle_time = idle_time;
+    }
+
+    pub fn set_profile(&mut self, mac: MacAddress, profile: Option<String>) {
+        self.controllers.entry(mac).or_default().profile = profile.filter(|id| !id.is_empty());
+    }
+
+    pub fn controllers_using(&self, profile: &str) -> Vec<MacAddress> {
+        self.controllers
+            .iter()
+            .filter(|(_, settings)| settings.profile.as_deref() == Some(profile))
+            .map(|(&mac, _)| mac)
+            .collect()
+    }
+
+    pub fn profile_users(&self) -> BTreeMap<String, usize> {
+        let mut users = BTreeMap::new();
+        for settings in self.controllers.values() {
+            if let Some(profile) = &settings.profile {
+                *users.entry(profile.clone()).or_insert(0) += 1;
+            }
+        }
+        users
+    }
+
+    pub fn forget_profile(&mut self, profile: &str) -> usize {
+        let users = self.controllers_using(profile);
+        for mac in &users {
+            self.set_profile(*mac, None);
+        }
+        users.len()
     }
 
     pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {

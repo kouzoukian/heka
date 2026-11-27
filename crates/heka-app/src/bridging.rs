@@ -1,10 +1,13 @@
+use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use heka_app::report::Reporter;
+use heka_app::ui::model::controller_name;
 use heka_app::{log, text};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
@@ -15,20 +18,25 @@ use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::PreferenceChange;
+use heka_core::profile::{Binding, Input, Profile};
+use heka_core::profiles::Profiles;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
 use heka_windows::drivers::InstalledDrivers;
+use heka_windows::foreground;
 use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
 
-use crate::settings_file;
+use crate::{profiles_file, settings_file};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const LOG_FLUSH: Duration = Duration::from_secs(1);
+const FOREGROUND_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -42,6 +50,11 @@ pub struct Snapshot {
     pub status: Status,
     pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
+    pub profiles: Profiles,
+    pub profile_notice: Option<String>,
+    pub profile_users: BTreeMap<String, usize>,
+    pub shortcut_notice: Option<(Instant, String)>,
+    pub foreground_unreadable: bool,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
     pub not_unplugged: Vec<String>,
@@ -59,6 +72,18 @@ enum Command {
     SetIdleTime(MacAddress, Option<IdleTime>),
     CheckDrivers,
     SetAppSettings(AppSettings),
+    ChooseProfile(MacAddress, Option<String>),
+    CreateProfile(String),
+    BindInput(String, Input, Binding),
+    SetProfileOutputType(String, Option<OutputType>),
+    DuplicateProfile(Option<String>),
+    RenameProfile(String, String),
+    DeleteProfile(String),
+    ImportProfile(PathBuf),
+    ExportProfile(String, PathBuf),
+    ChangeStick(String, StickSide, StickChange),
+    SetSwapSticks(String, bool),
+    ChangeTrigger(String, TriggerSide, TriggerChange),
     Quit,
 }
 
@@ -69,12 +94,17 @@ pub struct Bridging {
 }
 
 impl Bridging {
-    pub fn start(settings: Settings) -> Self {
+    pub fn start(settings: Settings, profiles: Profiles) -> Self {
         let (commands, inbox) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: Status::Starting,
             setup: None,
             controllers: Vec::new(),
+            profiles: Profiles::default(),
+            profile_notice: None,
+            profile_users: BTreeMap::new(),
+            shortcut_notice: None,
+            foreground_unreadable: false,
             hiding: Vec::new(),
             unopened: Vec::new(),
             not_unplugged: Vec::new(),
@@ -83,7 +113,7 @@ impl Bridging {
             .name("heka-supervisor".into())
             .spawn({
                 let snapshot = Arc::clone(&snapshot);
-                move || supervise(settings, &inbox, &snapshot)
+                move || supervise(settings, profiles, &inbox, &snapshot)
             })
             .expect("failed to start the supervisor thread");
         Self {
@@ -144,6 +174,62 @@ impl Bridging {
         let _ = self.commands.send(Command::SetAppSettings(app));
     }
 
+    pub fn choose_profile(&self, mac: MacAddress, profile: Option<String>) {
+        let _ = self.commands.send(Command::ChooseProfile(mac, profile));
+    }
+
+    pub fn create_profile(&self, name: String) {
+        let _ = self.commands.send(Command::CreateProfile(name));
+    }
+
+    pub fn bind_input(&self, profile: String, input: Input, binding: Binding) {
+        let _ = self
+            .commands
+            .send(Command::BindInput(profile, input, binding));
+    }
+
+    pub fn set_profile_output_type(&self, profile: String, output_type: Option<OutputType>) {
+        let _ = self
+            .commands
+            .send(Command::SetProfileOutputType(profile, output_type));
+    }
+
+    pub fn duplicate_profile(&self, profile: Option<String>) {
+        let _ = self.commands.send(Command::DuplicateProfile(profile));
+    }
+
+    pub fn rename_profile(&self, profile: String, name: String) {
+        let _ = self.commands.send(Command::RenameProfile(profile, name));
+    }
+
+    pub fn delete_profile(&self, profile: String) {
+        let _ = self.commands.send(Command::DeleteProfile(profile));
+    }
+
+    pub fn import_profile(&self, path: PathBuf) {
+        let _ = self.commands.send(Command::ImportProfile(path));
+    }
+
+    pub fn export_profile(&self, profile: String, path: PathBuf) {
+        let _ = self.commands.send(Command::ExportProfile(profile, path));
+    }
+
+    pub fn change_stick(&self, profile: String, side: StickSide, change: StickChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeStick(profile, side, change));
+    }
+
+    pub fn set_swap_sticks(&self, profile: String, swap: bool) {
+        let _ = self.commands.send(Command::SetSwapSticks(profile, swap));
+    }
+
+    pub fn change_trigger(&self, profile: String, side: TriggerSide, change: TriggerChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeTrigger(profile, side, change));
+    }
+
     pub fn quit(&self) {
         let _ = self.commands.send(Command::Quit);
         let thread = self
@@ -164,10 +250,16 @@ impl Drop for Bridging {
     }
 }
 
-fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
+fn supervise(
+    settings: Settings,
+    profiles: Profiles,
+    inbox: &mpsc::Receiver<Command>,
+    snapshot: &Mutex<Snapshot>,
+) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
     let mut supervisor =
         Supervisor::without_bus(settings).turning_off_with(Box::new(BluetoothRadios));
+    supervisor.set_profiles(profiles, Instant::now());
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     log_all(text::log::drivers(&detected));
     follow(&mut hider, &changes);
@@ -178,6 +270,11 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
     let mut not_unplugged = Vec::new();
     let mut looked: Option<Instant> = None;
     let mut unsaved = false;
+    let mut profile_notice: Option<String> = None;
+    let mut next_foreground = Instant::now();
+    let mut watching_foreground = false;
+    let mut foreground_unreadable = false;
+    let mut shortcut_notice: Option<(Instant, String)> = None;
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
@@ -233,6 +330,79 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
                 supervisor.set_app_settings(app);
                 Vec::new()
             }
+            Ok(Command::ChooseProfile(mac, profile)) => {
+                unsaved = true;
+                supervisor.choose_profile(mac, profile, now)
+            }
+            Ok(Command::CreateProfile(name)) => {
+                profile_notice = None;
+                let mut profiles = supervisor.profiles().clone();
+                let id = profiles.create(&name);
+                save_profile(&profiles, &id);
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::BindInput(id, input, binding)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.bind(input, binding);
+                })
+            }
+            Ok(Command::SetProfileOutputType(id, output_type)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.output_type = output_type;
+                })
+            }
+            Ok(Command::DuplicateProfile(source)) => {
+                profile_notice = None;
+                let mut profiles = supervisor.profiles().clone();
+                if let Some(id) = profiles.duplicate(source.as_deref()) {
+                    save_profile(&profiles, &id);
+                }
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::RenameProfile(id, name)) => {
+                profile_notice = None;
+                let mut profiles = supervisor.profiles().clone();
+                if profiles.rename(&id, &name) {
+                    save_profile(&profiles, &id);
+                }
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::DeleteProfile(id)) => {
+                profile_notice = None;
+                unsaved = true;
+                let changes = supervisor.delete_profile(&id, now);
+                profiles_file::remove(&id);
+                changes
+            }
+            Ok(Command::ImportProfile(path)) => {
+                profile_notice = None;
+                import_profile(&mut supervisor, &path, now, &mut profile_notice)
+            }
+            Ok(Command::ExportProfile(id, path)) => {
+                profile_notice = None;
+                if let Some((_, content)) = supervisor.profiles().export(&id)
+                    && let Err(message) = profiles_file::write_export(&path, &content)
+                {
+                    log::line(&message);
+                    profile_notice = Some(message);
+                }
+                Vec::new()
+            }
+            Ok(Command::ChangeStick(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_stick(side, change);
+                })
+            }
+            Ok(Command::SetSwapSticks(id, swap)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.swap_sticks = swap;
+                })
+            }
+            Ok(Command::ChangeTrigger(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_trigger(side, change);
+                })
+            }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
                 detected = found;
@@ -242,6 +412,23 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
             Err(RecvTimeoutError::Timeout) => Vec::new(),
         };
         follow(&mut hider, &changes);
+
+        if now >= next_foreground {
+            next_foreground = now + FOREGROUND_POLL;
+            let has_rules = !supervisor.settings().app().game_rules.is_empty();
+            if has_rules || watching_foreground {
+                let seen = if has_rules {
+                    foreground::foreground()
+                } else {
+                    foreground::Foreground::Nothing
+                };
+                foreground_unreadable = seen.is_unreadable();
+                let changes =
+                    supervisor.set_foreground(seen.as_front(), &foreground::is_running, now);
+                follow(&mut hider, &changes);
+                watching_foreground = has_rules;
+            }
+        }
 
         let due = looked.is_none_or(|at| now.duration_since(at) >= POLL_INTERVAL);
         if !burst || due {
@@ -269,6 +456,17 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
             hider.warnings()
         };
         let controllers = supervisor.controllers();
+        for note in supervisor.take_shortcut_notes() {
+            let name = controllers
+                .iter()
+                .find(|view| view.mac == note.mac)
+                .map(controller_name)
+                .unwrap_or_default();
+            let words =
+                text::shortcut_profile(&name, note.name.as_deref(), note.under_rule.as_deref());
+            log::line(&words);
+            shortcut_notice = Some((now, words));
+        }
         log_all(reporter.controllers(&controllers));
         log_all(reporter.hiding(&hiding));
         match &status {
@@ -282,6 +480,11 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
                 status: status.clone(),
                 setup: Some(detected.clone()),
                 controllers,
+                profiles: supervisor.profiles().clone(),
+                profile_notice: profile_notice.clone(),
+                profile_users: supervisor.settings().profile_users(),
+                shortcut_notice: shortcut_notice.clone(),
+                foreground_unreadable,
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),
@@ -298,6 +501,56 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
         log::line(&text::log::cannot_restore_on_quit(&error));
     }
     log_hiding_changes(&mut hider);
+}
+
+fn save_profile(profiles: &Profiles, id: &str) {
+    if let Some(profile) = profiles.get(id) {
+        profiles_file::save(id, profile);
+    }
+}
+
+fn import_profile(
+    supervisor: &mut Supervisor,
+    path: &Path,
+    now: Instant,
+    notice: &mut Option<String>,
+) -> Vec<Change> {
+    let (content, name) = match profiles_file::read_import(path) {
+        Ok(read) => read,
+        Err(message) => {
+            log::line(&message);
+            *notice = Some(message);
+            return Vec::new();
+        }
+    };
+    let mut profiles = supervisor.profiles().clone();
+    match profiles.import(&content, &name) {
+        Ok(id) => {
+            save_profile(&profiles, &id);
+            supervisor.set_profiles(profiles, now)
+        }
+        Err(error) => {
+            let message = text::cannot_import(path, &error);
+            log::line(&message);
+            *notice = Some(message);
+            Vec::new()
+        }
+    }
+}
+
+fn edit_profile(
+    supervisor: &mut Supervisor,
+    id: &str,
+    now: Instant,
+    change: impl FnOnce(&mut Profile),
+) -> Vec<Change> {
+    let mut profiles = supervisor.profiles().clone();
+    let Some(profile) = profiles.get_mut(id) else {
+        return Vec::new();
+    };
+    change(profile);
+    save_profile(&profiles, id);
+    supervisor.set_profiles(profiles, now)
 }
 
 fn publish(snapshot: &Mutex<Snapshot>, latest: Snapshot) {

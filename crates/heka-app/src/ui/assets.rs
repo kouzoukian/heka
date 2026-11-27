@@ -8,15 +8,20 @@ use heka_core::state::{Battery, Charge};
 icon_assets!(
     ExtraIcons,
     [
+        AppWindow,
         Bluetooth,
         CircleArrowUp,
         Gamepad2,
+        Layers,
         Palette,
+        Pencil,
         Power,
         ScrollText,
         SlidersHorizontal,
+        Trash,
         Unplug,
-        Usb
+        Usb,
+        X
     ]
 );
 

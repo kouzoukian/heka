@@ -13,42 +13,51 @@ use heka_core::virtual_controller::OutputType;
 use crate::log::Recent;
 use crate::text;
 use crate::ui::about::about;
-use crate::ui::app_settings::app_settings;
+use crate::ui::app_settings::{AppView, app_settings};
 use crate::ui::assets::{battery_icon, link_icon};
 use crate::ui::banners::{clamped, notice_banner, release_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
 use crate::ui::log;
 use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
-use crate::ui::model::{AppEntry, Command, ControllerEntry, EntryState, Screen, SendCommand};
+use crate::ui::model::{Command, ControllerEntry, EntryState, Screen, SendCommand};
 use crate::ui::panel::{entry_color, faint};
+use crate::ui::profile::{ProfileView, profile_page};
+use crate::ui::rules::rule_strip;
 use crate::ui::segmented::{Segment, segmented};
 use crate::ui::settings::{Fields, settings};
 
 pub enum Showing<'a> {
     Live,
     ControllerSettings(Fields<'a>),
-    AppSettings(AppEntry),
+    Profile(ProfileView<'a>),
+    AppSettings(AppView<'a>),
     Log(&'a Recent),
     About,
 }
 
 pub type ToggleSettings = Rc<dyn Fn(&mut Window, &mut App)>;
 
+pub struct Toggles {
+    pub settings: ToggleSettings,
+    pub profile: ToggleSettings,
+}
+
 pub fn pane(
     screen: &Screen,
     entry: Option<&ControllerEntry>,
     showing: Showing,
-    toggle_settings: &ToggleSettings,
+    toggles: &Toggles,
     send: &SendCommand,
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
     let in_settings = matches!(showing, Showing::ControllerSettings(_));
+    let in_profile = matches!(showing, Showing::Profile(_));
     let tabs = match &showing {
-        Showing::Live | Showing::ControllerSettings(_) => tab_strip(
+        Showing::Live | Showing::ControllerSettings(_) | Showing::Profile(_) => tab_strip(
             entry.map(|entry| controller_tab(entry, theme)),
             entry.map_or_else(Vec::new, |entry| {
-                controller_buttons(entry, in_settings, toggle_settings, send, theme)
+                controller_buttons(entry, in_settings, in_profile, toggles, send, theme)
             }),
             theme,
         ),
@@ -77,6 +86,7 @@ pub fn pane(
             .min_h_0()
             .overflow_y_scroll()
     };
+    let fixed = || div().id("pane").flex().flex_col().flex_1().min_h_0();
     let controller = |body: Stateful<Div>| {
         body.children(
             screen
@@ -88,16 +98,20 @@ pub fn pane(
     let body = match (entry, showing) {
         (_, Showing::Log(recent)) => log::entries(recent, cx).into_any_element(),
         (_, Showing::About) => scrolling().child(about(cx)).into_any_element(),
-        (_, Showing::AppSettings(app)) => scrolling()
-            .child(app_settings(app, send, cx))
+        (_, Showing::AppSettings(view)) => scrolling()
+            .child(app_settings(&view, screen, send, cx))
             .into_any_element(),
         (Some(entry), Showing::Live) => controller(scrolling())
+            .children(rule_strip(screen, entry, theme))
             .child(properties(entry, send, cx))
             .children(entry.detail().map(|detail| note(entry, detail, cx)))
             .child(drawing(entry.output_type, entry.pad, cx))
             .into_any_element(),
         (Some(entry), Showing::ControllerSettings(fields)) => controller(scrolling())
             .child(settings(entry, fields, send, cx))
+            .into_any_element(),
+        (Some(entry), Showing::Profile(view)) => controller(fixed())
+            .child(profile_page(screen, entry, &view, send, cx))
             .into_any_element(),
         (None, _) => controller(scrolling())
             .child(empty_state(screen.starting, cx))
@@ -197,14 +211,24 @@ fn settings_button(in_settings: bool, toggle: &ToggleSettings, theme: &Theme) ->
     selected_button(button, in_settings, theme).on_click(move |_, window, cx| toggle(window, cx))
 }
 
+fn profile_button(in_profile: bool, toggle: &ToggleSettings, theme: &Theme) -> Button {
+    let toggle = Rc::clone(toggle);
+    let button = tool_button("controller-profile", IconName::Layers, text::PROFILE);
+    selected_button(button, in_profile, theme).on_click(move |_, window, cx| toggle(window, cx))
+}
+
 fn controller_buttons(
     entry: &ControllerEntry,
     in_settings: bool,
-    toggle_settings: &ToggleSettings,
+    in_profile: bool,
+    toggles: &Toggles,
     send: &SendCommand,
     theme: &Theme,
 ) -> Vec<Button> {
-    let mut buttons = vec![settings_button(in_settings, toggle_settings, theme)];
+    let mut buttons = vec![
+        profile_button(in_profile, &toggles.profile, theme),
+        settings_button(in_settings, &toggles.settings, theme),
+    ];
     buttons.extend(turn_off(entry, send));
     buttons.push(toggle(entry, send));
     buttons
@@ -314,9 +338,17 @@ fn facts(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
                 ),
         )
         .child(
-            cell("output", text::OUTPUT_TYPE.into())
-                .flex_none()
-                .child(output_switch(entry, send, theme)),
+            cell(
+                "output",
+                if entry.output_type_from_profile {
+                    text::OUTPUT_SET_BY_PROFILE
+                } else {
+                    text::OUTPUT_TYPE
+                }
+                .into(),
+            )
+            .flex_none()
+            .child(output_switch(entry, send, theme)),
         )
 }
 

@@ -6,7 +6,7 @@ use heka_app::log::{Entry, Recent};
 use heka_app::text;
 use heka_app::ui::assets::Assets;
 use heka_app::ui::model::{
-    AppEntry, Backend, Command, ControllerEntry, EntryState, Notice, Screen,
+    AppEntry, Backend, Command, ControllerEntry, EntryState, Notice, ProfileEntry, Screen,
 };
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view::{self, Page};
@@ -17,6 +17,7 @@ use heka_core::lifecycle::Change;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
+use heka_core::profiles::Profiles;
 use heka_core::release::Version;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
@@ -29,6 +30,7 @@ const REPORT_EVERY: Duration = Duration::from_secs(2);
 struct Fake {
     started: Instant,
     controllers: RefCell<Vec<ControllerEntry>>,
+    profiles: RefCell<Profiles>,
     missing: RefCell<Vec<Missing>>,
     samples: RefCell<(u32, Instant)>,
     log: Recent,
@@ -51,7 +53,14 @@ impl Fake {
             has_bluetooth: active_link == Some(LinkKind::Bluetooth),
             idle_time: None,
             battery,
+            raw_sticks: None,
+            raw_triggers: None,
+            report_rate: None,
             output_type,
+            profile: None,
+            applied_profile: None,
+            rule_program: None,
+            output_type_from_profile: false,
             state,
             bus_missing: missing,
             error: None,
@@ -117,6 +126,7 @@ impl Fake {
         Self {
             started: now,
             controllers: RefCell::new(controllers),
+            profiles: RefCell::new(Profiles::default()),
             missing: RefCell::new(missing),
             samples: RefCell::new((0, now)),
             log: made_up_log(),
@@ -148,6 +158,9 @@ impl Backend for Fake {
         for entry in &mut controllers {
             if entry.active_link.is_some() {
                 entry.pad = Some(moving_pad(t));
+                entry.raw_sticks = entry.pad.map(|pad| [pad.left_stick, pad.right_stick]);
+                entry.raw_triggers = entry.pad.map(|pad| [pad.left_trigger, pad.right_trigger]);
+                entry.report_rate = Some(250);
             }
             if let EntryState::Held { .. } = entry.state {
                 entry.state = EntryState::Held {
@@ -155,17 +168,40 @@ impl Backend for Fake {
                 };
             }
         }
+        let applying = self.app.borrow().game_rules.iter().next().cloned();
+        for entry in &mut controllers {
+            entry.rule_program = applying.as_ref().map(|rule| rule.program.clone());
+            entry.applied_profile = applying.as_ref().map(|rule| rule.profile.clone());
+        }
         let missing = self.missing.borrow().clone();
         let notices = if controllers.is_empty() || !missing.is_empty() {
             Vec::new()
         } else {
             vec![Notice::warning(text::not_hidden("made-up warning"))]
         };
+        let profiles = self
+            .profiles
+            .borrow()
+            .list()
+            .map(|(id, profile)| ProfileEntry {
+                id: id.to_owned(),
+                profile: profile.clone(),
+                users: controllers
+                    .iter()
+                    .filter(|entry| entry.profile.as_deref() == Some(id))
+                    .count(),
+            })
+            .collect();
         Screen {
             starting: false,
             missing,
             notices,
             controllers,
+            profiles,
+            game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            shortcuts: self.app.borrow().shortcuts,
+            rule_applies: applying.map(|rule| rule.program),
+            foreground_unreadable: false,
             log: Recent::clone(&self.log),
             app: AppEntry {
                 start_with_windows: self.start_with_windows.get(),
@@ -202,6 +238,79 @@ impl Backend for Fake {
                 self.app.borrow_mut().window = Some(placement.clone());
                 return;
             }
+            Command::CreateProfile(name) => {
+                self.profiles.borrow_mut().create(name);
+                return;
+            }
+            Command::BindInput(id, input, binding) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.bind(*input, *binding);
+                }
+                return;
+            }
+            Command::SetProfileOutputType(id, output_type) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.output_type = *output_type;
+                }
+                return;
+            }
+            Command::DuplicateProfile(id) => {
+                self.profiles.borrow_mut().duplicate(id.as_deref());
+                return;
+            }
+            Command::RenameProfile(id, name) => {
+                self.profiles.borrow_mut().rename(id, name);
+                return;
+            }
+            Command::DeleteProfile(id) => {
+                self.profiles.borrow_mut().remove(id);
+                for entry in controllers.iter_mut() {
+                    if entry.profile.as_ref() == Some(id) {
+                        entry.profile = None;
+                        entry.output_type_from_profile = false;
+                    }
+                }
+                return;
+            }
+            Command::ChangeStick(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_stick(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeShortcut(change) => {
+                self.app.borrow_mut().shortcuts.change(*change);
+                return;
+            }
+            Command::AddGameRule(program, profile) => {
+                self.app.borrow_mut().game_rules.add(program, profile);
+                return;
+            }
+            Command::SetGameRule(program, profile) => {
+                self.app
+                    .borrow_mut()
+                    .game_rules
+                    .set_profile(program, profile);
+                return;
+            }
+            Command::RemoveGameRule(program) => {
+                self.app.borrow_mut().game_rules.remove(program);
+                return;
+            }
+            Command::ChangeTrigger(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_trigger(*side, *change);
+                }
+                return;
+            }
+            Command::SetSwapSticks(id, swap) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.swap_sticks = *swap;
+                }
+                return;
+            }
+            Command::ImportProfile(_) | Command::ExportProfile(..) => return,
+            Command::ChooseProfile(mac, _) => *mac,
             Command::TestRumble(..)
             | Command::EndRumbleTest(_)
             | Command::OpenLogFolder
@@ -232,12 +341,25 @@ impl Backend for Fake {
             Command::ChangePreference(_, change) => entry.preferences.change(change),
             Command::TurnOff(mac) => controllers.retain(|entry| entry.mac != mac),
             Command::SetIdleTime(_, idle_time) => entry.idle_time = idle_time,
+            Command::ChooseProfile(_, profile) => {
+                entry.output_type_from_profile = profile
+                    .as_ref()
+                    .and_then(|id| self.profiles.borrow().get(id).and_then(|p| p.output_type))
+                    .is_some();
+                entry.profile = profile;
+            }
             _ => {}
         }
     }
 
     fn window_placement(&self) -> Option<WindowPlacement> {
         self.app.borrow().window.clone()
+    }
+
+    fn running_programs(&self) -> Vec<String> {
+        ["hades2.exe", "steam.exe", "witcher3.exe"]
+            .map(String::from)
+            .to_vec()
     }
 }
 

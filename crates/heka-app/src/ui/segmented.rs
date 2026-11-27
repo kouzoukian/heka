@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Div, IntoElement, ParentElement, Pixels, SharedString, Styled, div,
+    AnyElement, App, Div, IntoElement, ParentElement, Pixels, SharedString, Styled, Window, div,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
@@ -119,4 +119,38 @@ pub fn segmented(
         .border_color(theme.border)
         .rounded(theme.radius)
         .children(segments)
+}
+
+pub type Pick = Rc<dyn Fn(&mut Window, &mut App)>;
+
+pub fn picked(
+    items: impl IntoIterator<Item = (SharedString, &'static str, bool, Pick)>,
+    theme: &Theme,
+) -> Div {
+    let buttons = items.into_iter().map(|(id, words, selected, pick)| {
+        Button::new(id)
+            .ghost()
+            .selected(selected)
+            .h(segment_height())
+            .px(GAP)
+            .rounded(px(3.))
+            .map(|this| {
+                if selected {
+                    this.bg(theme.accent).text_color(theme.accent_foreground)
+                } else {
+                    this.text_color(theme.muted_foreground)
+                }
+            })
+            .accessibility_label(words)
+            .child(div().text_size(SMALL_TEXT).child(words))
+            .on_click(move |_, window, cx| pick(window, cx))
+    });
+    div()
+        .flex()
+        .gap(px(2.))
+        .p(px(BOX_PADDING))
+        .border(px(BOX_BORDER))
+        .border_color(theme.border)
+        .rounded(theme.radius)
+        .children(buttons)
 }

@@ -6,10 +6,12 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
+use heka_core::profile::{Binding, Input, Output, ProfileError};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
 use heka_core::supervisor::BridgeError;
+use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
 
 pub const APP_NAME: &str = "heka";
@@ -458,6 +460,228 @@ pub const NOTICES_TIP: &str =
     "The licenses of everything built into heka.exe, in the file beside it.";
 pub const ROW_SOURCE: &str = "Source";
 
+pub const PROFILE: &str = "Profile";
+pub const GROUP_PROFILES: &str = "Profiles";
+pub const GROUP_BINDINGS: &str = "Bindings";
+pub const DEFAULT_PROFILE: &str = "Default";
+pub const NEW_PROFILE: &str = "New Profile";
+pub const DEFAULT_PROFILE_FIXED: &str = "The Default Profile cannot be changed. Choose another Profile, or make a new one, to remap buttons.";
+pub const ROW_PROFILE_OUTPUT: &str = "Output Type";
+pub const PROFILE_OUTPUT_TIP: &str = "The Output Type while this Profile is chosen";
+pub const OUTPUT_OWN: &str = "Controller's own";
+pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
+pub const BINDING_NOTHING: &str = "Nothing";
+pub const SECTION_PROFILES: &str = "Profiles";
+pub const SECTION_BUTTONS: &str = "Buttons";
+pub const SECTION_STICKS: &str = "Sticks";
+pub const SIDE_LEFT: &str = "Left stick";
+pub const SIDE_RIGHT: &str = "Right stick";
+pub const ROW_DEAD_ZONE: &str = "Dead zone";
+pub const DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing";
+pub const ROW_ANTI_DEAD_ZONE: &str = "Anti-dead zone";
+pub const ANTI_DEAD_ZONE_TIP: &str =
+    "Where the smallest movement starts, for games with a dead zone of their own";
+pub const ROW_MAX_ZONE: &str = "Max zone";
+pub const MAX_ZONE_TIP: &str = "Travel at which the stick counts as fully pushed";
+pub const ROW_SENSITIVITY: &str = "Sensitivity";
+pub const SENSITIVITY_TIP: &str = "How far the stick's travel is stretched";
+pub const ROW_CURVE: &str = "Curve";
+pub const CURVE_TIP: &str = "How the travel is shaped between the centre and the edge";
+pub const ROW_INVERT_X: &str = "Invert X";
+pub const ROW_INVERT_Y: &str = "Invert Y";
+pub const ROW_SWAP_STICKS: &str = "Swap sticks";
+pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub const GROUP_SHORTCUTS: &str = "Shortcuts";
+pub const ROW_SHORTCUTS: &str = "Controller shortcuts";
+pub const SHORTCUTS_NOTE: &str = "Hold PS and press a button. PS on its own works as before.";
+pub const SHORTCUTS_TURN_OFF_NOTE: &str =
+    "Turning off needs a two-second hold, for a Controller on Bluetooth.";
+pub const SHORTCUTS_HIDDEN_NOTE: &str =
+    "The other button does not reach the game while a shortcut is recognised.";
+pub const ROW_NEXT_PROFILE: &str = "Next Profile";
+pub const ROW_PREVIOUS_PROFILE: &str = "Previous Profile";
+pub const ROW_SHORTCUT_TURN_OFF: &str = "Turn off";
+pub const NO_BUTTON: &str = "No button";
+
+pub fn shortcut_choice(input: Option<Input>) -> String {
+    match input {
+        Some(input) => format!("PS + {}", input_name(input)),
+        None => NO_BUTTON.to_owned(),
+    }
+}
+
+pub fn shortcut_profile(controller: &str, profile: Option<&str>, rule: Option<&str>) -> String {
+    let profile = profile.unwrap_or(DEFAULT_PROFILE);
+    match rule {
+        Some(program) => format!(
+            "Profile for {controller}: {profile} (a rule applies: {program}; it returns afterwards)"
+        ),
+        None => format!("Profile for {controller}: {profile}"),
+    }
+}
+
+pub const GROUP_GAMES: &str = "Game rules";
+pub const GAMES_NOTE: &str =
+    "A program in front applies its Profile to every Controller. Leaving it restores their own.";
+pub const GAMES_ADMIN_NOTE: &str = "Rules also work for programs run as administrator in most cases. heka says when it cannot see the program in front.";
+pub const FOREGROUND_UNREADABLE: &str = "heka cannot see the program in front, so its rule cannot apply. This happens with some protected programs.";
+pub const NO_PROFILES_FOR_RULE: &str = "Make a Profile first: a rule needs one.";
+pub const ADD_RULE: &str = "Add rule";
+pub const CHOOSE_FILE: &str = "Choose a file";
+pub const RUNNING_PROGRAMS: &str = "Running programs";
+pub const NO_RUNNING_PROGRAMS: &str = "No program with a window was found.";
+pub const RULE_APPLIES_NOW: &str = "Applies now";
+pub const RULE_PROFILE_MISSING: &str = "Profile missing";
+pub const DELETE_RULE: &str = "Delete rule";
+pub const RULE_PROFILE_TIP: &str = "The Profile this program applies";
+pub const CHOOSE_PROGRAM_PROMPT: &str = "Choose the program";
+
+pub fn rule_applies(program: &str, profile: &str, own: &str) -> String {
+    format!("A rule applies: {program} uses {profile}. Your choice, {own}, returns afterwards.")
+}
+
+pub const SECTION_TRIGGERS: &str = "Triggers";
+pub const SIDE_LEFT_TRIGGER: &str = "Left trigger";
+pub const SIDE_RIGHT_TRIGGER: &str = "Right trigger";
+pub const ROW_HAIR_TRIGGER: &str = "Hair trigger";
+pub const HAIR_TRIGGER_TIP: &str = "A press past this point reads as fully pressed";
+pub const ROW_PRESS_POINT: &str = "Button press at";
+pub const PRESS_POINT_TIP: &str =
+    "Where this trigger counts as pressed when it is bound to a button";
+pub const PRESS_CLICK: &str = "Click";
+pub const TRIGGERS_DEFAULT: &str =
+    "The Default Profile does not tune triggers. Choose another Profile, or make a new one.";
+
+pub fn travel_percent(travel: u8) -> String {
+    format!("{}%", (u32::from(travel) * 100 + 127) / 255)
+}
+
+pub const READOUT_RAW: &str = "Raw";
+pub const READOUT_TUNED: &str = "Tuned";
+pub const STICKS_DEFAULT: &str =
+    "The Default Profile does not tune sticks. Choose another Profile, or make a new one.";
+
+pub fn curve_name(curve: Curve) -> &'static str {
+    match curve {
+        Curve::Linear => "Linear",
+        Curve::Soft => "Soft",
+        Curve::Softer => "Softer",
+        Curve::Sharp => "Sharp",
+        Curve::Smooth => "Smooth",
+    }
+}
+
+pub fn percent_of(value: u16) -> String {
+    format!("{value}%")
+}
+
+pub fn report_rate(rate: Option<u32>) -> String {
+    match rate {
+        Some(rate) => format!("{rate} reports a second"),
+        None => "Report rate not known yet".to_owned(),
+    }
+}
+
+pub const DUPLICATE: &str = "Duplicate";
+pub const RENAME: &str = "Rename";
+pub const DELETE: &str = "Delete";
+pub const IMPORT: &str = "Import";
+pub const EXPORT: &str = "Export";
+pub const CANCEL: &str = "Cancel";
+pub const PROFILE_NAME: &str = "Profile name";
+pub const IMPORT_PROMPT: &str = "Import a Profile";
+
+pub fn delete_profile_question(name: &str, users: usize) -> String {
+    match users {
+        0 => format!("Delete {name}? No Controller uses it."),
+        1 => format!("Delete {name}? 1 Controller goes back to the Default Profile."),
+        users => {
+            format!("Delete {name}? {users} Controllers go back to the Default Profile.")
+        }
+    }
+}
+
+pub const BINDING_TIP: &str = "What this input drives on the Virtual Controller";
+
+pub fn input_name(input: Input) -> &'static str {
+    match input {
+        Input::Cross => "Cross",
+        Input::Circle => "Circle",
+        Input::Square => "Square",
+        Input::Triangle => "Triangle",
+        Input::DpadUp => "Up",
+        Input::DpadDown => "Down",
+        Input::DpadLeft => "Left",
+        Input::DpadRight => "Right",
+        Input::L1 => "L1",
+        Input::R1 => "R1",
+        Input::L2 => "L2",
+        Input::R2 => "R2",
+        Input::L3 => "L3",
+        Input::R3 => "R3",
+        Input::Create => "Create",
+        Input::Options => "Options",
+        Input::Ps => "PS",
+        Input::Touchpad => "Touchpad",
+        Input::TouchpadLeft => "Touchpad, left half",
+        Input::TouchpadRight => "Touchpad, right half",
+        Input::Mute => "Mute",
+        Input::LeftFn => "Left Fn",
+        Input::RightFn => "Right Fn",
+        Input::LeftBack => "Left back",
+        Input::RightBack => "Right back",
+    }
+}
+
+pub fn output_name(output: Output) -> &'static str {
+    match output {
+        Output::Cross => "Cross",
+        Output::Circle => "Circle",
+        Output::Square => "Square",
+        Output::Triangle => "Triangle",
+        Output::DpadUp => "Up",
+        Output::DpadDown => "Down",
+        Output::DpadLeft => "Left",
+        Output::DpadRight => "Right",
+        Output::L1 => "L1",
+        Output::R1 => "R1",
+        Output::L3 => "L3",
+        Output::R3 => "R3",
+        Output::Create => "Create",
+        Output::Options => "Options",
+        Output::Ps => "PS",
+        Output::LeftTrigger => "L2, pressed fully",
+        Output::RightTrigger => "R2, pressed fully",
+    }
+}
+
+pub fn cannot_read_import(path: &std::path::Path, error: &str) -> String {
+    format!("Cannot read {}: {error}", path.display())
+}
+
+pub fn cannot_import(path: &std::path::Path, error: &ProfileError) -> String {
+    let why = match error {
+        ProfileError::NotJson(reason) => format!("it is not JSON ({reason})"),
+        ProfileError::NotAProfile => "it is not a Profile".to_owned(),
+    };
+    format!(
+        "Cannot import {}: {why}. Nothing was changed.",
+        path.display()
+    )
+}
+
+pub fn cannot_export(path: &std::path::Path, error: &str) -> String {
+    format!("Cannot write {}: {error}", path.display())
+}
+
+pub fn binding_words(binding: Binding) -> &'static str {
+    match binding {
+        Binding::Default => DEFAULT,
+        Binding::Nothing => BINDING_NOTHING,
+        Binding::To(output) => output_name(output),
+    }
+}
+
 pub mod log {
     use std::path::Path;
 
@@ -635,6 +859,26 @@ pub mod log {
     }
 
     pub fn cannot_save_settings(path: &Path, error: &str) -> String {
+        format!("cannot save {}: {error}", path.display())
+    }
+
+    pub fn cannot_read_profiles(folder: &Path, error: &str) -> String {
+        format!("cannot read the profiles in {}: {error}", folder.display())
+    }
+
+    pub fn cannot_read_profile(path: &Path, error: &str) -> String {
+        format!("cannot read {}: {error}", path.display())
+    }
+
+    pub fn profile_skipped(path: &Path) -> String {
+        format!("{} is not a profile and was left out", path.display())
+    }
+
+    pub fn cannot_remove_profile(path: &Path, error: &str) -> String {
+        format!("cannot remove {}: {error}", path.display())
+    }
+
+    pub fn cannot_save_profile(path: &Path, error: &str) -> String {
         format!("cannot save {}: {error}", path.display())
     }
 

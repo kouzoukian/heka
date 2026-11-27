@@ -4,10 +4,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use heka_core::app_settings::AppSettings;
 use heka_core::calibration::Calibration;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
+use heka_core::game_rules::Front;
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::{BRIDGE_RETRY_DELAY, Change, HOLD_TIME, Phase, Removal};
 use heka_core::link::{
@@ -16,10 +18,13 @@ use heka_core::link::{
 };
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange, Preferences, RumbleStrength};
+use heka_core::profile::{Binding, Input, Output};
+use heka_core::profiles::Profiles;
 use heka_core::radio::{Radio, TurnOffError};
 use heka_core::settings::Settings;
+use heka_core::shortcuts::Shortcuts;
 use heka_core::state::{Buttons, ControllerState};
-use heka_core::supervisor::{BridgeError, Supervisor};
+use heka_core::supervisor::{BridgeError, ShortcutNote, Supervisor};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
     OutputType, VirtualBus, VirtualController, VirtualError, VirtualFailure,
@@ -1522,4 +1527,825 @@ fn a_failure_to_turn_off_is_forgotten_when_the_bluetooth_link_stops_reading() {
     );
 
     assert_eq!(supervisor.controllers()[0].turn_off_error, None);
+}
+
+fn profile_files() -> Profiles {
+    Profiles::load([
+        (
+            "racing".to_owned(),
+            r#"{"name": "Racing", "bindings": {"cross": "circle"}}"#.to_owned(),
+        ),
+        (
+            "silent".to_owned(),
+            r#"{"name": "Silent", "bindings": {"cross": null}}"#.to_owned(),
+        ),
+        (
+            "ps4".to_owned(),
+            r#"{"name": "PS4", "output_type": "ps4"}"#.to_owned(),
+        ),
+        (
+            "xbox".to_owned(),
+            r#"{"name": "Xbox", "output_type": "xbox"}"#.to_owned(),
+        ),
+    ])
+}
+
+fn shown_buttons(bus: &FakeBus, index: usize) -> Buttons {
+    bus.last_state(index)
+        .map_or(Buttons::NONE, |state| state.buttons)
+}
+
+fn wait_for_buttons(bus: &FakeBus, index: usize, buttons: Buttons) {
+    wait_until(|| shown_buttons(bus, index) == buttons);
+}
+
+#[test]
+fn a_chosen_profile_remaps_what_the_virtual_controller_receives() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    let changes = supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    assert_eq!(changes, []);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+    assert_eq!(
+        supervisor.settings().controller(mac(1)).profile.as_deref(),
+        Some("racing")
+    );
+}
+
+#[test]
+fn a_controller_without_a_profile_is_left_as_it_is() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(cross());
+
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+}
+
+#[test]
+fn changing_the_profile_changes_a_running_bridge_at_once_and_keeps_its_virtual_controller() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    supervisor.choose_profile(mac(1), Some("silent".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+
+    supervisor.choose_profile(mac(1), None, t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    assert_eq!(bus.plugged(), 1);
+    assert!(!bus.unplugged(0));
+}
+
+#[test]
+fn the_drawing_shows_what_the_virtual_controller_receives() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    assert_eq!(live.latest().unwrap().buttons, Buttons::CIRCLE);
+}
+
+#[test]
+fn a_button_bound_to_nothing_still_counts_as_the_controller_being_used() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("silent".into()), t0);
+    link.send(common::derived(&[]));
+    wait_until(|| bus.last_state(0).is_some());
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    let before = live.times_used();
+
+    link.send(cross());
+    wait_until(|| live.times_used() > before);
+
+    assert_eq!(shown_buttons(&bus, 0), Buttons::NONE);
+}
+
+#[test]
+fn a_profile_with_an_output_type_replaces_the_virtual_controller_only_when_the_type_changes() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    let same = supervisor.choose_profile(mac(1), Some("xbox".into()), t0);
+    assert_eq!(same, []);
+    assert_eq!(bus.plugged(), 1);
+
+    let changed = supervisor.choose_profile(mac(1), Some("ps4".into()), t0);
+    assert_eq!(
+        changed,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Ps4
+            },
+        ]
+    );
+    assert!(bus.unplugged(0));
+    assert_eq!(bus.plugged(), 2);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.output_type, OutputType::Ps4);
+    assert!(view.output_type_from_profile);
+    assert_eq!(view.profile.as_deref(), Some("ps4"));
+    assert_eq!(
+        supervisor.settings().controller(mac(1)).output_type,
+        OutputType::Xbox
+    );
+
+    let back = supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    assert_eq!(back.len(), 2);
+    assert_eq!(bus.plugged(), 3);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert!(!supervisor.controllers()[0].output_type_from_profile);
+}
+
+#[test]
+fn a_controller_whose_profile_sets_the_output_type_is_bridged_as_that_type_from_the_start() {
+    let t0 = Instant::now();
+    let bus = FakeBus::default();
+    let mut settings = Settings::default();
+    settings.set_profile(mac(1), Some("ps4".into()));
+    let mut supervisor = Supervisor::new(Box::new(bus.clone()), settings);
+    supervisor.set_profiles(profile_files(), t0);
+
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    assert_eq!(bus.plugged(), 1);
+    assert_eq!(bus.shown(0).lock().unwrap().output_type, OutputType::Ps4);
+}
+
+#[test]
+fn a_returning_held_controller_keeps_the_profile_output_type() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let first = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("ps4".into()), t0);
+    first.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    assert_eq!(bus.plugged(), 2);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+}
+
+#[test]
+fn a_profile_that_goes_missing_gives_the_default_profile_and_is_kept_as_the_choice() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    supervisor.set_profiles(Profiles::default(), t0);
+    link.send(cross());
+
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    assert_eq!(
+        supervisor.settings().controller(mac(1)).profile.as_deref(),
+        Some("racing")
+    );
+}
+
+#[test]
+fn an_edited_profile_applies_to_the_controllers_using_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let mut profiles = profile_files();
+    let link = LinkHandle::default();
+    supervisor.set_profiles(profiles.clone(), t0);
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    profiles
+        .get_mut("racing")
+        .unwrap()
+        .bind(Input::Cross, Binding::To(Output::Triangle));
+    supervisor.set_profiles(profiles, t0);
+    link.send(cross());
+
+    wait_for_buttons(&bus, 0, Buttons::TRIANGLE);
+}
+
+#[test]
+fn deleting_a_profile_sends_its_controllers_back_to_the_default_one() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    let changes = supervisor.delete_profile("racing", t0);
+
+    assert_eq!(changes, []);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    assert!(supervisor.profiles().get("racing").is_none());
+    assert_eq!(supervisor.settings().controller(mac(1)).profile, None);
+    assert_eq!(supervisor.controllers()[0].profile, None);
+    assert_eq!(bus.plugged(), 1);
+}
+
+#[test]
+fn a_deleted_profile_that_set_the_output_type_gives_the_controllers_own_back() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    supervisor.choose_profile(mac(1), Some("ps4".into()), t0);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+
+    let changes = supervisor.delete_profile("ps4", t0);
+
+    assert_eq!(
+        changes,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Xbox
+            },
+        ]
+    );
+    assert_eq!(bus.plugged(), 3);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert!(!supervisor.controllers()[0].output_type_from_profile);
+}
+
+#[test]
+fn deleting_a_profile_leaves_the_controllers_that_do_not_use_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let first = LinkHandle::default();
+    let second = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    supervisor.link_arrived(mac(2), second.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+    supervisor.choose_profile(mac(2), Some("silent".into()), t0);
+
+    supervisor.delete_profile("racing", t0);
+
+    second.send(cross());
+    wait_for_buttons(&bus, 1, Buttons::NONE);
+    assert_eq!(
+        supervisor.settings().controller(mac(2)).profile.as_deref(),
+        Some("silent")
+    );
+}
+
+#[test]
+fn a_profile_created_after_a_delete_does_not_take_the_old_controllers() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(Profiles::default(), t0);
+    let mut profiles = supervisor.profiles().clone();
+    let id = profiles.create("Racing");
+    profiles
+        .get_mut(&id)
+        .unwrap()
+        .bind(Input::Cross, Binding::To(Output::Circle));
+    supervisor.set_profiles(profiles, t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some(id.clone()), t0);
+
+    supervisor.delete_profile(&id, t0);
+    let mut profiles = supervisor.profiles().clone();
+    let again = profiles.create("Racing");
+    profiles
+        .get_mut(&again)
+        .unwrap()
+        .bind(Input::Cross, Binding::To(Output::Circle));
+    supervisor.set_profiles(profiles, t0);
+    link.send(cross());
+
+    assert_eq!(again, id);
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+}
+
+#[test]
+fn the_live_input_keeps_the_controllers_own_state_beside_what_the_virtual_controller_gets() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+    let sample = live.sample();
+    assert_eq!(sample.raw.unwrap().buttons, Buttons::CROSS);
+    assert_eq!(sample.shown.unwrap().buttons, Buttons::CIRCLE);
+    assert_eq!(live.latest_raw().unwrap().buttons, Buttons::CROSS);
+    assert_eq!(sample.report_rate, None);
+}
+
+#[test]
+fn the_live_input_forgets_the_state_when_the_link_is_gone() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    let live = Arc::clone(&supervisor.controllers()[0].live);
+
+    link.pull_out();
+    poll_until_changed(&mut supervisor, t0);
+
+    assert_eq!(live.sample().raw, None);
+    assert_eq!(live.sample().shown, None);
+}
+
+fn with_rules(supervisor: &mut Supervisor, rules: &[(&str, &str)]) {
+    let mut app = AppSettings::default();
+    for (program, profile) in rules {
+        app.game_rules.add(program, profile);
+    }
+    supervisor.set_app_settings(app);
+}
+
+fn nothing_runs(_: &str) -> bool {
+    false
+}
+
+#[test]
+fn a_program_in_front_applies_its_rule_to_every_controller_and_leaving_restores_each_ones_own() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let first = LinkHandle::default();
+    let second = LinkHandle::default();
+    supervisor.link_arrived(mac(1), first.reader(), t0);
+    supervisor.link_arrived(mac(2), second.reader(), t0);
+    supervisor.choose_profile(mac(2), Some("silent".into()), t0);
+
+    let changes = supervisor.set_foreground(Front::Program("CS2.exe"), &nothing_runs, t0);
+
+    assert_eq!(changes, []);
+    first.send(cross());
+    second.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+    wait_for_buttons(&bus, 1, Buttons::CIRCLE);
+    let views = supervisor.controllers();
+    assert!(
+        views
+            .iter()
+            .all(|view| view.rule_program.as_deref() == Some("cs2.exe"))
+    );
+    assert!(
+        views
+            .iter()
+            .all(|view| view.applied_profile.as_deref() == Some("racing"))
+    );
+    assert_eq!(
+        supervisor.settings().controller(mac(2)).profile.as_deref(),
+        Some("silent")
+    );
+
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    first.send(cross());
+    second.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    wait_for_buttons(&bus, 1, Buttons::NONE);
+    let views = supervisor.controllers();
+    assert!(views.iter().all(|view| view.rule_program.is_none()));
+    assert_eq!(views[1].applied_profile.as_deref(), Some("silent"));
+    assert_eq!(views[0].applied_profile, None);
+}
+
+#[test]
+fn hekas_own_window_in_front_changes_nothing() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Own, &nothing_runs, t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+    supervisor.set_foreground(Front::Own, &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+}
+
+#[test]
+fn a_rule_that_sets_the_output_type_keeps_the_virtual_controller_across_alt_tab() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    let running = |program: &str| program == "eldenring.exe";
+
+    let entering = supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+    let alt_tab = supervisor.set_foreground(Front::Program("firefox.exe"), &running, t0);
+    let back = supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+
+    assert_eq!(
+        entering,
+        [
+            Change::Removed {
+                mac: mac(1),
+                why: Removal::OutputTypeChanged
+            },
+            Change::Bridged {
+                mac: mac(1),
+                output_type: OutputType::Ps4
+            },
+        ]
+    );
+    assert_eq!(alt_tab, []);
+    assert_eq!(back, []);
+    assert_eq!(bus.plugged(), 2);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+}
+
+#[test]
+fn such_a_rule_ends_when_its_program_exits_and_the_virtual_controller_goes_back() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    let running = |program: &str| program == "eldenring.exe";
+    supervisor.set_foreground(Front::Program("eldenring.exe"), &running, t0);
+    supervisor.set_foreground(Front::Program("firefox.exe"), &running, t0);
+
+    let exited = supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    assert_eq!(exited.len(), 2);
+    assert_eq!(bus.plugged(), 3);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn a_controller_arriving_while_a_rule_applies_gets_it() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("eldenring.exe", "ps4")]);
+    supervisor.set_foreground(Front::Program("eldenring.exe"), &nothing_runs, t0);
+
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+
+    assert_eq!(bus.plugged(), 1);
+    assert_eq!(bus.shown(0).lock().unwrap().output_type, OutputType::Ps4);
+    assert_eq!(
+        supervisor.controllers()[0].rule_program.as_deref(),
+        Some("eldenring.exe")
+    );
+}
+
+#[test]
+fn a_rule_whose_profile_does_not_exist_applies_nothing() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "gone")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn deleting_the_profile_of_the_rule_that_applies_ends_its_effect_at_once() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "ps4")]);
+    supervisor.link_arrived(mac(1), LinkHandle::default().reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+    assert_eq!(bus.shown(1).lock().unwrap().output_type, OutputType::Ps4);
+
+    let changes = supervisor.delete_profile("ps4", t0);
+
+    assert_eq!(changes.len(), 2);
+    assert_eq!(bus.shown(2).lock().unwrap().output_type, OutputType::Xbox);
+    assert_eq!(supervisor.controllers()[0].rule_program, None);
+}
+
+#[test]
+fn changing_a_controllers_own_choice_under_a_rule_is_kept_for_afterwards() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(profile_files(), t0);
+    with_rules(&mut supervisor, &[("cs2.exe", "racing")]);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    supervisor.choose_profile(mac(1), Some("silent".into()), t0);
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::CIRCLE);
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+
+    link.send(cross());
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+}
+
+fn ps() -> Vec<u8> {
+    common::derived(&[(10, 0x01)])
+}
+
+fn ps_with(buttons_1: u8) -> Vec<u8> {
+    common::derived(&[(9, buttons_1), (10, 0x01)])
+}
+
+const R1_BIT: u8 = 0x02;
+const L1_BIT: u8 = 0x01;
+const OPTIONS_BIT: u8 = 0x20;
+
+fn app_with(shortcuts_on: bool, rules: &[(&str, &str)]) -> AppSettings {
+    let mut app = AppSettings {
+        shortcuts: Shortcuts {
+            enabled: shortcuts_on,
+            ..Shortcuts::default()
+        },
+        ..AppSettings::default()
+    };
+    for (program, profile) in rules {
+        app.game_rules.add(program, profile);
+    }
+    app
+}
+
+fn two_profiles() -> Profiles {
+    Profiles::load([
+        (
+            "racing".to_owned(),
+            r#"{"name": "Racing", "bindings": {"r1": "cross"}}"#.to_owned(),
+        ),
+        ("silent".to_owned(), r#"{"name": "Silent"}"#.to_owned()),
+    ])
+}
+
+fn choice(supervisor: &Supervisor) -> Option<String> {
+    supervisor.settings().controller(mac(1)).profile
+}
+
+fn poll_until(
+    supervisor: &mut Supervisor,
+    now: Instant,
+    mut done: impl FnMut(&Supervisor) -> bool,
+) {
+    wait_until(|| {
+        supervisor.poll(now);
+        done(supervisor)
+    });
+}
+
+fn ever_showed(bus: &FakeBus, button: Buttons) -> bool {
+    bus.shown(0)
+        .lock()
+        .unwrap()
+        .updates
+        .iter()
+        .any(|state| state.buttons.contains(button))
+}
+
+#[test]
+fn shortcuts_do_nothing_until_they_are_turned_on() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    wait_for_buttons(&bus, 0, Buttons::PS | Buttons::R1);
+    supervisor.poll(t0);
+
+    assert_eq!(choice(&supervisor), None);
+    assert_eq!(supervisor.take_shortcut_notes(), []);
+}
+
+#[test]
+fn a_shortcut_hides_its_button_from_the_game_and_leaves_ps_as_it_was() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    wait_for_buttons(&bus, 0, Buttons::PS);
+    link.send(ps_with(R1_BIT));
+    link.send(ps());
+    link.send(common::derived(&[]));
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+
+    assert!(ever_showed(&bus, Buttons::PS));
+    assert!(!ever_showed(&bus, Buttons::R1));
+}
+
+#[test]
+fn a_hidden_button_does_not_fire_its_own_binding_either() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    link.send(ps());
+    link.send(common::derived(&[(9, R1_BIT)]));
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    let crosses = bus
+        .shown(0)
+        .lock()
+        .unwrap()
+        .updates
+        .iter()
+        .filter(|state| state.buttons.contains(Buttons::CROSS))
+        .count();
+    assert_eq!(crosses, 1);
+}
+
+#[test]
+fn next_and_previous_cycle_the_controllers_own_profile_and_say_which() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("racing")
+    });
+    assert_eq!(
+        supervisor.take_shortcut_notes(),
+        [ShortcutNote {
+            mac: mac(1),
+            profile: Some("racing".into()),
+            name: Some("Racing".into()),
+            under_rule: None,
+        }]
+    );
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("silent")
+    });
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).is_none()
+    });
+    let notes = supervisor.take_shortcut_notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[1].profile, None);
+    assert_eq!(notes[1].name, None);
+
+    link.send(ps());
+    link.send(ps_with(L1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("silent")
+    });
+}
+
+#[test]
+fn a_shortcut_under_a_game_rule_changes_the_choice_that_returns_afterwards() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[("cs2.exe", "silent")]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("racing")
+    });
+
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.applied_profile.as_deref(), Some("silent"));
+    assert_eq!(
+        supervisor.take_shortcut_notes()[0].under_rule.as_deref(),
+        Some("cs2.exe")
+    );
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+    assert_eq!(
+        supervisor.controllers()[0].applied_profile.as_deref(),
+        Some("racing")
+    );
+}
+
+#[test]
+fn holding_ps_and_the_turn_off_button_turns_a_bluetooth_controller_off_after_two_seconds() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send_input(ps());
+    link.send_input(ps_with(OPTIONS_BIT));
+    std::thread::sleep(Duration::from_millis(1500));
+    link.send_input(ps_with(OPTIONS_BIT));
+    std::thread::sleep(Duration::from_millis(100));
+    supervisor.poll(t0);
+    assert_eq!(radio.turned_off(), []);
+
+    std::thread::sleep(Duration::from_millis(600));
+    link.send_input(ps_with(OPTIONS_BIT));
+    poll_until(&mut supervisor, t0, |_| !radio.turned_off().is_empty());
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+}
+
+#[test]
+fn a_short_press_of_the_turn_off_shortcut_leaves_the_controller_on() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = with_radio();
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send_input(ps());
+    link.send_input(ps_with(OPTIONS_BIT));
+    link.send_input(ps());
+    link.send_input(common::derived(&[]));
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+    supervisor.poll(t0);
+
+    assert_eq!(radio.turned_off(), []);
+    assert!(!ever_showed(&bus, Buttons::OPTIONS));
 }

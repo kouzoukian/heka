@@ -10,8 +10,12 @@ use crate::feedback::{
 };
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::live_mapper::LiveMapper;
+use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
-use crate::state::ControllerState;
+use crate::rate::RateMeter;
+use crate::shortcuts::ShortcutDetector;
+use crate::state::{Buttons, ControllerState};
 use crate::threads::{SystemThreads, Threads, Worker};
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
 
@@ -25,8 +29,17 @@ pub struct LiveInput {
 #[derive(Debug, Default)]
 struct Seen {
     latest: Option<ControllerState>,
+    raw: Option<ControllerState>,
     activity: Activity,
     times_used: u64,
+    meter: RateMeter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveSample {
+    pub raw: Option<ControllerState>,
+    pub shown: Option<ControllerState>,
+    pub report_rate: Option<f32>,
 }
 
 impl LiveInput {
@@ -34,18 +47,40 @@ impl LiveInput {
         self.seen().latest
     }
 
+    pub fn latest_raw(&self) -> Option<ControllerState> {
+        self.seen().raw
+    }
+
+    pub fn report_rate(&self) -> Option<f32> {
+        self.seen().meter.per_second()
+    }
+
+    pub fn sample(&self) -> LiveSample {
+        let seen = self.seen();
+        LiveSample {
+            raw: seen.raw,
+            shown: seen.latest,
+            report_rate: seen.meter.per_second(),
+        }
+    }
+
     pub fn times_used(&self) -> u64 {
         self.seen().times_used
     }
 
-    fn set(&self, state: Option<ControllerState>) {
+    fn set(&self, physical: Option<&ControllerState>, shown: Option<ControllerState>) {
         let mut seen = self.seen();
-        if let Some(state) = &state
-            && seen.activity.observe(state)
-        {
-            seen.times_used += 1;
+        match physical {
+            Some(state) => {
+                if seen.activity.observe(state) {
+                    seen.times_used += 1;
+                }
+                seen.meter.tick(Instant::now());
+            }
+            None => seen.meter.reset(),
         }
-        seen.latest = state;
+        seen.raw = physical.copied();
+        seen.latest = shown;
     }
 
     fn seen(&self) -> MutexGuard<'_, Seen> {
@@ -75,6 +110,8 @@ pub struct Plugged {
     no_feedback: Option<String>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -90,12 +127,22 @@ impl Plugged {
             no_feedback,
             asked: Feedback::OFF,
             preferences: Arc::default(),
+            mapper: Arc::default(),
+            shortcuts: Arc::default(),
             failures: Arc::default(),
         }
     }
 
+    pub fn shortcuts_with(&mut self, shortcuts: Arc<LiveShortcuts>) {
+        self.shortcuts = shortcuts;
+    }
+
     pub fn follow(&mut self, preferences: Arc<LivePreferences>) {
         self.preferences = preferences;
+    }
+
+    pub fn map_with(&mut self, mapper: Arc<LiveMapper>) {
+        self.mapper = mapper;
     }
 
     pub fn report_to(&mut self, failures: Arc<VirtualFailures>) {
@@ -225,6 +272,8 @@ pub struct Bridge {
     spare_writer: Option<Box<dyn LinkWriter>>,
     asked: Feedback,
     preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -258,6 +307,8 @@ impl Bridge {
             no_feedback: _,
             asked,
             preferences,
+            mapper,
+            shortcuts,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -269,6 +320,8 @@ impl Bridge {
             spare_writer: None,
             asked,
             preferences: Arc::clone(&preferences),
+            mapper: Arc::clone(&mapper),
+            shortcuts: Arc::clone(&shortcuts),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -298,7 +351,15 @@ impl Bridge {
             "heka-bridge",
             (reader, controller),
             move |(reader, controller): InputParts| {
-                let end = run(reader, controller, &live, &flags.stop, &failures);
+                let end = run(
+                    reader,
+                    controller,
+                    &live,
+                    &flags.stop,
+                    &failures,
+                    &mapper,
+                    &shortcuts,
+                );
                 if matches!(end, InputEnd::LinkLost(_)) {
                     flags.link_lost.store(true, Ordering::Release);
                 }
@@ -371,6 +432,8 @@ impl Bridge {
             no_feedback: None,
             asked,
             preferences: Arc::clone(&self.preferences),
+            mapper: Arc::clone(&self.mapper),
+            shortcuts: Arc::clone(&self.shortcuts),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -413,8 +476,13 @@ fn run(
     live: &LiveInput,
     stop: &AtomicBool,
     failures: &VirtualFailures,
+    mapper: &LiveMapper,
+    shortcuts: &LiveShortcuts,
 ) -> InputEnd {
     let format = link.format();
+    let mut mapper = mapper.follow();
+    let mut configured = shortcuts.follow();
+    let mut detector = ShortcutDetector::default();
     let mut buf = [0u8; READ_BUFFER_LEN];
     let end = loop {
         if stop.load(Ordering::Acquire) {
@@ -425,8 +493,19 @@ fn run(
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
-                live.set(Some(state));
-                if let Err(error) = controller.update(&state) {
+                let observed = detector.observe(configured.get(), state.buttons, Instant::now());
+                if let Some(action) = observed.action {
+                    shortcuts.push(action);
+                }
+                let shown = if observed.hide == Buttons::NONE {
+                    mapper.map(&state)
+                } else {
+                    let mut buttons = state.buttons;
+                    buttons.set(observed.hide, false);
+                    mapper.map(&ControllerState { buttons, ..state })
+                };
+                live.set(Some(&state), Some(shown));
+                if let Err(error) = controller.update(&shown) {
                     let _ = unplug(controller, failures);
                     break InputEnd::Failed(link, error);
                 }
@@ -438,7 +517,7 @@ fn run(
             }
         }
     };
-    live.set(None);
+    live.set(None, None);
     end
 }
 

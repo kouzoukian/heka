@@ -34,6 +34,10 @@ fn view(phase: Phase) -> ControllerView {
         active_link: Some(LinkKind::Usb),
         has_bluetooth: false,
         idle_time: None,
+        profile: None,
+        applied_profile: None,
+        rule_program: None,
+        output_type_from_profile: false,
         live: Arc::new(LiveInput::default()),
         error: None,
         turn_off_error: None,
@@ -239,6 +243,30 @@ fn the_output_switch_shows_the_controllers_output_type_and_asks_for_the_chosen_o
 }
 
 #[test]
+fn a_profile_that_sets_the_output_type_leaves_the_switch_with_nothing_to_ask() {
+    let mut set = view(Phase::Bridged);
+    set.output_type = OutputType::Ps4;
+    set.profile = Some("racing".into());
+    set.output_type_from_profile = true;
+
+    let entry = entry_of(&set, Instant::now());
+
+    assert_eq!(entry.output_type, OutputType::Ps4);
+    assert_eq!(entry.profile.as_deref(), Some("racing"));
+    assert!(entry.output_type_from_profile);
+    assert_eq!(entry.choose(OutputType::Xbox), None);
+    assert_eq!(entry.choose(OutputType::Ps4), None);
+}
+
+#[test]
+fn an_entry_without_a_profile_uses_the_default_one() {
+    let entry = entry_of(&view(Phase::Bridged), Instant::now());
+
+    assert_eq!(entry.profile, None);
+    assert!(!entry.output_type_from_profile);
+}
+
+#[test]
 fn the_entry_button_starts_a_stopped_controller_and_stops_any_other() {
     let now = Instant::now();
     let command = |phase| entry_of(&view(phase), now).toggle();
@@ -260,6 +288,11 @@ fn a_screen_changes_only_when_something_shown_changes() {
         missing: Vec::new(),
         notices: vec![Notice::warning("warning")],
         controllers: vec![entry_of(&held, now + Duration::from_millis(after_ms))],
+        profiles: Vec::new(),
+        game_rules: Vec::new(),
+        shortcuts: Default::default(),
+        rule_applies: None,
+        foreground_unreadable: false,
         log: Default::default(),
         app: Default::default(),
         newer_release: None,
@@ -283,6 +316,11 @@ fn the_status_bar_counts_errors_and_warnings_missing_drivers_among_them() {
             Notice::warning("three"),
         ],
         controllers: Vec::new(),
+        profiles: Vec::new(),
+        game_rules: Vec::new(),
+        shortcuts: Default::default(),
+        rule_applies: None,
+        foreground_unreadable: false,
         log: Default::default(),
         app: Default::default(),
         newer_release: None,
@@ -304,6 +342,11 @@ fn the_status_bar_counts_controllers_and_bridges() {
                 .iter()
                 .map(|&phase| entry_of(&view(phase), now))
                 .collect(),
+            profiles: Vec::new(),
+            game_rules: Vec::new(),
+            shortcuts: Default::default(),
+            rule_applies: None,
+            foreground_unreadable: false,
             log: Default::default(),
             app: Default::default(),
             newer_release: None,

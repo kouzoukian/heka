@@ -1,20 +1,25 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fs, io, process};
 
-use heka_app::ui::model::{AppEntry, Backend, Command, ControllerEntry, Notice, Screen};
+use heka_app::ui::model::{
+    AppEntry, Backend, Command, ControllerEntry, Notice, ProfileEntry, Screen,
+};
 use heka_app::{log, text};
 use heka_core::app_settings::{AppSettings, CloseAction};
 use heka_core::autostart::Autostart;
 use heka_core::setup::Driver;
 use heka_core::window_placement::WindowPlacement;
 use heka_windows::autostart::RunKey;
+use heka_windows::foreground;
 
 use crate::bridging::{Bridging, Status};
 use crate::releases::Releases;
 use crate::settings_file;
+
+const SHORTCUT_NOTICE_TIME: Duration = Duration::from_secs(5);
 
 pub struct WindowBackend {
     bridging: Arc<Bridging>,
@@ -99,6 +104,15 @@ impl Backend for WindowBackend {
             .controllers
             .iter()
             .filter_map(Notice::cannot_turn_off);
+        let profile_notice = snapshot
+            .profile_notice
+            .iter()
+            .map(|message| Notice::warning(message.clone()));
+        let shortcut_notice = snapshot
+            .shortcut_notice
+            .iter()
+            .filter(|(at, _)| now.saturating_duration_since(*at) < SHORTCUT_NOTICE_TIME)
+            .map(|(_, words)| Notice::info(words.clone()));
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
@@ -116,12 +130,30 @@ impl Backend for WindowBackend {
                 .chain(hiding)
                 .chain(not_unplugged)
                 .chain(not_turned_off)
+                .chain(profile_notice)
+                .chain(shortcut_notice)
                 .collect(),
             controllers: snapshot
                 .controllers
                 .iter()
                 .map(|view| ControllerEntry::from_view(view, now, bus_missing))
                 .collect(),
+            profiles: snapshot
+                .profiles
+                .list()
+                .map(|(id, profile)| ProfileEntry {
+                    id: id.to_owned(),
+                    profile: profile.clone(),
+                    users: snapshot.profile_users.get(id).copied().unwrap_or(0),
+                })
+                .collect(),
+            game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            shortcuts: self.app.borrow().shortcuts,
+            rule_applies: snapshot
+                .controllers
+                .iter()
+                .find_map(|view| view.rule_program.clone()),
+            foreground_unreadable: snapshot.foreground_unreadable,
             log: log::recent(),
             app,
             newer_release: self.releases.newer().filter(|_| app.check_for_releases),
@@ -148,11 +180,52 @@ impl Backend for WindowBackend {
                 self.change_app(|app| app.window = Some(placement));
             }
             Command::OpenSettingsFolder => open_settings_folder(),
+            Command::ChooseProfile(mac, profile) => bridging.choose_profile(mac, profile),
+            Command::CreateProfile(name) => bridging.create_profile(name),
+            Command::BindInput(profile, input, binding) => {
+                bridging.bind_input(profile, input, binding);
+            }
+            Command::SetProfileOutputType(profile, output_type) => {
+                bridging.set_profile_output_type(profile, output_type);
+            }
+            Command::DuplicateProfile(profile) => bridging.duplicate_profile(profile),
+            Command::RenameProfile(profile, name) => bridging.rename_profile(profile, name),
+            Command::DeleteProfile(profile) => {
+                self.change_app(|app| {
+                    app.game_rules.remove_profile(&profile);
+                });
+                bridging.delete_profile(profile);
+            }
+            Command::ChangeShortcut(change) => self.change_app(|app| {
+                app.shortcuts.change(change);
+            }),
+            Command::AddGameRule(program, profile) => self.change_app(|app| {
+                app.game_rules.add(&program, &profile);
+            }),
+            Command::SetGameRule(program, profile) => self.change_app(|app| {
+                app.game_rules.set_profile(&program, &profile);
+            }),
+            Command::RemoveGameRule(program) => self.change_app(|app| {
+                app.game_rules.remove(&program);
+            }),
+            Command::ImportProfile(path) => bridging.import_profile(path),
+            Command::ExportProfile(profile, path) => bridging.export_profile(profile, path),
+            Command::ChangeStick(profile, side, change) => {
+                bridging.change_stick(profile, side, change);
+            }
+            Command::SetSwapSticks(profile, swap) => bridging.set_swap_sticks(profile, swap),
+            Command::ChangeTrigger(profile, side, change) => {
+                bridging.change_trigger(profile, side, change);
+            }
         }
     }
 
     fn window_placement(&self) -> Option<WindowPlacement> {
         self.app.borrow().window.clone()
+    }
+
+    fn running_programs(&self) -> Vec<String> {
+        foreground::running_programs()
     }
 }
 
