@@ -26,6 +26,7 @@ use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
+use heka_windows::desktop::SendInputDesktop;
 use heka_windows::drivers::InstalledDrivers;
 use heka_windows::foreground;
 use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
@@ -257,8 +258,9 @@ fn supervise(
     snapshot: &Mutex<Snapshot>,
 ) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
-    let mut supervisor =
-        Supervisor::without_bus(settings).turning_off_with(Box::new(BluetoothRadios));
+    let mut supervisor = Supervisor::without_bus(settings)
+        .turning_off_with(Box::new(BluetoothRadios))
+        .sending_to(Box::new(SendInputDesktop));
     supervisor.set_profiles(profiles, Instant::now());
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     log_all(text::log::drivers(&detected));
@@ -604,6 +606,9 @@ fn act_on(found: Vec<Found<CString>>, hider: &mut Hider<CString>) {
 }
 
 fn report_failures(supervisor: &mut Supervisor, not_unplugged: &mut Vec<String>) {
+    if let Some(error) = supervisor.take_desktop_failure() {
+        log::line(&text::log::cannot_send_input(&error));
+    }
     for failure in supervisor.take_virtual_failures() {
         match failure {
             VirtualFailure::NoFeedback(error) => {

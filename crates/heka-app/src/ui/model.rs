@@ -3,6 +3,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use heka_core::app_settings::{AppChange, CloseAction};
+use heka_core::capture::KeyListener;
+use heka_core::desktop::Key;
 use heka_core::feedback::Motor;
 use heka_core::game_rules::GameRule;
 use heka_core::idle::IdleTime;
@@ -33,6 +35,14 @@ pub trait Backend {
 
     fn running_programs(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    fn listen_for_keys(&self) -> Option<Box<dyn KeyListener>> {
+        None
+    }
+
+    fn key_label(&self, _: Key) -> Option<String> {
+        None
     }
 }
 

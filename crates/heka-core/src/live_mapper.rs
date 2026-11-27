@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::profile::Mapper;
-use crate::state::ControllerState;
 
 #[derive(Debug, Default)]
 pub struct LiveMapper {
@@ -38,12 +37,19 @@ pub struct FollowedMapper<'a> {
 }
 
 impl FollowedMapper<'_> {
-    pub fn map(&mut self, state: &ControllerState) -> ControllerState {
+    pub fn refresh(&mut self) -> bool {
         let version = self.live.version.load(Ordering::Acquire);
-        if version != self.seen {
-            self.seen = version;
-            self.mapper = self.live.snapshot();
+        if version == self.seen {
+            return false;
         }
-        self.mapper.map(state)
+        self.seen = version;
+        let latest = self.live.snapshot();
+        let changed = latest != self.mapper;
+        self.mapper = latest;
+        changed
+    }
+
+    pub fn current(&self) -> &Mapper {
+        &self.mapper
     }
 }

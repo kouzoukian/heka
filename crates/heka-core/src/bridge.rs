@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::desktop::{Desk, Hands};
 use crate::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
     Rumble,
@@ -13,9 +14,10 @@ use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
+use crate::profile::Mapped;
 use crate::rate::RateMeter;
 use crate::shortcuts::ShortcutDetector;
-use crate::state::{Buttons, ControllerState};
+use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
 
@@ -112,6 +114,7 @@ pub struct Plugged {
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
+    desk: Arc<Desk>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -129,6 +132,7 @@ impl Plugged {
             preferences: Arc::default(),
             mapper: Arc::default(),
             shortcuts: Arc::default(),
+            desk: Arc::default(),
             failures: Arc::default(),
         }
     }
@@ -143,6 +147,10 @@ impl Plugged {
 
     pub fn map_with(&mut self, mapper: Arc<LiveMapper>) {
         self.mapper = mapper;
+    }
+
+    pub fn use_desk(&mut self, desk: Arc<Desk>) {
+        self.desk = desk;
     }
 
     pub fn report_to(&mut self, failures: Arc<VirtualFailures>) {
@@ -274,6 +282,7 @@ pub struct Bridge {
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
+    desk: Arc<Desk>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -309,6 +318,7 @@ impl Bridge {
             preferences,
             mapper,
             shortcuts,
+            desk,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -322,6 +332,7 @@ impl Bridge {
             preferences: Arc::clone(&preferences),
             mapper: Arc::clone(&mapper),
             shortcuts: Arc::clone(&shortcuts),
+            desk: Arc::clone(&desk),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -346,20 +357,19 @@ impl Bridge {
                 bridge.spare_writer = writer;
             }
         }
+        let shared = Shared {
+            live,
+            failures,
+            mapper,
+            shortcuts,
+            desk,
+        };
         let started = Worker::spawn(
             threads,
             "heka-bridge",
             (reader, controller),
             move |(reader, controller): InputParts| {
-                let end = run(
-                    reader,
-                    controller,
-                    &live,
-                    &flags.stop,
-                    &failures,
-                    &mapper,
-                    &shortcuts,
-                );
+                let end = run(reader, controller, &flags.stop, shared);
                 if matches!(end, InputEnd::LinkLost(_)) {
                     flags.link_lost.store(true, Ordering::Release);
                 }
@@ -434,6 +444,7 @@ impl Bridge {
             preferences: Arc::clone(&self.preferences),
             mapper: Arc::clone(&self.mapper),
             shortcuts: Arc::clone(&self.shortcuts),
+            desk: Arc::clone(&self.desk),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -458,7 +469,11 @@ impl Bridge {
 
 impl Drop for Bridge {
     fn drop(&mut self) {
-        if self.input.is_none() || thread::panicking() {
+        if thread::panicking() {
+            self.flags.stop.store(true, Ordering::Release);
+            return;
+        }
+        if self.input.is_none() {
             return;
         }
         match self.join() {
@@ -470,25 +485,44 @@ impl Drop for Bridge {
     }
 }
 
+struct Shared {
+    live: Arc<LiveInput>,
+    failures: Arc<VirtualFailures>,
+    mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
+    desk: Arc<Desk>,
+}
+
 fn run(
     mut link: Box<dyn LinkReader>,
     mut controller: Box<dyn VirtualController>,
-    live: &LiveInput,
     stop: &AtomicBool,
-    failures: &VirtualFailures,
-    mapper: &LiveMapper,
-    shortcuts: &LiveShortcuts,
+    shared: Shared,
 ) -> InputEnd {
+    let Shared {
+        live,
+        failures,
+        mapper,
+        shortcuts,
+        desk,
+    } = shared;
+    let mut hands = Hands::new(desk);
     let format = link.format();
     let mut mapper = mapper.follow();
     let mut configured = shortcuts.follow();
     let mut detector = ShortcutDetector::default();
     let mut buf = [0u8; READ_BUFFER_LEN];
+    let mut latest = None;
     let end = loop {
         if stop.load(Ordering::Acquire) {
             break InputEnd::Stopped(link, controller);
         }
-        match link.read(&mut buf) {
+        let read = link.read(&mut buf);
+        if mapper.refresh() {
+            let upcoming = latest.map(|state| mapper.current().mapped(&state).desktop);
+            hands.start_over(upcoming.unwrap_or_default());
+        }
+        match read {
             LinkRead::Report(len) => {
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
@@ -497,26 +531,25 @@ fn run(
                 if let Some(action) = observed.action {
                     shortcuts.push(action);
                 }
-                let shown = if observed.hide == Buttons::NONE {
-                    mapper.map(&state)
-                } else {
-                    let mut buttons = state.buttons;
-                    buttons.set(observed.hide, false);
-                    mapper.map(&ControllerState { buttons, ..state })
-                };
+                let mut passed_on = state;
+                passed_on.buttons.set(observed.hide, false);
+                latest = Some(passed_on);
+                let Mapped { shown, desktop } = mapper.current().mapped(&passed_on);
                 live.set(Some(&state), Some(shown));
                 if let Err(error) = controller.update(&shown) {
-                    let _ = unplug(controller, failures);
+                    let _ = unplug(controller, &failures);
                     break InputEnd::Failed(link, error);
                 }
+                hands.hold(desktop);
             }
             LinkRead::Timeout => {}
             LinkRead::Lost => {
-                let _ = release(controller.as_mut(), failures);
+                let _ = release(controller.as_mut(), &failures);
                 break InputEnd::LinkLost(controller);
             }
         }
     };
+    hands.let_go();
     live.set(None, None);
     end
 }

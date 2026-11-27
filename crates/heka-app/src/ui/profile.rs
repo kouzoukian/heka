@@ -6,8 +6,10 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input as TextInput, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Selectable, Sizable, Theme};
 use gpui_kit_assets::IconName;
+use heka_core::desktop::{Chord, Key, MouseButton, WheelStep};
 use heka_core::profile::{Binding, Input, Output};
 use heka_core::profiles::suggest_name;
 use heka_core::tuning::{StickSide, TriggerSide};
@@ -16,7 +18,7 @@ use heka_core::virtual_controller::OutputType;
 use crate::text;
 use crate::ui::banners::{clamped, strip, text_button};
 use crate::ui::detail::row;
-use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
+use crate::ui::metrics::{CONTROL, GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
 use crate::ui::rules::rule_strip;
@@ -26,6 +28,29 @@ use crate::ui::sticks::sticks_section;
 use crate::ui::triggers::triggers_section;
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
+
+pub type KeyLabel = Rc<dyn Fn(Key) -> Option<String>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Default,
+    Button,
+    Key,
+    Mouse,
+    Nothing,
+}
+
+impl Kind {
+    pub fn of(binding: Binding) -> Self {
+        match binding {
+            Binding::Default => Self::Default,
+            Binding::Nothing => Self::Nothing,
+            Binding::To(_) => Self::Button,
+            Binding::Keys(_) => Self::Key,
+            Binding::Mouse(_) | Binding::Wheel(_) => Self::Mouse,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Manage {
@@ -49,6 +74,8 @@ pub enum ProfileAction {
     Show(Section),
     Side(StickSide),
     TriggerSide(TriggerSide),
+    Kind(Kind),
+    Capture(Input),
     Duplicate,
     StartRename,
     CommitRename,
@@ -63,6 +90,9 @@ pub type ProfileAct = Rc<dyn Fn(ProfileAction, &mut Window, &mut App)>;
 
 pub struct ProfileView<'a> {
     pub editing: Option<Input>,
+    pub kind: Option<Kind>,
+    pub capturing: bool,
+    pub key_label: KeyLabel,
     pub section: Section,
     pub side: StickSide,
     pub trigger_side: TriggerSide,
@@ -382,10 +412,10 @@ fn output_row(profile: &ProfileEntry, send: &SendCommand, theme: &Theme) -> Div 
         .child(segmented(segments, send, theme))
 }
 
-fn binding_block(
-    profile: &ProfileEntry,
+fn binding_block<'a>(
+    profile: &'a ProfileEntry,
     input: Input,
-    view: &ProfileView<'_>,
+    view: &'a ProfileView<'a>,
     send: &SendCommand,
     theme: &Theme,
 ) -> Div {
@@ -393,6 +423,7 @@ fn binding_block(
     let open = view.editing == Some(input);
     let toggle = Rc::clone(&view.toggle);
     let changed = binding != Binding::Default;
+    let words = SharedString::from(text::binding_words(binding, view.key_label.as_ref()));
     let current = Button::new(SharedString::from(format!(
         "binding-{}-{input:?}",
         profile.id
@@ -404,13 +435,9 @@ fn binding_block(
     } else {
         faint(theme)
     })
-    .accessibility_label(text::binding_words(binding))
+    .accessibility_label(words.clone())
     .tooltip(text::BINDING_TIP)
-    .child(
-        div()
-            .text_size(SMALL_TEXT)
-            .child(text::binding_words(binding)),
-    )
+    .child(div().text_size(SMALL_TEXT).child(words))
     .on_click(move |_, window, cx| toggle(input, window, cx));
     let block = div()
         .flex()
@@ -418,43 +445,116 @@ fn binding_block(
         .flex_none()
         .child(row(theme).child(text::input_name(input)).child(current));
     if open {
-        block.child(options(profile, input, binding, view, send, theme))
+        block.child(options(OpenBinding {
+            profile,
+            input,
+            binding,
+            view,
+            send,
+            theme,
+        }))
     } else {
         block
     }
 }
 
-fn options(
-    profile: &ProfileEntry,
+#[derive(Clone, Copy)]
+struct OpenBinding<'a> {
+    profile: &'a ProfileEntry,
     input: Input,
     binding: Binding,
-    view: &ProfileView<'_>,
-    send: &SendCommand,
-    theme: &Theme,
-) -> Div {
-    let choices = [Binding::Default, Binding::Nothing]
-        .into_iter()
-        .chain(Output::ALL.into_iter().map(Binding::To));
-    let buttons = choices.map(|choice| {
-        let command = Command::BindInput(profile.id.clone(), input, choice);
-        let send = Rc::clone(send);
-        let toggle = Rc::clone(&view.toggle);
-        Button::new(SharedString::from(format!(
-            "bind-{}-{input:?}-{}",
-            profile.id,
-            text::binding_words(choice)
-        )))
-        .outline()
-        .selected(binding == choice)
-        .child(
-            div()
-                .text_size(SMALL_TEXT)
-                .child(text::binding_words(choice)),
-        )
-        .on_click(move |_, window, cx| {
+    view: &'a ProfileView<'a>,
+    send: &'a SendCommand,
+    theme: &'a Theme,
+}
+
+impl OpenBinding<'_> {
+    fn id(&self, control: impl std::fmt::Display) -> SharedString {
+        format!("{control}-{}-{:?}", self.profile.id, self.input).into()
+    }
+
+    fn choose(&self, choice: Binding) -> Pick {
+        let input = self.input;
+        let command = Command::BindInput(self.profile.id.clone(), input, choice);
+        let send = Rc::clone(self.send);
+        let toggle = Rc::clone(&self.view.toggle);
+        Rc::new(move |window, cx| {
             send(command.clone());
             toggle(input, window, cx);
         })
+    }
+
+    fn segment(
+        &self,
+        words: &'static str,
+        choice: Binding,
+    ) -> (SharedString, &'static str, bool, Pick) {
+        (
+            self.id(words),
+            words,
+            self.binding == choice,
+            self.choose(choice),
+        )
+    }
+}
+
+fn options(open: OpenBinding<'_>) -> Div {
+    let kind = open.view.kind.unwrap_or_else(|| Kind::of(open.binding));
+    let block = div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .child(kind_row(open, kind));
+    match kind {
+        Kind::Default | Kind::Nothing => block,
+        Kind::Button => block.child(buttons_to_drive(open)),
+        Kind::Key => block.child(keys_row(open)).child(desktop_note(open.theme)),
+        Kind::Mouse => block
+            .child(mouse_row(open))
+            .child(wheel_row(open))
+            .child(desktop_note(open.theme)),
+    }
+}
+
+fn kind_row(open: OpenBinding<'_>, shown: Kind) -> Div {
+    let show = |kind: Kind| -> Pick {
+        let act = Rc::clone(&open.view.act);
+        Rc::new(move |window, cx| act(ProfileAction::Kind(kind), window, cx))
+    };
+    let items = [
+        (Kind::Default, text::DEFAULT, open.choose(Binding::Default)),
+        (Kind::Button, text::KIND_BUTTON, show(Kind::Button)),
+        (Kind::Key, text::KIND_KEY, show(Kind::Key)),
+        (Kind::Mouse, text::KIND_MOUSE, show(Kind::Mouse)),
+        (
+            Kind::Nothing,
+            text::BINDING_NOTHING,
+            open.choose(Binding::Nothing),
+        ),
+    ]
+    .map(|(kind, words, pick)| {
+        (
+            open.id(format_args!("kind-{words}")),
+            words,
+            kind == shown,
+            pick,
+        )
+    });
+    row(open.theme)
+        .justify_start()
+        .child(picked(items, open.theme))
+}
+
+fn buttons_to_drive(open: OpenBinding<'_>) -> Div {
+    let buttons = Output::ALL.into_iter().map(|output| {
+        let words = text::output_name(output);
+        let pick = open.choose(Binding::To(output));
+        Button::new(open.id(format_args!("bind-{output:?}")))
+            .outline()
+            .selected(open.binding == Binding::To(output))
+            .accessibility_label(words)
+            .child(div().text_size(SMALL_TEXT).child(words))
+            .on_click(move |_, window, cx| pick(window, cx))
     });
     div()
         .flex()
@@ -463,6 +563,85 @@ fn options(
         .px(INSET)
         .py(GAP)
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(open.theme.border)
         .children(buttons)
+}
+
+fn keys_row(open: OpenBinding<'_>) -> Div {
+    let capturing = open.view.capturing;
+    let words: SharedString = match open.binding {
+        _ if capturing => text::CAPTURING_KEY.into(),
+        Binding::Keys(chord) => text::chord_words(chord, open.view.key_label.as_ref()).into(),
+        _ => text::CAPTURE_KEY.into(),
+    };
+    let act = Rc::clone(&open.view.act);
+    let input = open.input;
+    let capture = control_button(open.id("capture"), words.clone())
+        .selected(capturing)
+        .tooltip(text::CAPTURE_TIP)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(GAP)
+                .text_size(SMALL_TEXT)
+                .child(icon(IconName::Keyboard))
+                .child(words),
+        )
+        .on_click(move |_, window, cx| act(ProfileAction::Capture(input), window, cx));
+    let escape = capturing.then(|| {
+        let pick = open.choose(Binding::Keys(Chord::of(Key::ESCAPE)));
+        control_button(open.id("bind-escape"), text::BIND_ESCAPE.into())
+            .child(div().text_size(SMALL_TEXT).child(text::BIND_ESCAPE))
+            .on_click(move |_, window, cx| pick(window, cx))
+    });
+    row(open.theme)
+        .child(explained(text::ROW_KEYS, text::KEYS_TIP, open.theme))
+        .child(
+            div()
+                .flex()
+                .gap(GAP)
+                .text_color(open.theme.foreground)
+                .children(escape)
+                .child(capture),
+        )
+}
+
+fn control_button(id: SharedString, label: SharedString) -> Button {
+    Button::new(id)
+        .outline()
+        .h(CONTROL)
+        .px(GAP)
+        .accessibility_label(label)
+}
+
+fn mouse_row(open: OpenBinding<'_>) -> Div {
+    let segments = MouseButton::ALL.map(|button| {
+        let words = match button {
+            MouseButton::Forward => text::FORWARD_SHORT,
+            other => text::mouse_button_name(other),
+        };
+        open.segment(words, Binding::Mouse(button))
+    });
+    row(open.theme)
+        .child(explained(
+            text::ROW_MOUSE_BUTTON,
+            text::MOUSE_BUTTON_TIP,
+            open.theme,
+        ))
+        .child(picked(segments, open.theme))
+}
+
+fn wheel_row(open: OpenBinding<'_>) -> Div {
+    let segments =
+        WheelStep::ALL.map(|step| open.segment(text::wheel_name(step), Binding::Wheel(step)));
+    row(open.theme)
+        .child(explained(text::ROW_WHEEL, text::WHEEL_TIP, open.theme))
+        .child(picked(segments, open.theme))
+}
+
+fn desktop_note(theme: &Theme) -> Stateful<Div> {
+    strip("desktop-note", 2, theme)
+        .child(clamped(text::DESKTOP_NOTE.into()))
+        .tooltip(|window, cx| Tooltip::new(text::DESKTOP_NOTE).build(window, cx))
 }

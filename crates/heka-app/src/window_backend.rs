@@ -10,10 +10,13 @@ use heka_app::ui::model::{
 use heka_app::{log, text};
 use heka_core::app_settings::{AppSettings, CloseAction};
 use heka_core::autostart::Autostart;
+use heka_core::capture::KeyListener;
+use heka_core::desktop::Key;
 use heka_core::setup::Driver;
 use heka_core::window_placement::WindowPlacement;
 use heka_windows::autostart::RunKey;
 use heka_windows::foreground;
+use heka_windows::keyboard::{self, KeyHook};
 
 use crate::bridging::{Bridging, Status};
 use crate::releases::Releases;
@@ -226,6 +229,20 @@ impl Backend for WindowBackend {
 
     fn running_programs(&self) -> Vec<String> {
         foreground::running_programs()
+    }
+
+    fn listen_for_keys(&self) -> Option<Box<dyn KeyListener>> {
+        match KeyHook::install() {
+            Ok(hook) => Some(Box::new(hook)),
+            Err(error) => {
+                log::line(&text::log::cannot_listen_for_keys(&error.to_string()));
+                None
+            }
+        }
+    }
+
+    fn key_label(&self, key: Key) -> Option<String> {
+        keyboard::key_label(key)
     }
 }
 

@@ -1,10 +1,12 @@
 pub mod autostart;
 pub mod bluetooth;
 pub mod clock;
+pub mod desktop;
 pub mod drivers;
 pub mod foreground;
 pub mod hid;
 pub mod hidhide;
+pub mod keyboard;
 pub mod metrics;
 pub mod single_instance;
 pub mod vigem;

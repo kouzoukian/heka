@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
+use crate::desktop::{Desk, DesktopOutput};
 use crate::feedback::Motor;
 use crate::game_rules::{Front, RuleSelector, Surroundings};
 use crate::idle::{IdleTime, IdleTimer};
@@ -172,6 +173,7 @@ pub struct Supervisor {
     next_link_id: u64,
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
+    desk: Arc<Desk>,
     dropped: Vec<LinkId>,
     radio: Option<Box<dyn Radio>>,
     turned_off: Vec<LinkId>,
@@ -198,6 +200,7 @@ impl Supervisor {
             next_link_id: 0,
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
+            desk: Arc::default(),
             dropped: Vec::new(),
             radio: None,
             turned_off: Vec::new(),
@@ -211,6 +214,11 @@ impl Supervisor {
 
     pub fn turning_off_with(mut self, radio: Box<dyn Radio>) -> Self {
         self.radio = Some(radio);
+        self
+    }
+
+    pub fn sending_to(mut self, output: Box<dyn DesktopOutput>) -> Self {
+        self.desk = Arc::new(Desk::new(output));
         self
     }
 
@@ -250,6 +258,10 @@ impl Supervisor {
 
     pub fn take_virtual_failures(&mut self) -> Vec<VirtualFailure> {
         self.failures.take()
+    }
+
+    pub fn take_desktop_failure(&mut self) -> Option<String> {
+        self.desk.take_failure()
     }
 
     pub fn controllers(&self) -> Vec<ControllerView> {
@@ -453,6 +465,7 @@ impl Supervisor {
         done.extend(self.apply(changes, now));
         done.extend(self.run_shortcuts(now));
         done.extend(self.turn_off_idle(now));
+        self.desk.settle();
         done
     }
 
@@ -722,6 +735,7 @@ impl Supervisor {
         let changes = self.lifecycle.quit();
         let done = self.apply(changes, now);
         self.slots.clear();
+        self.desk.settle();
         done
     }
 
@@ -895,6 +909,7 @@ impl Supervisor {
         let mapper = Mapper::new(&self.profile_of(mac));
         let shortcuts = self.settings().app().shortcuts;
         let threads = Arc::clone(&self.threads);
+        let desk = Arc::clone(&self.desk);
         let slot = self.slot(mac);
         let link = slot
             .take_active()
@@ -905,6 +920,7 @@ impl Supervisor {
         controller.shortcuts_with(Arc::clone(&slot.shortcuts));
         controller.follow(Arc::clone(&slot.preferences));
         controller.map_with(Arc::clone(&slot.mapper));
+        controller.use_desk(desk);
         match Bridge::resume_on(threads.as_ref(), link, controller, Arc::clone(&slot.live)) {
             Ok(bridge) => {
                 slot.bridge = Some(bridge);

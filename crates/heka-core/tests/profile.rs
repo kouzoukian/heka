@@ -1,3 +1,4 @@
+use heka_core::desktop::{Chord, DesktopState, Key, MouseButton, WheelStep};
 use heka_core::profile::{Binding, DEFAULT_NAME, Input, Mapper, Output, Profile};
 use heka_core::state::{Battery, Buttons, Charge, ControllerState, Finger, Stick};
 use heka_core::virtual_controller::OutputType;
@@ -408,4 +409,151 @@ fn a_name_is_trimmed_and_cut() {
     assert_eq!(profile.name, "Racing");
     profile.rename(" Shooter ");
     assert_eq!(profile.name, "Shooter");
+}
+
+const M: Key = Key::new(0x32);
+
+fn ctrl_m() -> Chord {
+    Chord::new(&[Key::LEFT_CTRL, M]).unwrap()
+}
+
+fn holding(chords: &[Chord]) -> DesktopState {
+    let mut held = DesktopState::default();
+    for &chord in chords {
+        held.add_chord(chord);
+    }
+    held
+}
+
+#[test]
+fn a_button_bound_to_a_key_holds_it_and_leaves_the_virtual_controller() {
+    let mapper = mapper(&[(Input::Cross, Binding::Keys(ctrl_m()))]);
+
+    let mapped = mapper.mapped(&pressed(Buttons::CROSS | Buttons::SQUARE));
+
+    assert_eq!(mapped.shown.buttons, Buttons::SQUARE);
+    assert_eq!(mapped.desktop, holding(&[ctrl_m()]));
+    assert_eq!(
+        mapper.mapped(&ControllerState::NEUTRAL).desktop,
+        DesktopState::default()
+    );
+}
+
+#[test]
+fn a_button_bound_to_a_mouse_button_or_the_wheel_leaves_the_virtual_controller() {
+    let mapper = mapper(&[
+        (Input::L1, Binding::Mouse(MouseButton::Right)),
+        (Input::R1, Binding::Wheel(WheelStep::Down)),
+    ]);
+
+    let mapped = mapper.mapped(&pressed(Buttons::L1 | Buttons::R1));
+
+    let mut held = DesktopState::default();
+    held.add_button(MouseButton::Right);
+    held.add_wheel(Input::R1 as usize, WheelStep::Down);
+    assert_eq!(mapped.shown.buttons, Buttons::NONE);
+    assert_eq!(mapped.desktop, held);
+}
+
+#[test]
+fn a_profile_without_desktop_bindings_holds_nothing() {
+    let mapper = mapper(&[(Input::Cross, Binding::To(Output::Circle))]);
+
+    let mapped = mapper.mapped(&pressed(every_button()));
+
+    assert_eq!(mapped.desktop, DesktopState::default());
+}
+
+#[test]
+fn a_trigger_bound_to_a_key_gives_up_its_travel() {
+    let mapper = mapper(&[(Input::L2, Binding::Keys(Chord::of(M)))]);
+    let state = ControllerState {
+        left_trigger: 200,
+        ..pressed(Buttons::L2)
+    };
+
+    let mapped = mapper.mapped(&state);
+
+    assert_eq!(mapped.shown.left_trigger, 0);
+    assert_eq!(mapped.shown.buttons, Buttons::NONE);
+    assert_eq!(mapped.desktop, holding(&[Chord::of(M)]));
+}
+
+#[test]
+fn a_touchpad_half_can_hold_a_key() {
+    let mapper = mapper(&[(Input::TouchpadLeft, Binding::Keys(Chord::of(M)))]);
+
+    assert_eq!(
+        mapper.mapped(&click_at(10)).desktop,
+        holding(&[Chord::of(M)])
+    );
+    assert_eq!(
+        mapper.mapped(&click_at(1900)).desktop,
+        DesktopState::default()
+    );
+}
+
+#[test]
+fn keys_mouse_buttons_and_the_wheel_survive_a_save_and_load() {
+    let mut profile = Profile::named("Desk");
+    profile.bind(Input::Cross, Binding::Keys(ctrl_m()));
+    profile.bind(Input::Circle, Binding::Keys(Chord::of(Key::RIGHT_CTRL)));
+    profile.bind(Input::L1, Binding::Mouse(MouseButton::Forward));
+    profile.bind(Input::R1, Binding::Wheel(WheelStep::Up));
+
+    let loaded = Profile::load(&profile.to_json(), "ignored");
+
+    assert_eq!(loaded, Some(profile));
+}
+
+#[test]
+fn the_file_names_keys_by_scan_code_and_the_mouse_by_name() {
+    let mut profile = Profile::named("Desk");
+    profile.bind(Input::Cross, Binding::Keys(ctrl_m()));
+    profile.bind(Input::Circle, Binding::Keys(Chord::of(Key::RIGHT_CTRL)));
+    profile.bind(Input::L1, Binding::Mouse(MouseButton::Back));
+    profile.bind(Input::R1, Binding::Wheel(WheelStep::Down));
+
+    let json: serde_json::Value = serde_json::from_str(&profile.to_json()).unwrap();
+
+    let bindings = &json["bindings"];
+    assert_eq!(bindings["cross"], serde_json::json!({"keys": [29, 50]}));
+    assert_eq!(bindings["circle"], serde_json::json!({"keys": [57373]}));
+    assert_eq!(bindings["l1"], serde_json::json!({"mouse": "back"}));
+    assert_eq!(bindings["r1"], serde_json::json!({"wheel": "down"}));
+}
+
+#[test]
+fn a_broken_desktop_binding_is_dropped_and_the_rest_load() {
+    let text = r#"{
+        "bindings": {
+            "cross": {"keys": []},
+            "circle": {"keys": [50, 29]},
+            "square": {"keys": [0]},
+            "triangle": {"keys": [70000]},
+            "l1": {"mouse": "thumb"},
+            "r1": {"wheel": "sideways"},
+            "l3": {"keys": [50], "mouse": "left"},
+            "r3": {},
+            "create": {"keys": 50},
+            "options": {"keys": [50], "from_the_future": true}
+        }
+    }"#;
+
+    let profile = Profile::load(text, "Desk").unwrap();
+
+    assert_eq!(profile.binding(Input::Options), Binding::Keys(Chord::of(M)));
+    for input in [
+        Input::Cross,
+        Input::Circle,
+        Input::Square,
+        Input::Triangle,
+        Input::L1,
+        Input::R1,
+        Input::L3,
+        Input::R3,
+        Input::Create,
+    ] {
+        assert_eq!(profile.binding(input), Binding::Default, "{input:?}");
+    }
 }

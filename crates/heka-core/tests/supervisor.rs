@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::app_settings::AppSettings;
 use heka_core::calibration::Calibration;
+use heka_core::desktop::{Chord, DesktopError, DesktopEvent, DesktopOutput, Key};
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
@@ -2348,4 +2349,177 @@ fn a_short_press_of_the_turn_off_shortcut_leaves_the_controller_on() {
 
     assert_eq!(radio.turned_off(), []);
     assert!(!ever_showed(&bus, Buttons::OPTIONS));
+}
+
+const M: Key = Key::new(0x32);
+const Q: Key = Key::new(0x10);
+
+fn key_down(key: Key) -> DesktopEvent {
+    DesktopEvent::Key { key, down: true }
+}
+
+fn key_up(key: Key) -> DesktopEvent {
+    DesktopEvent::Key { key, down: false }
+}
+
+#[derive(Default)]
+struct DesktopRecord {
+    sent: Vec<DesktopEvent>,
+    refusing: bool,
+}
+
+#[derive(Clone, Default)]
+struct FakeDesktop(Arc<Mutex<DesktopRecord>>);
+
+impl FakeDesktop {
+    fn sent(&self) -> Vec<DesktopEvent> {
+        self.0.lock().unwrap().sent.clone()
+    }
+
+    fn refuse(&self, refusing: bool) {
+        self.0.lock().unwrap().refusing = refusing;
+    }
+}
+
+impl DesktopOutput for FakeDesktop {
+    fn send(&mut self, events: &[DesktopEvent]) -> Result<(), DesktopError> {
+        let mut record = self.0.lock().unwrap();
+        if record.refusing {
+            return Err(DesktopError::new("access is denied"));
+        }
+        record.sent.extend_from_slice(events);
+        Ok(())
+    }
+}
+
+fn key_profiles() -> Profiles {
+    Profiles::load([(
+        "desk".to_owned(),
+        r#"{"name": "Desk", "bindings": {"cross": {"keys": [50]}}}"#.to_owned(),
+    )])
+}
+
+fn typing_setup() -> (Supervisor, FakeDesktop) {
+    let desktop = FakeDesktop::default();
+    let (supervisor, _) = setup();
+    let mut supervisor = supervisor.sending_to(Box::new(desktop.clone()));
+    supervisor.set_profiles(key_profiles(), Instant::now());
+    (supervisor, desktop)
+}
+
+fn holding_the_key(
+    supervisor: &mut Supervisor,
+    desktop: &FakeDesktop,
+    controller: MacAddress,
+) -> LinkHandle {
+    let t0 = Instant::now();
+    let link = LinkHandle::default();
+    supervisor.choose_profile(controller, Some("desk".into()), t0);
+    supervisor.link_arrived(controller, link.reader(), t0);
+    link.send(cross());
+    wait_until(|| desktop.sent() == [key_down(M)]);
+    link
+}
+
+#[test]
+fn a_key_is_released_when_its_bridge_becomes_held() {
+    let (mut supervisor, desktop) = typing_setup();
+    let link = holding_the_key(&mut supervisor, &desktop, mac(1));
+
+    link.pull_out();
+    poll_until_changed(&mut supervisor, Instant::now());
+
+    assert_eq!(desktop.sent(), [key_down(M), key_up(M)]);
+}
+
+#[test]
+fn a_key_is_released_when_its_controller_is_stopped() {
+    let (mut supervisor, desktop) = typing_setup();
+    let link = holding_the_key(&mut supervisor, &desktop, mac(1));
+
+    supervisor.stop(mac(1), Instant::now());
+    link.send(cross());
+    shows_live_input(&supervisor, 0, &link);
+
+    assert_eq!(desktop.sent(), [key_down(M), key_up(M)]);
+}
+
+#[test]
+fn a_key_is_released_on_quit() {
+    let (mut supervisor, desktop) = typing_setup();
+    let _link = holding_the_key(&mut supervisor, &desktop, mac(1));
+
+    supervisor.quit(Instant::now());
+
+    assert_eq!(desktop.sent(), [key_down(M), key_up(M)]);
+}
+
+#[test]
+fn a_key_is_released_when_the_profile_is_changed() {
+    let (mut supervisor, desktop) = typing_setup();
+    let _link = holding_the_key(&mut supervisor, &desktop, mac(1));
+
+    supervisor.choose_profile(mac(1), None, Instant::now());
+
+    wait_until(|| desktop.sent() == [key_down(M), key_up(M)]);
+}
+
+#[test]
+fn a_key_is_released_when_its_binding_is_edited() {
+    let (mut supervisor, desktop) = typing_setup();
+    let link = holding_the_key(&mut supervisor, &desktop, mac(1));
+    let mut profiles = key_profiles();
+    profiles
+        .get_mut("desk")
+        .unwrap()
+        .bind(Input::Cross, Binding::Keys(Chord::of(Q)));
+
+    supervisor.set_profiles(profiles, Instant::now());
+    link.send(cross());
+
+    wait_until(|| desktop.sent() == [key_down(M), key_up(M), key_down(Q)]);
+}
+
+#[test]
+fn a_key_two_controllers_hold_is_released_only_when_both_let_go() {
+    let (mut supervisor, desktop) = typing_setup();
+    let _first = holding_the_key(&mut supervisor, &desktop, mac(1));
+    let second = LinkHandle::default();
+    supervisor.choose_profile(mac(2), Some("desk".into()), Instant::now());
+    supervisor.link_arrived(mac(2), second.reader(), Instant::now());
+    second.send(cross());
+    wait_for_raw_buttons(&supervisor, 1, Buttons::CROSS);
+
+    supervisor.stop(mac(1), Instant::now());
+    assert_eq!(desktop.sent(), [key_down(M)]);
+
+    supervisor.stop(mac(2), Instant::now());
+    assert_eq!(desktop.sent(), [key_down(M), key_up(M)]);
+}
+
+#[test]
+fn a_refused_release_is_tried_again_at_the_next_poll_and_reported() {
+    let (mut supervisor, desktop) = typing_setup();
+    let _link = holding_the_key(&mut supervisor, &desktop, mac(1));
+    desktop.refuse(true);
+    supervisor.stop(mac(1), Instant::now());
+    assert_eq!(
+        supervisor.take_desktop_failure().as_deref(),
+        Some("access is denied")
+    );
+
+    desktop.refuse(false);
+    supervisor.poll(Instant::now());
+
+    assert_eq!(desktop.sent(), [key_down(M), key_up(M)]);
+    assert_eq!(supervisor.take_desktop_failure(), None);
+}
+
+fn wait_for_raw_buttons(supervisor: &Supervisor, place: usize, buttons: Buttons) {
+    wait_until(|| {
+        supervisor.controllers()[place]
+            .live
+            .latest_raw()
+            .is_some_and(|state| state.buttons == buttons)
+    });
 }

@@ -13,10 +13,11 @@ use gpui_component::input::{InputEvent, InputState};
 use gpui_component::status_bar::StatusBar;
 use gpui_component::{ActiveTheme, Root, TitleBar};
 use gpui_kit_assets::IconName;
+use heka_core::capture::{Captured, KeyCapture, KeyListener};
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
-use heka_core::profile::{Input, MAX_NAME_CHARS};
+use heka_core::profile::{Binding, Input, MAX_NAME_CHARS};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 use heka_core::shortcuts::ShortcutAction;
@@ -27,7 +28,9 @@ use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_
 use crate::ui::games::{GamesAct, GamesAction, GamesView};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand, sorted_profiles};
-use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding};
+use crate::ui::profile::{
+    KeyLabel, Kind, Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding,
+};
 use crate::ui::settings::Fields;
 use crate::ui::shortcuts::{ShortcutsAct, ShortcutsAction, ShortcutsView};
 use crate::ui::{detail, panel, picker, placement};
@@ -109,6 +112,20 @@ pub fn open_window(
     })
 }
 
+struct Capturing {
+    profile: String,
+    input: Input,
+    listener: Box<dyn KeyListener>,
+    keys: KeyCapture,
+}
+
+impl Capturing {
+    fn hear(&mut self) -> Option<Captured> {
+        let heard = self.listener.heard();
+        heard.into_iter().find_map(|stroke| self.keys.hear(stroke))
+    }
+}
+
 struct MainView {
     backend: Rc<dyn Backend>,
     screen: Screen,
@@ -119,6 +136,8 @@ struct MainView {
     held_colour: Lightbar,
     filled: Option<MacAddress>,
     editing: Option<Input>,
+    kind: Option<Kind>,
+    capture: Option<Capturing>,
     rename: Entity<InputState>,
     manage: Manage,
     section: Section,
@@ -188,6 +207,15 @@ impl MainView {
         .detach();
         cx.on_release(|this: &mut Self, _| this.leave_settings())
             .detach();
+        cx.observe_window_activation(window, |this: &mut Self, window, cx| {
+            if !window.is_window_active() {
+                this.hear_keys(cx);
+                if this.capture.take().is_some() {
+                    cx.notify();
+                }
+            }
+        })
+        .detach();
         cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
             if let Some(placement) = placement::current(window, cx) {
                 this.backend.command(Command::RememberWindow(placement));
@@ -207,6 +235,8 @@ impl MainView {
             held_colour: Lightbar::DEFAULT,
             filled: None,
             editing: None,
+            kind: None,
+            capture: None,
             rename,
             manage: Manage::Idle,
             section: Section::default(),
@@ -225,12 +255,57 @@ impl MainView {
             self.selection.follow(&self.screen.controllers);
             cx.notify();
         }
+        self.hear_keys(cx);
+    }
+
+    fn hear_keys(&mut self, cx: &mut Context<Self>) {
+        let chosen = self.chosen_profile();
+        let Some(capture) = &mut self.capture else {
+            return;
+        };
+        if chosen.as_ref() != Some(&capture.profile) {
+            self.capture = None;
+            cx.notify();
+            return;
+        }
+        let Some(captured) = capture.hear() else {
+            return;
+        };
+        if let Captured::Chord(chord) = captured {
+            let command =
+                Command::BindInput(capture.profile.clone(), capture.input, Binding::Keys(chord));
+            self.backend.command(command);
+            self.close_binding();
+        }
+        self.capture = None;
+        cx.notify();
+    }
+
+    fn toggle_capture(&mut self, input: Input) {
+        if self.capture.take().is_some() {
+            return;
+        }
+        self.capture = self.chosen_profile().and_then(|profile| {
+            let listener = self.backend.listen_for_keys()?;
+            Some(Capturing {
+                profile,
+                input,
+                keys: KeyCapture::new(listener.has_alt_gr()),
+                listener,
+            })
+        });
+    }
+
+    fn close_binding(&mut self) {
+        self.editing = None;
+        self.kind = None;
+        self.capture = None;
     }
 
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
         self.selection.choose(mac, &self.screen.controllers);
         self.page = self.page.of_a_controller();
-        self.editing = None;
+        self.close_binding();
         self.manage = Manage::Idle;
         cx.notify();
     }
@@ -240,11 +315,9 @@ impl MainView {
     }
 
     fn toggle_binding(&mut self, input: Input, cx: &mut Context<Self>) {
-        self.editing = if self.editing == Some(input) {
-            None
-        } else {
-            Some(input)
-        };
+        let open = (self.editing != Some(input)).then_some(input);
+        self.close_binding();
+        self.editing = open;
         cx.notify();
     }
 
@@ -269,11 +342,16 @@ impl MainView {
         cx: &mut Context<Self>,
     ) {
         let chosen = self.chosen_profile();
+        if !matches!(action, ProfileAction::Capture(_)) {
+            self.capture = None;
+        }
         match action {
             ProfileAction::Show(section) => {
                 self.section = section;
-                self.editing = None;
+                self.close_binding();
             }
+            ProfileAction::Kind(kind) => self.kind = Some(kind),
+            ProfileAction::Capture(input) => self.toggle_capture(input),
             ProfileAction::Side(side) => self.side = side,
             ProfileAction::TriggerSide(side) => self.trigger_side = side,
             ProfileAction::Duplicate => {
@@ -412,7 +490,7 @@ impl MainView {
 
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
-        self.editing = None;
+        self.close_binding();
         self.rule_open = None;
         self.programs = None;
         self.shortcut_open = None;
@@ -501,6 +579,8 @@ impl MainView {
         let toggle_binding: ToggleBinding = Rc::new(move |input, _, cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.toggle_binding(input, cx));
         });
+        let backend = Rc::clone(&self.backend);
+        let key_label: KeyLabel = Rc::new(move |key| backend.key_label(key));
         let view = cx.weak_entity();
         let act: ProfileAct = Rc::new(move |action, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.profile_action(action, window, cx));
@@ -521,6 +601,9 @@ impl MainView {
             }),
             Page::Profile => Showing::Profile(ProfileView {
                 editing: self.editing,
+                kind: self.kind,
+                capturing: self.capture.is_some(),
+                key_label,
                 section: self.section,
                 side: self.side,
                 trigger_side: self.trigger_side,
