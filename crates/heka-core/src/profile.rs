@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
-use crate::tuning::{StickChange, StickSide, StickTuning, fine, tuned_stick};
+use crate::tuning::{
+    StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
+    tuned_stick,
+};
 use crate::virtual_controller::OutputType;
 
 pub const DEFAULT_NAME: &str = "Default";
@@ -194,6 +197,10 @@ pub struct Profile {
     pub right_stick: StickTuning,
     #[serde(skip_serializing_if = "is_false")]
     pub swap_sticks: bool,
+    #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
+    pub left_trigger: TriggerTuning,
+    #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
+    pub right_trigger: TriggerTuning,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -215,6 +222,8 @@ impl Profile {
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_trigger: TriggerTuning::default(),
+            right_trigger: TriggerTuning::default(),
         }
     }
 
@@ -238,6 +247,8 @@ impl Profile {
             "left_stick",
             "right_stick",
             "swap_sticks",
+            "left_trigger",
+            "right_trigger",
         ]
         .iter()
         .any(|key| root.contains_key(*key));
@@ -269,6 +280,7 @@ impl Profile {
             })
             .collect();
         let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
+        let trigger = |key: &str| root.get(key).map(TriggerTuning::load).unwrap_or_default();
         Some(Self {
             name,
             output_type,
@@ -279,6 +291,8 @@ impl Profile {
                 .get("swap_sticks")
                 .and_then(given::<bool>)
                 .unwrap_or(false),
+            left_trigger: trigger("left_trigger"),
+            right_trigger: trigger("right_trigger"),
         })
     }
 
@@ -322,12 +336,28 @@ impl Profile {
         }
     }
 
+    pub fn trigger(&self, side: TriggerSide) -> &TriggerTuning {
+        match side {
+            TriggerSide::Left => &self.left_trigger,
+            TriggerSide::Right => &self.right_trigger,
+        }
+    }
+
+    pub fn change_trigger(&mut self, side: TriggerSide, change: TriggerChange) {
+        match side {
+            TriggerSide::Left => self.left_trigger.change(change),
+            TriggerSide::Right => self.right_trigger.change(change),
+        }
+    }
+
     pub fn is_plain(&self) -> bool {
         self.output_type.is_none()
             && self.bindings.is_empty()
             && self.left_stick.is_neutral()
             && self.right_stick.is_neutral()
             && !self.swap_sticks
+            && self.left_trigger.is_neutral()
+            && self.right_trigger.is_neutral()
     }
 }
 
@@ -354,6 +384,8 @@ pub struct Mapper {
     left_stick: StickTuning,
     right_stick: StickTuning,
     swap_sticks: bool,
+    left_trigger: TriggerTuning,
+    right_trigger: TriggerTuning,
 }
 
 impl Default for Mapper {
@@ -363,6 +395,8 @@ impl Default for Mapper {
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_trigger: TriggerTuning::default(),
+            right_trigger: TriggerTuning::default(),
         }
     }
 }
@@ -373,6 +407,8 @@ impl Mapper {
             left_stick: profile.left_stick,
             right_stick: profile.right_stick,
             swap_sticks: profile.swap_sticks,
+            left_trigger: profile.left_trigger,
+            right_trigger: profile.right_trigger,
             ..Self::default()
         };
         for input in Input::ALL {
@@ -398,7 +434,7 @@ impl Mapper {
         };
         for input in Input::ALL {
             let own = input.buttons();
-            if !state.buttons.contains(own) {
+            if !self.pressed(input, state) {
                 continue;
             }
             match input {
@@ -420,10 +456,10 @@ impl Mapper {
                 _ => drive(self.slot(input), own),
             }
         }
-        if left_full {
+        if left_full || self.hair_trigger_fires(Input::L2, state.left_trigger) {
             buttons |= Buttons::L2;
         }
-        if right_full {
+        if right_full || self.hair_trigger_fires(Input::R2, state.right_trigger) {
             buttons |= Buttons::R2;
         }
         let (left_stick, right_stick, fine_sticks) = self.sticks(state);
@@ -455,6 +491,29 @@ impl Mapper {
         }
     }
 
+    fn tuning_of(&self, input: Input) -> &TriggerTuning {
+        match input {
+            Input::L2 => &self.left_trigger,
+            _ => &self.right_trigger,
+        }
+    }
+
+    fn pressed(&self, input: Input, state: &ControllerState) -> bool {
+        let travel = match input {
+            Input::L2 => state.left_trigger,
+            Input::R2 => state.right_trigger,
+            _ => return state.buttons.contains(input.buttons()),
+        };
+        match self.tuning_of(input).presses(travel) {
+            Some(pressed) if self.slot(input) != Slot::Unbound => pressed,
+            _ => state.buttons.contains(input.buttons()),
+        }
+    }
+
+    fn hair_trigger_fires(&self, input: Input, travel: u8) -> bool {
+        self.slot(input) == Slot::Unbound && self.tuning_of(input).fires_hair_trigger(travel)
+    }
+
     fn slot(&self, input: Input) -> Slot {
         self.slots[input.index()]
     }
@@ -463,7 +522,7 @@ impl Mapper {
         if full {
             u8::MAX
         } else if self.slot(input) == Slot::Unbound {
-            travel
+            self.tuning_of(input).tune(travel)
         } else {
             0
         }

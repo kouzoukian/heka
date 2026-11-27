@@ -83,3 +83,13 @@ The Profile page has three sections, chosen by a switch at its top: Profiles (th
 - The Sticks section tunes the left or the right stick as chosen by a second switch. Its readout draws the Controller's own stick position and the tuned one as two dots in a circle, with rings at the dead zone and at the max zone, and says how many reports a second the Controller sends. With the sticks swapped, the tuned dot of a stick is the one the Virtual Controller shows on the other side, because that is where its tuning ends up.
 - Dead zone, anti-dead zone, max zone and sensitivity are chosen from steps (0, 5, 10, 15, 20 and 30% of travel for the dead zone and so on) rather than a slider, and a value that a file holds outside the steps is offered as one more step, so that it is shown as chosen and can be left. The curve is chosen from its five shapes, and each axis can be inverted.
 - The Default Profile has no tuning; its Sticks and Buttons sections say it cannot be changed.
+
+## Trigger tuning
+
+Each trigger of a Profile has a dead zone, a max zone, a curve, an optional hair trigger point and an optional press point, all neutral to begin with. A Profile with neutral triggers writes nothing for them and the Mapper leaves the triggers as they are.
+
+- The travel is 8 bits end to end, in the Controller, in the Xbox report and in the PS4 report, so unlike sticks nothing wider is carried.
+- The tuned travel is nothing up to the dead zone, then stretched so that the max zone is full travel, then shaped by one of the same five curves as for sticks. A hair trigger point makes any pull from there on, which is outside the dead zone, read as fully pressed. A hair trigger point inside the dead zone never fires.
+- The Controller's own click of L2 or R2 is left as it sends it. With a hair trigger and no Binding on the trigger the click is set as well when the hair trigger fires, so that a game which reads the button of a PS4 pad and a game which reads the travel see the same press.
+- A press point matters only to a trigger that has a Binding. Its input then counts as pressed from that share of the travel, using the Controller's own travel and not its click, so that a Binding to a button can be set to a light or a deep press. Without a press point such a Binding follows the click, as before. A trigger without a Binding keeps its click whatever the press point.
+- A Binding on the trigger takes away its travel, and a button that presses a trigger fully gives full travel, whatever the tuning.

@@ -214,3 +214,123 @@ pub fn fine(left: (i16, i16), right: (i16, i16)) -> FineSticks {
         right_y: right.1,
     }
 }
+
+pub const MIN_POINT: u8 = 1;
+pub const MAX_POINT: u8 = 100;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TriggerSide {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TriggerChange {
+    DeadZone(u8),
+    MaxZone(u8),
+    Curve(Curve),
+    HairTrigger(Option<u8>),
+    PressPoint(Option<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct TriggerTuning {
+    pub dead_zone: u8,
+    pub max_zone: u8,
+    pub curve: Curve,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hair_trigger: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub press_point: Option<u8>,
+}
+
+impl Default for TriggerTuning {
+    fn default() -> Self {
+        Self {
+            dead_zone: 0,
+            max_zone: 100,
+            curve: Curve::Linear,
+            hair_trigger: None,
+            press_point: None,
+        }
+    }
+}
+
+impl TriggerTuning {
+    pub fn is_neutral(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn shapes_travel(&self) -> bool {
+        Self {
+            press_point: None,
+            ..*self
+        } != Self::default()
+    }
+
+    pub fn clamped(self) -> Self {
+        let dead_zone = self.dead_zone.min(MAX_DEAD_ZONE);
+        let point = |point: u8| point.clamp(MIN_POINT, MAX_POINT);
+        Self {
+            dead_zone,
+            max_zone: self.max_zone.clamp(MIN_MAX_ZONE, 100).max(dead_zone + 1),
+            hair_trigger: self.hair_trigger.map(point),
+            press_point: self.press_point.map(point),
+            ..self
+        }
+    }
+
+    pub fn change(&mut self, change: TriggerChange) {
+        match change {
+            TriggerChange::DeadZone(percent) => self.dead_zone = percent,
+            TriggerChange::MaxZone(percent) => self.max_zone = percent,
+            TriggerChange::Curve(curve) => self.curve = curve,
+            TriggerChange::HairTrigger(point) => self.hair_trigger = point,
+            TriggerChange::PressPoint(point) => self.press_point = point,
+        }
+        *self = self.clamped();
+    }
+
+    pub(crate) fn load(value: &Value) -> Self {
+        let defaults = Self::default();
+        let field = |name: &str| value.get(name);
+        Self {
+            dead_zone: given(field("dead_zone")).unwrap_or(defaults.dead_zone),
+            max_zone: given(field("max_zone")).unwrap_or(defaults.max_zone),
+            curve: given(field("curve")).unwrap_or(defaults.curve),
+            hair_trigger: given(field("hair_trigger")).unwrap_or(defaults.hair_trigger),
+            press_point: given(field("press_point")).unwrap_or(defaults.press_point),
+        }
+        .clamped()
+    }
+
+    pub fn fires_hair_trigger(&self, travel: u8) -> bool {
+        let Some(point) = self.hair_trigger else {
+            return false;
+        };
+        let share = f32::from(travel) / 255.0;
+        share > f32::from(self.dead_zone) / 100.0 && share >= f32::from(point) / 100.0
+    }
+
+    pub fn tune(&self, travel: u8) -> u8 {
+        if !self.shapes_travel() {
+            return travel;
+        }
+        if self.fires_hair_trigger(travel) {
+            return u8::MAX;
+        }
+        let share = f32::from(travel) / 255.0;
+        let dead = f32::from(self.dead_zone) / 100.0;
+        let max = f32::from(self.max_zone) / 100.0;
+        if share <= dead {
+            return 0;
+        }
+        let scaled = ((share - dead) / (max - dead)).clamp(0.0, 1.0);
+        (self.curve.apply(scaled).clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
+    pub fn presses(&self, travel: u8) -> Option<bool> {
+        let point = self.press_point?;
+        Some(u32::from(travel) >= (u32::from(point) * 255 + 50) / 100)
+    }
+}
