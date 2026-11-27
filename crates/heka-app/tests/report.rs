@@ -10,6 +10,7 @@ use heka_core::link::ControllerModel;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
 use heka_core::radio::TurnOffError;
+use heka_core::release::{CheckError, Version};
 use heka_core::settings::Settings;
 use heka_core::setup::{self, BusUnavailable, Drivers};
 use heka_core::supervisor::{BridgeError, ControllerView, Supervisor};
@@ -155,4 +156,39 @@ fn a_failure_to_turn_off_is_reported_when_it_appears_or_changes() {
     );
     assert!(reporter.controllers(&[view(None)]).is_empty());
     assert_eq!(reporter.controllers(&[failed("access is denied")]), words);
+}
+
+#[test]
+fn a_newer_release_is_logged_with_its_page_and_no_newer_one_is_not() {
+    let newer = Version::parse("0.2.0").unwrap();
+
+    assert_eq!(text::log::release_check(&Ok(None)), None);
+    assert_eq!(
+        text::log::release_check(&Ok(Some(newer))).as_deref(),
+        Some("heka 0.2.0 is available: https://github.com/kouzoukian/heka/releases/tag/v0.2.0")
+    );
+}
+
+#[test]
+fn a_failed_release_check_is_logged_with_its_reason() {
+    for (error, why) in [
+        (
+            CheckError::NotFetched("WinHTTP error 12007".into()),
+            "WinHTTP error 12007",
+        ),
+        (CheckError::Refused(404), "GitHub answered with status 404"),
+        (
+            CheckError::Unreadable("missing field `tag_name`".into()),
+            "GitHub's answer cannot be read: missing field `tag_name`",
+        ),
+        (
+            CheckError::UnknownTag("nightly".into()),
+            "the latest release's tag \"nightly\" is not a version",
+        ),
+    ] {
+        assert_eq!(
+            text::log::release_check(&Err(error)),
+            Some(format!("cannot check for a new release: {why}"))
+        );
+    }
 }

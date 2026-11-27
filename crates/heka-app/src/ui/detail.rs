@@ -15,7 +15,7 @@ use crate::text;
 use crate::ui::about::about;
 use crate::ui::app_settings::app_settings;
 use crate::ui::assets::{battery_icon, link_icon};
-use crate::ui::banners::{clamped, notice_banner, setup_banners, strip};
+use crate::ui::banners::{clamped, notice_banner, release_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
 use crate::ui::log;
 use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
@@ -77,7 +77,14 @@ pub fn pane(
             .min_h_0()
             .overflow_y_scroll()
     };
-    let controller = |body: Stateful<Div>| body.children(setup_banners(&screen.missing, send, cx));
+    let controller = |body: Stateful<Div>| {
+        body.children(
+            screen
+                .newer_release
+                .map(|release| release_banner(release, cx)),
+        )
+        .children(setup_banners(&screen.missing, send, cx))
+    };
     let body = match (entry, showing) {
         (_, Showing::Log(recent)) => log::entries(recent, cx).into_any_element(),
         (_, Showing::About) => scrolling().child(about(cx)).into_any_element(),

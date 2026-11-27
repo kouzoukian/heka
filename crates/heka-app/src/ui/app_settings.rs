@@ -46,6 +46,16 @@ pub fn app_settings(app: AppEntry, send: &SendCommand, cx: &App) -> Div {
                 theme,
             )),
         )
+        .child(group(text::UPDATES, theme))
+        .child(
+            line(text::ROW_CHECK_FOR_RELEASES, text::CHECK_FOR_RELEASES_TIP).child(on_off(
+                "check-for-releases",
+                app.check_for_releases,
+                |on| Command::ChangeAppSetting(AppChange::CheckForReleases(on)),
+                send,
+                theme,
+            )),
+        )
         .child(group(text::FILES, theme))
         .child(
             row(theme).child(text::ROW_SETTINGS_FOLDER).child(

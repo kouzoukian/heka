@@ -7,6 +7,7 @@ use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
 use heka_core::radio::TurnOffError;
+use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
 use heka_core::supervisor::BridgeError;
 use heka_core::virtual_controller::OutputType;
@@ -193,6 +194,10 @@ pub const START_IN_TRAY_TIP: &str = "Also when started by hand.";
 pub const ROW_CLOSING: &str = "Closing the window";
 pub const CLOSING_TIP: &str = "Keep running leaves heka in the tray.";
 pub const KEEP_RUNNING: &str = "Keep running";
+pub const UPDATES: &str = "Updates";
+pub const ROW_CHECK_FOR_RELEASES: &str = "Check for new releases";
+pub const CHECK_FOR_RELEASES_TIP: &str = "At start and once a day. heka downloads nothing.";
+pub const RELEASE_NOTES: &str = "Release notes";
 pub const FILES: &str = "Files";
 pub const ROW_SETTINGS_FOLDER: &str = "Settings folder";
 pub const OPEN_FOLDER: &str = "Open folder";
@@ -252,6 +257,10 @@ pub fn summary(controllers: usize, bridged: usize) -> String {
         1 => format!("1 Controller, {bridged} Bridged"),
         _ => format!("{controllers} Controllers, {bridged} Bridged"),
     }
+}
+
+pub fn new_release(version: Version) -> String {
+    format!("heka {version} is available.")
 }
 
 pub fn hid_error(error: &str) -> String {
@@ -456,6 +465,7 @@ pub mod log {
     use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
     use heka_core::mac::MacAddress;
     use heka_core::radio::TurnOffError;
+    use heka_core::release::{CheckError, Version};
     use heka_core::setup::{Driver, Setup};
     use heka_core::supervisor::BridgeError;
 
@@ -576,6 +586,31 @@ pub mod log {
 
     pub fn no_longer(warning: &str) -> String {
         format!("No longer: {warning}")
+    }
+
+    pub fn release_check(found: &Result<Option<Version>, CheckError>) -> Option<String> {
+        match found {
+            Ok(None) => None,
+            Ok(Some(newer)) => Some(format!(
+                "heka {newer} is available: {}",
+                newer.release_page()
+            )),
+            Err(error) => Some(format!(
+                "cannot check for a new release: {}",
+                release_error(error)
+            )),
+        }
+    }
+
+    fn release_error(error: &CheckError) -> String {
+        match error {
+            CheckError::NotFetched(error) => error.clone(),
+            CheckError::Refused(status) => format!("GitHub answered with status {status}"),
+            CheckError::Unreadable(error) => format!("GitHub's answer cannot be read: {error}"),
+            CheckError::UnknownTag(tag) => {
+                format!("the latest release's tag {tag:?} is not a version")
+            }
+        }
     }
 
     pub fn cannot_restore_on_quit(error: &HidingError) -> String {

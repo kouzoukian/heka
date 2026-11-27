@@ -9,6 +9,7 @@ icon_assets!(
     ExtraIcons,
     [
         Bluetooth,
+        CircleArrowUp,
         Gamepad2,
         Palette,
         Power,

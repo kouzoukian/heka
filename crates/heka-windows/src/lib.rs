@@ -7,4 +7,5 @@ pub mod hidhide;
 pub mod metrics;
 pub mod single_instance;
 pub mod vigem;
+pub mod web;
 pub mod window;

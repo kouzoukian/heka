@@ -9,9 +9,11 @@ use gpui_component::link::Link;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Theme};
 use gpui_kit_assets::IconName;
+use heka_core::release::Version;
 use heka_core::setup::Missing;
 
 use crate::text::setup as text;
+use crate::text::{RELEASE_NOTES, new_release};
 use crate::ui::metrics::{CONTROL, GAP, INSET, LINE, ROW, SMALL_TEXT, icon};
 use crate::ui::model::{Command, Level, Notice, SendCommand};
 
@@ -50,6 +52,21 @@ pub fn notice_banner(place: usize, notice: &Notice, cx: &App) -> Stateful<Div> {
     tinted(strip(format!("notice-{place}"), 1, theme), color, theme)
         .child(icon(name).text_color(color))
         .child(clamped(words.clone()))
+        .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
+}
+
+pub fn release_banner(release: Version, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let words = SharedString::from(new_release(release));
+    tinted(strip("release", 1, theme), theme.info, theme)
+        .child(icon(IconName::CircleArrowUp).text_color(theme.info))
+        .child(clamped(words.clone()).flex_initial())
+        .child(
+            Link::new("release-notes")
+                .flex_none()
+                .href(release.release_page())
+                .child(RELEASE_NOTES),
+        )
         .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
 }
 

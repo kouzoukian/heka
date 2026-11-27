@@ -5,7 +5,7 @@ const PE32_PLUS: u16 = 0x20b;
 const IMPORT_TABLE: usize = 1;
 const DELAY_IMPORT_TABLE: usize = 13;
 
-const WINDOWS_DLLS: [&str; 25] = [
+const WINDOWS_DLLS: [&str; 26] = [
     "advapi32.dll",
     "bcryptprimitives.dll",
     "bluetoothapis.dll",
@@ -30,6 +30,7 @@ const WINDOWS_DLLS: [&str; 25] = [
     "uiautomationcore.dll",
     "user32.dll",
     "userenv.dll",
+    "winhttp.dll",
     "winmm.dll",
 ];
 

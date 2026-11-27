@@ -13,6 +13,7 @@ The zip is written by the `tar` that comes with Windows, picking the format from
 - `icuuc.dll` came with Windows 10 version 1703, the newest version any listed DLL needs.
 - `bluetoothapis.dll` finds the Bluetooth radios that turn a Controller off.
 - `gdiplus.dll` draws the icons of the menus `gpui-component` opens on text fields.
+- `winhttp.dll` asks GitHub for the latest release ([ADR 0020](0020-checking-for-a-new-release.md)).
 
 ## Which crates are noticed
 

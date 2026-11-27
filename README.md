@@ -30,6 +30,7 @@ it twice. The live pairing of the two is a **Bridge**.
 - **No double input:** the real Controller is hidden from games through HidHide.
 - **Up to 4 Controllers**, each with its own name, rumble strength and lights.
 - **A log** you can read in the window and attach to a report. It stays on your PC.
+- **New releases** are announced in the window. heka downloads nothing.
 - **Portable:** a zip with no installer. No telemetry.
 
 ## Setup
@@ -158,6 +159,8 @@ what concerns heka as a whole.
 - **Start in the tray**, off by default: no window opens when you start heka yourself
   either.
 - **Closing the window**: **Keep running** (the default) or **Quit**.
+- **Check for new releases**, on unless you turn it off. See
+  [Files, updating and removing](#files-updating-and-removing).
 - **Settings folder**, where heka keeps `settings.json`.
 
 heka reopens its window at the size and place you left it, or centred if that is no longer
@@ -233,6 +236,13 @@ own rumble and light bar colours, and may create their own virtual controllers.
 heka sends no telemetry and does not update itself. It keeps its settings in
 `%APPDATA%\heka`, and its log and its record of HidHide changes in `%LOCALAPPDATA%\heka`.
 
+At start and once a day, heka asks GitHub for its latest release. If that is newer than
+yours, the window says so and links to it; pre-releases are not announced. The request
+names only heka and its version, though GitHub sees your IP address, as with any visit.
+A check that fails is noted in [the log](#the-log) and nowhere else. To stop the checks,
+turn off **Check for new releases** in [App settings](#app-settings). heka makes no other
+request over the internet.
+
 To update, quit heka and replace its files with those of the new release. If you move
 the folder, run heka once so that Start with Windows points to its new place.
 
@@ -245,7 +255,7 @@ anything, so that it restores your Controllers.
 `%LOCALAPPDATA%\heka\heka.log` is the current run and `heka.previous.log` the one before
 it, each at most 1 MiB. They hold, with the time of each: heka's start and version, the
 drivers found, Controllers connecting and disconnecting, Bridges, what heka changed in
-HidHide, errors and crashes.
+HidHide, a newer release, errors and crashes.
 
 The log names your Controllers by their **Bluetooth addresses**, and it holds device paths
 and the folder heka runs from, which may include your Windows user name. heka sends it
@@ -283,7 +293,7 @@ GitHub Release.
 | Crate          | What is in it                                                                 |
 | -------------- | ----------------------------------------------------------------------------- |
 | `heka-core`    | Report parsing, translation, Bridge lifecycle and settings, with no Windows calls |
-| `heka-windows` | HID, ViGEmBus, HidHide and autostart access                                   |
+| `heka-windows` | HID, ViGEmBus, HidHide, autostart and web access                              |
 | `heka-app`     | The window ([GPUI](https://www.gpui.rs)) and the tray                         |
 | `heka-package` | The release zip and its third-party notices                                   |
 | `heka-lint`    | The check that bans code comments                                             |

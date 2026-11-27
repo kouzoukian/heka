@@ -12,7 +12,7 @@ Per Controller, keyed by MAC address, heka remembers Stopped, the Output Type, t
 
 ## App settings
 
-What concerns heka as a whole is under `app` in the same file: whether it starts in the tray, what closing the window does, and where the window was. A file without it, as v1 wrote, gives the defaults; a broken field gives that field alone its default. Start with Windows is not in the file ([ADR 0013](0013-windows-integration.md)).
+What concerns heka as a whole is under `app` in the same file: whether it starts in the tray, what closing the window does, whether it checks for new releases ([ADR 0020](0020-checking-for-a-new-release.md)), and where the window was. A file without it, as v1 wrote, gives the defaults; a broken field gives that field alone its default. Start with Windows is not in the file ([ADR 0013](0013-windows-integration.md)).
 
 - The window's thread owns the app settings, so the tray, a closing window and a second launch read them without waiting. It hands every change to the supervisor thread, which alone writes the file.
 - The window is remembered whenever it moves, resizes or is maximized, so nothing has to be caught at quit. A minimized window is not.

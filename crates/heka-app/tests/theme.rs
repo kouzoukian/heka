@@ -76,6 +76,11 @@ fn the_turn_off_icon_ships_with_the_binary() {
 }
 
 #[test]
+fn the_new_release_icon_ships_with_the_binary() {
+    assert!(Assets.load("icons/circle-arrow-up.svg").unwrap().is_some());
+}
+
+#[test]
 fn the_icons_gpui_component_draws_with_ship_too() {
     assert!(Assets.load("icons/window-close.svg").unwrap().is_some());
 }

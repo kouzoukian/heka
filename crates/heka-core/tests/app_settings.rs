@@ -42,6 +42,7 @@ fn heka_keeps_running_and_opens_its_window_by_default() {
         AppSettings {
             start_in_tray: false,
             on_close: CloseAction::KeepRunning,
+            check_for_releases: true,
             window: None,
         }
     );
@@ -75,6 +76,7 @@ fn app_settings_survive_a_save_and_load() {
     settings.set_app(AppSettings {
         start_in_tray: true,
         on_close: CloseAction::Quit,
+        check_for_releases: false,
         window: Some(WindowPlacement {
             bounds: rect(-1200, 40, 900, 700),
             maximized: true,
@@ -91,6 +93,7 @@ fn the_file_names_the_app_settings() {
     let text = r#"{"app": {
         "start_in_tray": true,
         "on_close": "quit",
+        "check_for_releases": false,
         "window": {"x": 10, "y": 20, "width": 700, "height": 600}
     }}"#;
 
@@ -99,6 +102,7 @@ fn the_file_names_the_app_settings() {
         AppSettings {
             start_in_tray: true,
             on_close: CloseAction::Quit,
+            check_for_releases: false,
             window: Some(placed(rect(10, 20, 700, 600))),
         }
     );
@@ -109,6 +113,7 @@ fn a_broken_app_setting_leaves_the_others() {
     let text = r#"{"app": {
         "start_in_tray": true,
         "on_close": "minimize",
+        "check_for_releases": "no",
         "window": {"x": "left"},
         "future": 1
     }}"#;
@@ -158,12 +163,14 @@ fn a_change_touches_only_what_it_names() {
 
     app.change(AppChange::StartInTray(true));
     app.change(AppChange::OnClose(CloseAction::Quit));
+    app.change(AppChange::CheckForReleases(false));
 
     assert_eq!(
         app,
         AppSettings {
             start_in_tray: true,
             on_close: CloseAction::Quit,
+            check_for_releases: false,
             window: Some(placed(rect(1, 2, 700, 600))),
         }
     );

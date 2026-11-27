@@ -262,6 +262,7 @@ fn a_screen_changes_only_when_something_shown_changes() {
         controllers: vec![entry_of(&held, now + Duration::from_millis(after_ms))],
         log: Default::default(),
         app: Default::default(),
+        newer_release: None,
     };
 
     assert_eq!(screen(1), screen(900));
@@ -284,6 +285,7 @@ fn the_status_bar_counts_errors_and_warnings_missing_drivers_among_them() {
         controllers: Vec::new(),
         log: Default::default(),
         app: Default::default(),
+        newer_release: None,
     };
 
     assert_eq!(screen.errors(), 1);
@@ -304,6 +306,7 @@ fn the_status_bar_counts_controllers_and_bridges() {
                 .collect(),
             log: Default::default(),
             app: Default::default(),
+            newer_release: None,
         }
         .summary()
     };

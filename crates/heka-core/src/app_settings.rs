@@ -15,10 +15,11 @@ pub enum CloseAction {
     Quit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppSettings {
     pub start_in_tray: bool,
     pub on_close: CloseAction,
+    pub check_for_releases: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowPlacement>,
 }
@@ -27,6 +28,18 @@ pub struct AppSettings {
 pub enum AppChange {
     StartInTray(bool),
     OnClose(CloseAction),
+    CheckForReleases(bool),
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            start_in_tray: false,
+            on_close: CloseAction::default(),
+            check_for_releases: true,
+            window: None,
+        }
+    }
 }
 
 impl AppSettings {
@@ -37,7 +50,9 @@ impl AppSettings {
         Self {
             start_in_tray: field(entry, "start_in_tray"),
             on_close: field(entry, "on_close"),
-            window: field::<Option<WindowPlacement>>(entry, "window")
+            check_for_releases: given(entry, "check_for_releases")
+                .unwrap_or(Self::default().check_for_releases),
+            window: given::<WindowPlacement>(entry, "window")
                 .filter(|window| window.bounds.width > 0 && window.bounds.height > 0),
         }
     }
@@ -46,6 +61,7 @@ impl AppSettings {
         match change {
             AppChange::StartInTray(start_in_tray) => self.start_in_tray = start_in_tray,
             AppChange::OnClose(on_close) => self.on_close = on_close,
+            AppChange::CheckForReleases(check) => self.check_for_releases = check,
         }
     }
 
@@ -59,8 +75,9 @@ impl AppSettings {
 }
 
 fn field<T: DeserializeOwned + Default>(entry: &Value, name: &str) -> T {
-    entry
-        .get(name)
-        .and_then(|value| T::deserialize(value).ok())
-        .unwrap_or_default()
+    given(entry, name).unwrap_or_default()
+}
+
+fn given<T: DeserializeOwned>(entry: &Value, name: &str) -> Option<T> {
+    entry.get(name).and_then(|value| T::deserialize(value).ok())
 }

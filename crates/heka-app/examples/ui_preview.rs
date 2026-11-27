@@ -17,6 +17,7 @@ use heka_core::lifecycle::Change;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
+use heka_core::release::Version;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
 use heka_core::supervisor::BridgeError;
@@ -33,6 +34,7 @@ struct Fake {
     log: Recent,
     app: RefCell<AppSettings>,
     start_with_windows: Cell<bool>,
+    newer_release: Option<Version>,
 }
 
 impl Fake {
@@ -120,6 +122,7 @@ impl Fake {
             log: made_up_log(),
             app: RefCell::default(),
             start_with_windows: Cell::default(),
+            newer_release: None,
         }
     }
 
@@ -168,7 +171,11 @@ impl Backend for Fake {
                 start_with_windows: self.start_with_windows.get(),
                 start_in_tray: self.app.borrow().start_in_tray,
                 on_close: self.app.borrow().on_close,
+                check_for_releases: self.app.borrow().check_for_releases,
             },
+            newer_release: self
+                .newer_release
+                .filter(|_| self.app.borrow().check_for_releases),
         }
     }
 
@@ -315,6 +322,7 @@ fn main() {
     let mut seconds = None;
     let mut window = None;
     let mut page = Page::default();
+    let mut newer_release = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -330,6 +338,7 @@ fn main() {
                 window = words.as_deref().and_then(placement);
                 assert!(window.is_some(), "--window X,Y,WIDTH,HEIGHT");
             }
+            "--release" => newer_release = Version::parse("0.3.0"),
             "--log" => page = Page::Log,
             "--about" => page = Page::About,
             "--seconds" => seconds = args.next().and_then(|value| value.parse::<u64>().ok()),
@@ -340,7 +349,8 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx| {
             view::init(cx);
-            let fake = Fake::new(empty, missing, first);
+            let mut fake = Fake::new(empty, missing, first);
+            fake.newer_release = newer_release;
             fake.app.borrow_mut().window = window;
             view::open_window(cx, Rc::new(fake), page).expect("failed to open the preview window");
             if let Some(seconds) = seconds {

@@ -13,18 +13,26 @@ use heka_core::window_placement::WindowPlacement;
 use heka_windows::autostart::RunKey;
 
 use crate::bridging::{Bridging, Status};
+use crate::releases::Releases;
 use crate::settings_file;
 
 pub struct WindowBackend {
     bridging: Arc<Bridging>,
+    releases: Releases,
     autostart: RefCell<Autostart<RunKey>>,
     app: RefCell<AppSettings>,
 }
 
 impl WindowBackend {
-    pub fn new(bridging: Arc<Bridging>, autostart: Autostart<RunKey>, app: AppSettings) -> Self {
+    pub fn new(
+        bridging: Arc<Bridging>,
+        releases: Releases,
+        autostart: Autostart<RunKey>,
+        app: AppSettings,
+    ) -> Self {
         Self {
             bridging,
+            releases,
             autostart: RefCell::new(autostart),
             app: RefCell::new(app),
         }
@@ -49,6 +57,9 @@ impl WindowBackend {
         let mut changed = app.clone();
         change(&mut changed);
         if changed != *app {
+            if changed.check_for_releases != app.check_for_releases {
+                self.releases.set_enabled(changed.check_for_releases);
+            }
             app.clone_from(&changed);
             self.bridging.set_app_settings(changed);
         }
@@ -60,6 +71,7 @@ impl WindowBackend {
             start_with_windows: self.starts_with_windows(),
             start_in_tray: app.start_in_tray,
             on_close: app.on_close,
+            check_for_releases: app.check_for_releases,
         }
     }
 }
@@ -94,6 +106,7 @@ impl Backend for WindowBackend {
         let bus_missing = missing
             .iter()
             .any(|missing| missing.driver == Driver::ViGEmBus);
+        let app = self.app_entry();
         Screen {
             starting: snapshot.status == Status::Starting,
             missing,
@@ -110,7 +123,8 @@ impl Backend for WindowBackend {
                 .map(|view| ControllerEntry::from_view(view, now, bus_missing))
                 .collect(),
             log: log::recent(),
-            app: self.app_entry(),
+            app,
+            newer_release: self.releases.newer().filter(|_| app.check_for_releases),
         }
     }
 

@@ -8,6 +8,7 @@ use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{PreferenceChange, Preferences};
+use heka_core::release::Version;
 use heka_core::setup::Missing;
 use heka_core::state::Battery;
 use heka_core::supervisor::ControllerView;
@@ -52,6 +53,7 @@ pub struct AppEntry {
     pub start_with_windows: bool,
     pub start_in_tray: bool,
     pub on_close: CloseAction,
+    pub check_for_releases: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +64,7 @@ pub struct Screen {
     pub controllers: Vec<ControllerEntry>,
     pub log: Recent,
     pub app: AppEntry,
+    pub newer_release: Option<Version>,
 }
 
 impl Screen {

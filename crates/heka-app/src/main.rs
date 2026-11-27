@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridging;
+mod releases;
 mod settings_file;
 mod tray;
 mod window_backend;
@@ -20,6 +21,7 @@ use heka_windows::clock;
 use heka_windows::single_instance::{self, Instance};
 
 use bridging::Bridging;
+use releases::Releases;
 use tray::Request;
 use window_backend::WindowBackend;
 
@@ -72,7 +74,8 @@ fn main() {
         })
         .detach();
 
-        let backend = Rc::new(WindowBackend::new(bridging, autostart(), app));
+        let releases = Releases::start(app.check_for_releases);
+        let backend = Rc::new(WindowBackend::new(bridging, releases, autostart(), app));
         let (requests_sender, requests) = mpsc::channel();
         if let Some(instance) = instance {
             let requests = requests_sender.clone();
