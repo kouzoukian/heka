@@ -114,3 +114,11 @@ The Supervisor lets the rule's Profile take the place of each Controller's own c
 ## Game rules in the app
 
 The window thread owns the rules, as it owns the rest of the app settings, and hands every change to the supervisor thread, which saves them. Deleting a Profile also removes the rules that used it, so that a Profile made later with the same name does not bring them back. The supervisor thread publishes whether the program in front could not be read, for the window to say so.
+
+## Game rules in the window
+
+Game rules are listed in the App settings, under their own heading, because a rule applies to every Controller. Each row names the program, says when its rule applies now, and has the Profile it uses, which opens in place to be changed, and a button to delete it. A rule whose Profile is gone says so. Adding a rule offers the programs that have a window, without those that already have a rule, or a file, and gives the new rule the first Profile by name to be changed afterwards; with no Profile there is nothing to add and the window says to make one first. The running programs are asked for when the offer is opened, not with every redraw, and the offer is kept until it is closed or chosen from.
+
+Two notes sit above the rules: what a rule does, and that rules also work for programs run as administrator in most cases and that heka says when it cannot see one. A third, a warning, appears while the program in front could not be read.
+
+While a rule applies, the Live view and the Profile page start with a strip that says which program's rule it is, which Profile it uses, and which of the Controller's own choice returns afterwards. The Profile page's list keeps showing and changing the Controller's own choice.

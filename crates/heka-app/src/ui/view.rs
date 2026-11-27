@@ -21,9 +21,11 @@ use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 use heka_core::tuning::{StickSide, TriggerSide};
 
+use crate::ui::app_settings::AppView;
 use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
+use crate::ui::games::{GamesAct, GamesAction, GamesView};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
-use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand};
+use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand, sorted_profiles};
 use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding};
 use crate::ui::settings::Fields;
 use crate::ui::{detail, panel, picker, placement};
@@ -120,6 +122,8 @@ struct MainView {
     section: Section,
     side: StickSide,
     trigger_side: TriggerSide,
+    rule_open: Option<String>,
+    programs: Option<Vec<String>>,
 }
 
 impl MainView {
@@ -205,6 +209,8 @@ impl MainView {
             section: Section::default(),
             side: StickSide::Left,
             trigger_side: TriggerSide::Left,
+            rule_open: None,
+            programs: None,
         }
     }
 
@@ -341,9 +347,60 @@ impl MainView {
         .detach();
     }
 
+    fn games_action(&mut self, action: GamesAction, cx: &mut Context<Self>) {
+        match action {
+            GamesAction::OpenRule(program) => {
+                self.rule_open = if self.rule_open.as_deref() == Some(program.as_str()) {
+                    None
+                } else {
+                    Some(program)
+                };
+            }
+            GamesAction::OpenAdd => {
+                self.programs = match self.programs {
+                    Some(_) => None,
+                    None => Some(self.backend.running_programs()),
+                };
+            }
+            GamesAction::CloseAdd => self.programs = None,
+            GamesAction::ChooseFile => self.choose_program_file(cx),
+        }
+        cx.notify();
+    }
+
+    fn choose_program_file(&self, cx: &mut Context<Self>) {
+        let Some(profile) = sorted_profiles(&self.screen.profiles)
+            .first()
+            .map(|profile| profile.id.clone())
+        else {
+            return;
+        };
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(text::CHOOSE_PROGRAM_PROMPT.into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = chosen.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let _ = this.update(cx, |this, cx| {
+                    let program = path.to_string_lossy().into_owned();
+                    this.backend.command(Command::AddGameRule(program, profile));
+                    this.programs = None;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
         self.editing = None;
+        self.rule_open = None;
+        self.programs = None;
         self.manage = Manage::Idle;
         self.leave_settings();
         cx.notify();
@@ -433,6 +490,10 @@ impl MainView {
         let act: ProfileAct = Rc::new(move |action, window: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.profile_action(action, window, cx));
         });
+        let view = cx.weak_entity();
+        let games_act: GamesAct = Rc::new(move |action, _: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.games_action(action, cx));
+        });
         let showing = match self.page {
             Page::Controller => Showing::Live,
             Page::ControllerSettings => Showing::ControllerSettings(Fields {
@@ -449,7 +510,14 @@ impl MainView {
                 toggle: toggle_binding,
                 act,
             }),
-            Page::AppSettings => Showing::AppSettings(self.screen.app),
+            Page::AppSettings => Showing::AppSettings(AppView {
+                entry: self.screen.app,
+                games: GamesView {
+                    rule_open: self.rule_open.as_deref(),
+                    programs: self.programs.as_deref(),
+                    act: games_act,
+                },
+            }),
             Page::Log => Showing::Log(&self.screen.log),
             Page::About => Showing::About,
         };

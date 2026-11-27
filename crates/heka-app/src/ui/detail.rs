@@ -13,15 +13,16 @@ use heka_core::virtual_controller::OutputType;
 use crate::log::Recent;
 use crate::text;
 use crate::ui::about::about;
-use crate::ui::app_settings::app_settings;
+use crate::ui::app_settings::{AppView, app_settings};
 use crate::ui::assets::{battery_icon, link_icon};
 use crate::ui::banners::{clamped, notice_banner, release_banner, setup_banners, strip};
 use crate::ui::drawing::drawing;
 use crate::ui::log;
 use crate::ui::metrics::{CONTROL, GAP, INSET, ROW, SMALL_TEXT, icon};
-use crate::ui::model::{AppEntry, Command, ControllerEntry, EntryState, Screen, SendCommand};
+use crate::ui::model::{Command, ControllerEntry, EntryState, Screen, SendCommand};
 use crate::ui::panel::{entry_color, faint};
 use crate::ui::profile::{ProfileView, profile_page};
+use crate::ui::rules::rule_strip;
 use crate::ui::segmented::{Segment, segmented};
 use crate::ui::settings::{Fields, settings};
 
@@ -29,7 +30,7 @@ pub enum Showing<'a> {
     Live,
     ControllerSettings(Fields<'a>),
     Profile(ProfileView<'a>),
-    AppSettings(AppEntry),
+    AppSettings(AppView<'a>),
     Log(&'a Recent),
     About,
 }
@@ -97,10 +98,11 @@ pub fn pane(
     let body = match (entry, showing) {
         (_, Showing::Log(recent)) => log::entries(recent, cx).into_any_element(),
         (_, Showing::About) => scrolling().child(about(cx)).into_any_element(),
-        (_, Showing::AppSettings(app)) => scrolling()
-            .child(app_settings(app, send, cx))
+        (_, Showing::AppSettings(view)) => scrolling()
+            .child(app_settings(&view, screen, send, cx))
             .into_any_element(),
         (Some(entry), Showing::Live) => controller(scrolling())
+            .children(rule_strip(screen, entry, theme))
             .child(properties(entry, send, cx))
             .children(entry.detail().map(|detail| note(entry, detail, cx)))
             .child(drawing(entry.output_type, entry.pad, cx))

@@ -491,6 +491,26 @@ pub const ROW_INVERT_X: &str = "Invert X";
 pub const ROW_INVERT_Y: &str = "Invert Y";
 pub const ROW_SWAP_STICKS: &str = "Swap sticks";
 pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub const GROUP_GAMES: &str = "Game rules";
+pub const GAMES_NOTE: &str =
+    "A program in front applies its Profile to every Controller. Leaving it restores their own.";
+pub const GAMES_ADMIN_NOTE: &str = "Rules also work for programs run as administrator in most cases. heka says when it cannot see the program in front.";
+pub const FOREGROUND_UNREADABLE: &str = "heka cannot see the program in front, so its rule cannot apply. This happens with some protected programs.";
+pub const NO_PROFILES_FOR_RULE: &str = "Make a Profile first: a rule needs one.";
+pub const ADD_RULE: &str = "Add rule";
+pub const CHOOSE_FILE: &str = "Choose a file";
+pub const RUNNING_PROGRAMS: &str = "Running programs";
+pub const NO_RUNNING_PROGRAMS: &str = "No program with a window was found.";
+pub const RULE_APPLIES_NOW: &str = "Applies now";
+pub const RULE_PROFILE_MISSING: &str = "Profile missing";
+pub const DELETE_RULE: &str = "Delete rule";
+pub const RULE_PROFILE_TIP: &str = "The Profile this program applies";
+pub const CHOOSE_PROGRAM_PROMPT: &str = "Choose the program";
+
+pub fn rule_applies(program: &str, profile: &str, own: &str) -> String {
+    format!("A rule applies: {program} uses {profile}. Your choice, {own}, returns afterwards.")
+}
+
 pub const SECTION_TRIGGERS: &str = "Triggers";
 pub const SIDE_LEFT_TRIGGER: &str = "Left trigger";
 pub const SIDE_RIGHT_TRIGGER: &str = "Right trigger";

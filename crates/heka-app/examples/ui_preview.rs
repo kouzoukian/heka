@@ -168,6 +168,11 @@ impl Backend for Fake {
                 };
             }
         }
+        let applying = self.app.borrow().game_rules.iter().next().cloned();
+        for entry in &mut controllers {
+            entry.rule_program = applying.as_ref().map(|rule| rule.program.clone());
+            entry.applied_profile = applying.as_ref().map(|rule| rule.profile.clone());
+        }
         let missing = self.missing.borrow().clone();
         let notices = if controllers.is_empty() || !missing.is_empty() {
             Vec::new()
@@ -194,7 +199,7 @@ impl Backend for Fake {
             controllers,
             profiles,
             game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
-            rule_applies: None,
+            rule_applies: applying.map(|rule| rule.program),
             foreground_unreadable: false,
             log: Recent::clone(&self.log),
             app: AppEntry {

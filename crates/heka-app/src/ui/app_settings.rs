@@ -8,11 +8,18 @@ use heka_core::app_settings::{AppChange, CloseAction};
 use crate::text;
 use crate::ui::banners::text_button;
 use crate::ui::detail::row;
-use crate::ui::model::{AppEntry, Command, SendCommand};
+use crate::ui::games::{GamesView, games_section};
+use crate::ui::model::{AppEntry, Command, Screen, SendCommand};
 use crate::ui::segmented::{Segment, on_off, segmented};
 use crate::ui::settings::{explained, group};
 
-pub fn app_settings(app: AppEntry, send: &SendCommand, cx: &App) -> Div {
+pub struct AppView<'a> {
+    pub entry: AppEntry,
+    pub games: GamesView<'a>,
+}
+
+pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx: &App) -> Div {
+    let app = view.entry;
     let theme = cx.theme();
     let line =
         |label: &'static str, tip: &'static str| row(theme).child(explained(label, tip, theme));
@@ -56,6 +63,7 @@ pub fn app_settings(app: AppEntry, send: &SendCommand, cx: &App) -> Div {
                 theme,
             )),
         )
+        .child(games_section(&view.games, screen, send, theme))
         .child(group(text::FILES, theme))
         .child(
             row(theme).child(text::ROW_SETTINGS_FOLDER).child(

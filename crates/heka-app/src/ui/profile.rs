@@ -19,6 +19,7 @@ use crate::ui::detail::row;
 use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
+use crate::ui::rules::rule_strip;
 use crate::ui::segmented::{Pick, Segment, picked, segmented};
 use crate::ui::settings::{explained, group};
 use crate::ui::sticks::sticks_section;
@@ -105,6 +106,7 @@ pub fn profile_page(
         .flex_col()
         .flex_1()
         .min_h_0()
+        .children(rule_strip(screen, entry, theme))
         .child(section_switch(view, theme))
         .child(body)
 }

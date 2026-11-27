@@ -342,3 +342,16 @@ fn short_mac(mac: MacAddress) -> String {
 fn whole_seconds(duration: Duration) -> u64 {
     duration.as_millis().div_ceil(1000) as u64
 }
+
+pub fn sorted_profiles(profiles: &[ProfileEntry]) -> Vec<&ProfileEntry> {
+    let mut sorted: Vec<&ProfileEntry> = profiles.iter().collect();
+    sorted.sort_by_key(|profile| profile.profile.name.to_lowercase());
+    sorted
+}
+
+pub fn profile_name<'a>(profiles: &'a [ProfileEntry], id: &str) -> Option<&'a str> {
+    profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .map(|profile| profile.profile.name.as_str())
+}
