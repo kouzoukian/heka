@@ -8,6 +8,7 @@ pub mod drawing;
 pub mod games;
 pub mod gyro;
 pub mod log;
+pub mod macros;
 pub mod metrics;
 pub mod model;
 pub mod pad;

@@ -8,7 +8,7 @@ The Default Profile is not a file. It has no Bindings and no Output Type, so a C
 
 ## Bindings
 
-A Binding says what one input of the Controller drives on the Virtual Controller: another button, a d-pad direction, a trigger pressed all the way, or nothing. It can instead drive the keyboard or mouse ([ADR 0022](0022-keyboard-and-mouse-output.md)). An input with no Binding drives itself. Inputs are the buttons and d-pad directions, the L2 and R2 clicks, mute, the DualSense Edge's Fn and back buttons, and the touchpad click, whole or as its left and right halves.
+A Binding says what one input of the Controller drives on the Virtual Controller: another button, a d-pad direction, a trigger pressed all the way, or nothing. It can instead drive the keyboard or mouse ([ADR 0022](0022-keyboard-and-mouse-output.md)) or run a macro, and can toggle or repeat ([ADR 0023](0023-time-beside-the-mapper.md)). An input with no Binding drives itself. Inputs are the buttons and d-pad directions, the L2 and R2 clicks, mute, the DualSense Edge's Fn and back buttons, and the touchpad click, whole or as its left and right halves.
 
 - Several inputs may drive the same output; it is pressed while any of them is.
 - Bindings are independent: binding one input away leaves its output free for another input, which is how two buttons swap places.
@@ -38,7 +38,7 @@ A running Bridge follows its Controller's Profile the way it follows Preferences
 
 ## The Profile page
 
-The pane has a Profile page beside Controller settings, for the selected Controller. Choosing a Profile in its list assigns it to that Controller and shows it for editing, as in the approved mockup (`docs/mockups/v2.html`). A Binding opens in place under its row, with a switch between Default, Button, Key, Mouse and Nothing; Button lists every output, Key captures one and Mouse offers the buttons and wheel steps. Choosing saves at once, closes the row, and reaches every Controller that uses the Profile. A row is faint while its Binding is the default and bright once changed. The Default Profile shows no Bindings and says it cannot be changed.
+The pane has a Profile page beside Controller settings, for the selected Controller. Choosing a Profile in its list assigns it to that Controller and shows it for editing, as in the approved mockup (`docs/mockups/v2.html`). A Binding opens in place under its row, with a switch between Default, Button, Key, Mouse, Macro and Nothing; Button lists every output, Key captures one, Mouse offers the buttons and wheel steps, and Macro edits its steps. A bound button, key or mouse also offers Hold, Toggle and Turbo. Choosing saves at once and reaches every Controller that uses the Profile; Default and Nothing also close the row. A row is faint while its Binding is the default and bright once changed. The Default Profile shows no Bindings and says it cannot be changed.
 
 While the chosen Profile sets an Output Type, the Output Type switch on the Controller page asks for nothing and its tooltip says why. The Profile's own Output Type is chosen on the Profile page, among the Controller's own, Xbox and PS4.
 

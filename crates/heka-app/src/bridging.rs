@@ -18,6 +18,7 @@ use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
+use heka_core::macros::{MacroChange, Mode};
 use heka_core::preferences::PreferenceChange;
 use heka_core::profile::{Binding, Input, Profile};
 use heka_core::profiles::Profiles;
@@ -92,6 +93,8 @@ enum Command {
     ChangeTouchpad(String, TouchpadChange),
     ChangeGyro(String, GyroChange),
     MeasureDrift(MacAddress),
+    SetMode(String, Input, Mode),
+    ChangeMacro(String, Input, MacroChange),
     Quit,
 }
 
@@ -254,6 +257,16 @@ impl Bridging {
 
     pub fn measure_drift(&self, mac: MacAddress) {
         let _ = self.commands.send(Command::MeasureDrift(mac));
+    }
+
+    pub fn set_mode(&self, profile: String, input: Input, mode: Mode) {
+        let _ = self.commands.send(Command::SetMode(profile, input, mode));
+    }
+
+    pub fn change_macro(&self, profile: String, input: Input, change: MacroChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeMacro(profile, input, change));
     }
 
     pub fn quit(&self) {
@@ -443,6 +456,16 @@ fn supervise(
             Ok(Command::MeasureDrift(mac)) => {
                 supervisor.measure_drift(mac);
                 Vec::new()
+            }
+            Ok(Command::SetMode(id, input, mode)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.set_mode(input, mode);
+                })
+            }
+            Ok(Command::ChangeMacro(id, input, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_macro(input, change);
+                })
             }
             Ok(Command::ChangeTrigger(id, side, change)) => {
                 edit_profile(&mut supervisor, &id, now, |profile| {

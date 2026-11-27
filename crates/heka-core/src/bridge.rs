@@ -71,6 +71,10 @@ impl LiveInput {
         self.seen().times_used
     }
 
+    fn show(&self, shown: ControllerState) {
+        self.seen().latest = Some(shown);
+    }
+
     fn set(&self, physical: Option<&ControllerState>, shown: Option<ControllerState>) {
         let mut seen = self.seen();
         match physical {
@@ -563,8 +567,15 @@ fn run(
                 running.act();
             }
             LinkRead::Timeout => {
-                gyro.read(None, Instant::now());
-                running.tick(mapper.current(), Instant::now());
+                let now = Instant::now();
+                gyro.read(None, now);
+                if let Some(shown) = running.tick(mapper.current(), now) {
+                    live.show(shown);
+                    if let Err(error) = controller.update(&shown) {
+                        let _ = unplug(controller, &failures);
+                        break InputEnd::Failed(link, error);
+                    }
+                }
                 running.act();
             }
             LinkRead::Lost => {

@@ -338,6 +338,18 @@ impl Backend for Fake {
                 }
                 return;
             }
+            Command::SetMode(id, input, mode) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.set_mode(*input, *mode);
+                }
+                return;
+            }
+            Command::ChangeMacro(id, input, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_macro(*input, *change);
+                }
+                return;
+            }
             Command::SetSwapSticks(id, swap) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.swap_sticks = *swap;

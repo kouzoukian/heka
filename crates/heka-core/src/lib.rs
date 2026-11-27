@@ -22,6 +22,7 @@ pub mod live_gyro;
 pub mod live_mapper;
 pub mod live_shortcuts;
 pub mod mac;
+pub mod macros;
 pub mod preferences;
 pub mod profile;
 pub mod profiles;

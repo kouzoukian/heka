@@ -9,7 +9,8 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
-use heka_core::profile::{Binding, Input, Output, ProfileError};
+use heka_core::macros::{Mode, Target};
+use heka_core::profile::{Binding, Input, Output, Profile, ProfileError};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
@@ -720,6 +721,74 @@ pub const BINDING_TIP: &str = "What this input drives";
 pub const KIND_BUTTON: &str = "Button";
 pub const KIND_KEY: &str = "Key";
 pub const KIND_MOUSE: &str = "Mouse";
+pub const KIND_MACRO: &str = "Macro";
+pub const ROW_PRESS_MODE: &str = "Press";
+pub const PRESS_MODE_TIP: &str =
+    "Hold: while held. Toggle: one press holds, the next releases. Turbo: repeats while held.";
+pub const ROW_TURBO_RATE: &str = "Repeats a second";
+pub const TURBO_RATE_TIP: &str = "How often turbo presses it while held";
+pub const ROW_RUNS: &str = "Runs";
+pub const RUNS_TIP: &str = "Letting the input go cancels the macro either way";
+pub const RUNS_ONCE: &str = "Once per press";
+pub const RUNS_HELD: &str = "While held";
+pub const GROUP_STEPS: &str = "Steps";
+pub const STEP_PRESS: &str = "Press";
+pub const STEP_RELEASE: &str = "Release";
+pub const STEP_WAIT: &str = "Wait";
+pub const ROW_DELAY: &str = "Delay in ms";
+pub const DELAY_TIP: &str = "How long the macro waits here";
+pub const ROW_SENDS: &str = "Sends";
+pub const SENDS_TIP: &str = "The key or mouse button this step presses or releases";
+pub const STEP_KEY_TIP: &str = "The key or combination of this step";
+pub const STEP_MOUSE_TIP: &str = "The mouse button of this step";
+pub const ADD_STEP: &str = "Add step";
+pub const MOVE_UP: &str = "Move up";
+pub const MOVE_DOWN: &str = "Move down";
+pub const DELETE_STEP: &str = "Delete step";
+
+pub fn step(number: usize) -> String {
+    format!("{number}.")
+}
+
+pub fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Hold => "Hold",
+        Mode::Toggle => "Toggle",
+        Mode::Turbo(_) => "Turbo",
+    }
+}
+
+pub fn mouse_button_short(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Forward => FORWARD_SHORT,
+        other => mouse_button_name(other),
+    }
+}
+
+pub fn target_words(target: Target, label: &dyn Fn(Key) -> Option<String>) -> String {
+    match target {
+        Target::Keys(chord) => binding_words(Binding::Keys(chord), label),
+        Target::Mouse(button) => binding_words(Binding::Mouse(button), label),
+    }
+}
+
+pub fn input_words(
+    profile: &Profile,
+    input: Input,
+    label: &dyn Fn(Key) -> Option<String>,
+) -> String {
+    let words = binding_words(profile.binding(input), label);
+    if let Some(found) = profile.macro_of(input) {
+        return match found.steps().len() {
+            1 => format!("{words}, 1 step"),
+            steps => format!("{words}, {steps} steps"),
+        };
+    }
+    match profile.mode(input) {
+        Mode::Hold => words,
+        mode => format!("{words}, {}", mode_name(mode).to_lowercase()),
+    }
+}
 pub const ROW_KEYS: &str = "Keys";
 pub const CAPTURE_KEY: &str = "Capture a key";
 pub const CAPTURING_KEY: &str = "Press a key, Esc cancels";
@@ -936,6 +1005,7 @@ pub fn binding_words(binding: Binding, label: &dyn Fn(Key) -> Option<String>) ->
             format!("{KIND_MOUSE} {button}")
         }
         Binding::Wheel(step) => format!("{ROW_WHEEL} {}", wheel_name(step).to_lowercase()),
+        Binding::Macro => KIND_MACRO.to_owned(),
     }
 }
 

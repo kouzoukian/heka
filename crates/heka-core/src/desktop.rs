@@ -121,7 +121,7 @@ impl Chord {
         Self::new(&keys)
     }
 
-    pub fn of(key: Key) -> Self {
+    pub const fn of(key: Key) -> Self {
         Self { modifiers: 0, key }
     }
 

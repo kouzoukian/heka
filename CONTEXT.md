@@ -28,8 +28,11 @@ A named set of choices for how a Controller's input becomes what games receive: 
 _Avoid_: mapping, configuration, preset
 
 **Binding**:
-What one input of a Profile drives: another button, a d-pad direction or a trigger pressed all the way on the Virtual Controller, a key or key combination, a mouse button or a wheel step on the PC, or nothing.
+What one input of a Profile drives: another button, a d-pad direction or a trigger pressed all the way on the Virtual Controller, a key or key combination, a mouse button, a wheel step or a macro on the PC, or nothing. It may hold while the input does, toggle or repeat.
 _Avoid_: mapping, assignment
+
+**Macro**:
+A short list of key and mouse presses, releases and waits that a Binding runs once per press or while held.
 
 **Mapper**:
 The step that turns a Controller's state into the state its Virtual Controller shows and what it does with the PC's keyboard and mouse, by the Controller's Profile.

@@ -5,6 +5,7 @@ use gpui_component::button::Button;
 use gpui_component::{Selectable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::desktop::{Chord, Key};
+use heka_core::macros::{MacroChange, Step, Target};
 use heka_core::profile::{Binding, Input};
 use heka_core::stick_use::{Direction, StickUseChange};
 use heka_core::tuning::StickSide;
@@ -18,6 +19,7 @@ use crate::ui::profile::{ProfileAction, ProfileView};
 pub enum CaptureFor {
     Binding(Input),
     StickKey(StickSide, Direction),
+    MacroStep(Input, usize, bool),
 }
 
 impl CaptureFor {
@@ -26,6 +28,15 @@ impl CaptureFor {
             Self::Binding(input) => Command::BindInput(profile, input, Binding::Keys(chord)),
             Self::StickKey(side, direction) => {
                 Command::ChangeStickUse(profile, side, StickUseChange::Key(direction, chord))
+            }
+            Self::MacroStep(input, index, pressing) => {
+                let target = Target::Keys(chord);
+                let step = if pressing {
+                    Step::Press(target)
+                } else {
+                    Step::Release(target)
+                };
+                Command::ChangeMacro(profile, input, MacroChange::Set(index, step))
             }
         }
     }

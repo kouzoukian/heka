@@ -142,6 +142,7 @@ struct MainView {
     capture: Option<Capturing>,
     stick_use_open: bool,
     gyro_button_open: bool,
+    step_open: Option<usize>,
     rename: Entity<InputState>,
     manage: Manage,
     section: Section,
@@ -243,6 +244,7 @@ impl MainView {
             capture: None,
             stick_use_open: false,
             gyro_button_open: false,
+            step_open: None,
             rename,
             manage: Manage::Idle,
             section: Section::default(),
@@ -289,8 +291,8 @@ impl MainView {
         if let Some(profile) = self.chosen_profile() {
             self.backend.command(target.command(profile, chord));
         }
-        if let CaptureFor::Binding(_) = target {
-            self.close_binding();
+        if let CaptureFor::MacroStep(..) = target {
+            self.step_open = None;
         }
     }
 
@@ -319,6 +321,7 @@ impl MainView {
         self.capture = None;
         self.stick_use_open = false;
         self.gyro_button_open = false;
+        self.step_open = None;
     }
 
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
@@ -370,7 +373,13 @@ impl MainView {
                 self.section = section;
                 self.close_binding();
             }
-            ProfileAction::Kind(kind) => self.kind = Some(kind),
+            ProfileAction::Kind(kind) => {
+                self.kind = Some(kind);
+                self.step_open = None;
+            }
+            ProfileAction::ToggleStep(index) => {
+                self.step_open = (self.step_open != Some(index)).then_some(index);
+            }
             ProfileAction::Capture(target) => self.toggle_capture(target),
             ProfileAction::Side(side) => {
                 self.side = side;
@@ -631,6 +640,7 @@ impl MainView {
                 capturing: self.capture.as_ref().map(|capture| capture.target),
                 stick_use_open: self.stick_use_open,
                 gyro_button_open: self.gyro_button_open,
+                step_open: self.step_open,
                 key_label,
                 section: self.section,
                 side: self.side,

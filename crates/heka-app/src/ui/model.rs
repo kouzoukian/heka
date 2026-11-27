@@ -12,6 +12,7 @@ use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
+use heka_core::macros::{MacroChange, Mode};
 use heka_core::preferences::{PreferenceChange, Preferences};
 use heka_core::profile::{Binding, Input, Profile};
 use heka_core::release::Version;
@@ -82,6 +83,8 @@ pub enum Command {
     ChangeStickUse(String, StickSide, StickUseChange),
     ChangeTouchpad(String, TouchpadChange),
     ChangeGyro(String, GyroChange),
+    SetMode(String, Input, Mode),
+    ChangeMacro(String, Input, MacroChange),
     MeasureDrift(MacAddress),
     ChangeTrigger(String, TriggerSide, TriggerChange),
     AddGameRule(String, String),

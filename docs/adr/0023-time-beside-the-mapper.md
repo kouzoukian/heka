@@ -46,3 +46,14 @@ A Profile leaves the gyro off, or has it move the pointer or add to the right st
 ### Drift
 
 A gyro at rest rarely reads zero. The player asks for a measurement, per Controller, and `settings.json` keeps it as `gyro_drift` in the Controller's entry; it is subtracted before anything else. `DriftMeter` averages a second of reports on the input thread, of a Bridge or a Watch, and refuses a Controller that moved: a spread of more than 4 degrees a second on an axis, or an average of more than 20. It gives up after 5 seconds without enough reports, and when the Link or the Bridge ends. The motion the Virtual Controller reports to games is left as the Controller sends it.
+
+## Toggle, turbo and macros
+
+A Binding to a button, a key, the mouse or the wheel holds while its input does, toggles, or repeats (turbo, 2 to 30 presses a second, half of each period pressed, starting pressed). A macro is a Binding of its own: up to 32 steps that press or release a key or combination or a mouse button, or wait 1 to 10,000 ms, run once per press or again and again while held. A Profile file writes them as `{"button": "cross", "mode": "turbo", "rate": 15}` and `{"macro": [{"press": [16]}, {"wait": 50}, {"release": "left"}], "repeat": false}`. An earlier heka drops both, and a mode it cannot read is a hold.
+
+- The Mapper says which inputs are pressed, the touchpad click already resolved to a half. The running mapper turns those into the inputs that are active under each mode and asks the Mapper what they drive, so toggle and turbo work alike on the Virtual Controller and on the PC.
+- A macro drives nothing on the Virtual Controller. Each run holds its keys through `Hands` of its own, so it shares them with Bindings as any two Bindings do, and sends its events after the Virtual Controller has the report.
+- Letting the input go cancels a run and releases what it held, in both ways of running it, so a run once per press that is let go early stops there. A run that ends with a key still pressed keeps it until then.
+- Steps are due by the clock: a wait counts from when it was due, not from when a report came, so reports only decide how closely the time is met. A run more than 100 ms behind, after a stall, goes on from now instead of catching up. A repeating macro starts again no sooner than 10 ms after it last did.
+- Turbo and macros also move on when a read times out, so a quiet Link does not freeze them, though only every 100 ms.
+- A change of Mapper cancels runs, forgets toggles, and treats an input already down as not newly pressed: a toggle or a macro waits for the next press.

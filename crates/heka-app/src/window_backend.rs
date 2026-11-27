@@ -225,6 +225,10 @@ impl Backend for WindowBackend {
             }
             Command::ChangeGyro(profile, change) => bridging.change_gyro(profile, change),
             Command::MeasureDrift(mac) => bridging.measure_drift(mac),
+            Command::SetMode(profile, input, mode) => bridging.set_mode(profile, input, mode),
+            Command::ChangeMacro(profile, input, change) => {
+                bridging.change_macro(profile, input, change);
+            }
             Command::ChangeTrigger(profile, side, change) => {
                 bridging.change_trigger(profile, side, change);
             }

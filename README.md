@@ -214,6 +214,19 @@ the Controller.
 - **Drift:** if the pointer creeps while the Controller rests, put it down on a flat
   surface and press **Measure**. heka keeps the result for that Controller.
 
+#### Toggle, turbo and macros
+
+A bound button, key, mouse button or wheel step can **Hold** while you hold its input,
+**Toggle** (one press holds it, the next releases it) or **Turbo** (press it again and
+again, 2 to 30 times a second, while held). Choose under **Press**, below the Binding.
+
+**Macro** plays steps you edit by hand: press or release a key, a combination or a mouse
+button, or wait. It runs **Once per press** or **While held**. Letting the button go
+stops it and releases everything it holds, so keep holding until a longer macro ends.
+
+Changing the Profile, a Binding, **Stop**, a disconnection and quitting cancel macros,
+toggles and turbo and release everything.
+
 #### Keyboard and mouse
 
 A button can press a **key**, alone or with Ctrl, Alt, Shift or the Windows key, one of
