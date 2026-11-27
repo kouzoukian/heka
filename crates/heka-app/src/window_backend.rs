@@ -13,6 +13,7 @@ use heka_core::autostart::Autostart;
 use heka_core::setup::Driver;
 use heka_core::window_placement::WindowPlacement;
 use heka_windows::autostart::RunKey;
+use heka_windows::foreground;
 
 use crate::bridging::{Bridging, Status};
 use crate::releases::Releases;
@@ -138,6 +139,12 @@ impl Backend for WindowBackend {
                     users: snapshot.profile_users.get(id).copied().unwrap_or(0),
                 })
                 .collect(),
+            game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            rule_applies: snapshot
+                .controllers
+                .iter()
+                .find_map(|view| view.rule_program.clone()),
+            foreground_unreadable: snapshot.foreground_unreadable,
             log: log::recent(),
             app,
             newer_release: self.releases.newer().filter(|_| app.check_for_releases),
@@ -174,7 +181,21 @@ impl Backend for WindowBackend {
             }
             Command::DuplicateProfile(profile) => bridging.duplicate_profile(profile),
             Command::RenameProfile(profile, name) => bridging.rename_profile(profile, name),
-            Command::DeleteProfile(profile) => bridging.delete_profile(profile),
+            Command::DeleteProfile(profile) => {
+                self.change_app(|app| {
+                    app.game_rules.remove_profile(&profile);
+                });
+                bridging.delete_profile(profile);
+            }
+            Command::AddGameRule(program, profile) => self.change_app(|app| {
+                app.game_rules.add(&program, &profile);
+            }),
+            Command::SetGameRule(program, profile) => self.change_app(|app| {
+                app.game_rules.set_profile(&program, &profile);
+            }),
+            Command::RemoveGameRule(program) => self.change_app(|app| {
+                app.game_rules.remove(&program);
+            }),
             Command::ImportProfile(path) => bridging.import_profile(path),
             Command::ExportProfile(profile, path) => bridging.export_profile(profile, path),
             Command::ChangeStick(profile, side, change) => {
@@ -189,6 +210,10 @@ impl Backend for WindowBackend {
 
     fn window_placement(&self) -> Option<WindowPlacement> {
         self.app.borrow().window.clone()
+    }
+
+    fn running_programs(&self) -> Vec<String> {
+        foreground::running_programs()
     }
 }
 

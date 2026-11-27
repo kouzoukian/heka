@@ -110,3 +110,7 @@ A game rule names a program and a Profile and applies to every Controller. Progr
 - The applying rule is dropped when it is removed or when its Profile goes.
 
 The Supervisor lets the rule's Profile take the place of each Controller's own choice, and never writes it to the settings, so each Controller's own choice is what comes back. Choosing another Profile for a Controller while a rule applies is remembered and shows once the rule ends. A Controller that arrives while a rule applies gets it. When the Profile of the rule that applies is deleted, every Controller goes back at once. `ControllerView` says which Profile applies and which program's rule is the reason, for the window to show.
+
+## Game rules in the app
+
+The window thread owns the rules, as it owns the rest of the app settings, and hands every change to the supervisor thread, which saves them. Deleting a Profile also removes the rules that used it, so that a Profile made later with the same name does not bring them back. The supervisor thread publishes whether the program in front could not be read, for the window to say so.

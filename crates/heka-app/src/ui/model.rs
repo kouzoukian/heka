@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use heka_core::app_settings::{AppChange, CloseAction};
 use heka_core::feedback::Motor;
+use heka_core::game_rules::GameRule;
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
@@ -28,6 +29,10 @@ pub trait Backend {
     fn command(&self, command: Command);
 
     fn window_placement(&self) -> Option<WindowPlacement>;
+
+    fn running_programs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub type SendCommand = Rc<dyn Fn(Command)>;
@@ -61,6 +66,9 @@ pub enum Command {
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
     ChangeTrigger(String, TriggerSide, TriggerChange),
+    AddGameRule(String, String),
+    SetGameRule(String, String),
+    RemoveGameRule(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -78,6 +86,9 @@ pub struct Screen {
     pub notices: Vec<Notice>,
     pub controllers: Vec<ControllerEntry>,
     pub profiles: Vec<ProfileEntry>,
+    pub game_rules: Vec<GameRule>,
+    pub rule_applies: Option<String>,
+    pub foreground_unreadable: bool,
     pub log: Recent,
     pub app: AppEntry,
     pub newer_release: Option<Version>,
@@ -204,6 +215,8 @@ pub struct ControllerEntry {
     pub report_rate: Option<u32>,
     pub output_type: OutputType,
     pub profile: Option<String>,
+    pub applied_profile: Option<String>,
+    pub rule_program: Option<String>,
     pub output_type_from_profile: bool,
     pub state: EntryState,
     pub bus_missing: bool,
@@ -224,8 +237,8 @@ impl ControllerEntry {
             has_bluetooth,
             idle_time,
             profile,
-            applied_profile: _,
-            rule_program: _,
+            applied_profile,
+            rule_program,
             output_type_from_profile,
             live,
             error,
@@ -257,6 +270,8 @@ impl ControllerEntry {
             report_rate: sample.report_rate.map(|rate| rate.round() as u32),
             output_type: *output_type,
             profile: profile.clone(),
+            applied_profile: applied_profile.clone(),
+            rule_program: rule_program.clone(),
             output_type_from_profile: *output_type_from_profile,
             state,
             bus_missing,

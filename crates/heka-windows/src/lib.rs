@@ -2,6 +2,7 @@ pub mod autostart;
 pub mod bluetooth;
 pub mod clock;
 pub mod drivers;
+pub mod foreground;
 pub mod hid;
 pub mod hidhide;
 pub mod metrics;

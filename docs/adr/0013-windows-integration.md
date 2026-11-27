@@ -46,3 +46,14 @@ The two metric calls take no pointers, which is what makes that `unsafe` block s
 ## Windows' view of the window
 
 `IsIconic` and `MonitorFromWindow` fail harmlessly for a handle that names no window, so any value is sound to pass. The monitor's handle is GPUI's display id.
+
+## The program in front
+
+Game rules ([ADR 0021](0021-profiles-and-the-mapper.md)) need to know which program is in front and which are running. `heka-windows` answers both and takes no decisions; `heka-core`'s `RuleSelector` decides. The supervisor thread asks about twice a second, and only while there is a rule or a rule still applies, so heka does nothing with processes unless the player has made a rule.
+
+- The program in front is the window `GetForegroundWindow` names, the process that owns it by `GetWindowThreadProcessId`, and that process's executable by `QueryFullProcessImageNameW`, reduced to its file name. A window of heka's own process is its own, whatever that window is. No window, or one that is gone before it is asked about, is nothing.
+- The process is opened with `PROCESS_QUERY_LIMITED_INFORMATION` only, the right Windows grants for reading a name even of an elevated program, so rules work for programs run as administrator in the usual case. Some processes still refuse, a protected one for example: the program is then unreadable, no rule applies, and the window says that a program heka cannot see exists. This has not been tried on a Windows machine.
+- Whether a program runs is a snapshot of the process list (`CreateToolhelp32Snapshot`), compared by file name. It is taken only when a rule whose Profile sets an Output Type would otherwise end, so most polls never take one.
+- The programs the player can choose from are the processes that own a visible top-level window, found with `EnumWindows`, without heka's own, by file name and without repeats.
+
+What makes each `unsafe` block sound: `GetForegroundWindow` and `GetCurrentProcessId` take nothing. `GetWindowThreadProcessId` is given a handle that may have stopped naming a window, which it answers with a process of 0, and it writes to a local `u32`. A handle from `OpenProcess` is checked for null and owned by a type that closes it. `QueryFullProcessImageNameW` is given a buffer of 1024 units and told so, and on success reports a length within it, so the slice that is read is in bounds. A snapshot handle is checked against `INVALID_HANDLE_VALUE` and closed by the same type, `dwSize` is set before the first call, and `szExeFile` is a null-terminated array that is read up to its terminator. `EnumWindows` calls its callback on the calling thread before it returns, so the pointer to a local `Vec<u32>` that is passed through it is valid and unaliased for every call.

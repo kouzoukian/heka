@@ -26,6 +26,7 @@ use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
 use heka_windows::drivers::InstalledDrivers;
+use heka_windows::foreground;
 use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
@@ -34,6 +35,7 @@ use crate::{profiles_file, settings_file};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const LOG_FLUSH: Duration = Duration::from_secs(1);
+const FOREGROUND_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -50,6 +52,7 @@ pub struct Snapshot {
     pub profiles: Profiles,
     pub profile_notice: Option<String>,
     pub profile_users: BTreeMap<String, usize>,
+    pub foreground_unreadable: bool,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
     pub not_unplugged: Vec<String>,
@@ -98,6 +101,7 @@ impl Bridging {
             profiles: Profiles::default(),
             profile_notice: None,
             profile_users: BTreeMap::new(),
+            foreground_unreadable: false,
             hiding: Vec::new(),
             unopened: Vec::new(),
             not_unplugged: Vec::new(),
@@ -264,6 +268,9 @@ fn supervise(
     let mut looked: Option<Instant> = None;
     let mut unsaved = false;
     let mut profile_notice: Option<String> = None;
+    let mut next_foreground = Instant::now();
+    let mut watching_foreground = false;
+    let mut foreground_unreadable = false;
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
@@ -402,6 +409,23 @@ fn supervise(
         };
         follow(&mut hider, &changes);
 
+        if now >= next_foreground {
+            next_foreground = now + FOREGROUND_POLL;
+            let has_rules = !supervisor.settings().app().game_rules.is_empty();
+            if has_rules || watching_foreground {
+                let seen = if has_rules {
+                    foreground::foreground()
+                } else {
+                    foreground::Foreground::Nothing
+                };
+                foreground_unreadable = seen.is_unreadable();
+                let changes =
+                    supervisor.set_foreground(seen.as_front(), &foreground::is_running, now);
+                follow(&mut hider, &changes);
+                watching_foreground = has_rules;
+            }
+        }
+
         let due = looked.is_none_or(|at| now.duration_since(at) >= POLL_INTERVAL);
         if !burst || due {
             if unsaved {
@@ -444,6 +468,7 @@ fn supervise(
                 profiles: supervisor.profiles().clone(),
                 profile_notice: profile_notice.clone(),
                 profile_users: supervisor.settings().profile_users(),
+                foreground_unreadable,
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),

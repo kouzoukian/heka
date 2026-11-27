@@ -26,6 +26,8 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             report_rate: None,
             output_type: OutputType::Xbox,
             profile: None,
+            applied_profile: None,
+            rule_program: None,
             output_type_from_profile: false,
             state: EntryState::Stopped,
             bus_missing: false,

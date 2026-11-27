@@ -58,6 +58,8 @@ impl Fake {
             report_rate: None,
             output_type,
             profile: None,
+            applied_profile: None,
+            rule_program: None,
             output_type_from_profile: false,
             state,
             bus_missing: missing,
@@ -191,6 +193,9 @@ impl Backend for Fake {
             notices,
             controllers,
             profiles,
+            game_rules: self.app.borrow().game_rules.iter().cloned().collect(),
+            rule_applies: None,
+            foreground_unreadable: false,
             log: Recent::clone(&self.log),
             app: AppEntry {
                 start_with_windows: self.start_with_windows.get(),
@@ -267,6 +272,21 @@ impl Backend for Fake {
                 }
                 return;
             }
+            Command::AddGameRule(program, profile) => {
+                self.app.borrow_mut().game_rules.add(program, profile);
+                return;
+            }
+            Command::SetGameRule(program, profile) => {
+                self.app
+                    .borrow_mut()
+                    .game_rules
+                    .set_profile(program, profile);
+                return;
+            }
+            Command::RemoveGameRule(program) => {
+                self.app.borrow_mut().game_rules.remove(program);
+                return;
+            }
             Command::ChangeTrigger(id, side, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_trigger(*side, *change);
@@ -324,6 +344,12 @@ impl Backend for Fake {
 
     fn window_placement(&self) -> Option<WindowPlacement> {
         self.app.borrow().window.clone()
+    }
+
+    fn running_programs(&self) -> Vec<String> {
+        ["hades2.exe", "steam.exe", "witcher3.exe"]
+            .map(String::from)
+            .to_vec()
     }
 }
 
