@@ -5,8 +5,9 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::desktop::{Chord, DesktopState, Key, MouseButton, WheelStep};
+use crate::desktop::{Chord, DesktopState, MouseButton, WheelStep};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
+use crate::stick_use::{StickRole, StickUseChange, Velocity};
 use crate::tuning::{
     StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
     tuned_stick,
@@ -190,7 +191,7 @@ impl Binding {
             Value::Null => Some(Self::Nothing),
             Value::Object(fields) => {
                 match (fields.get("keys"), fields.get("mouse"), fields.get("wheel")) {
-                    (Some(keys), None, None) => chord(keys).map(Self::Keys),
+                    (Some(keys), None, None) => Chord::load(keys).map(Self::Keys),
                     (None, Some(button), None) => given(button).map(Self::Mouse),
                     (None, None, Some(step)) => given(step).map(Self::Wheel),
                     _ => None,
@@ -215,23 +216,11 @@ impl Serialize for Binding {
         match self {
             Self::Default | Self::Nothing => serializer.serialize_none(),
             Self::To(output) => output.serialize(serializer),
-            Self::Keys(chord) => tagged(
-                serializer,
-                "keys",
-                chord.keys().map(Key::scan).collect::<Vec<_>>(),
-            ),
+            Self::Keys(chord) => tagged(serializer, "keys", chord),
             Self::Mouse(button) => tagged(serializer, "mouse", button),
             Self::Wheel(step) => tagged(serializer, "wheel", step),
         }
     }
-}
-
-fn chord(value: &Value) -> Option<Chord> {
-    let keys = given::<Vec<u16>>(value)?
-        .into_iter()
-        .map(Key::from_scan)
-        .collect::<Option<Vec<_>>>()?;
-    Chord::new(&keys)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +241,10 @@ pub struct Profile {
     pub right_stick: StickTuning,
     #[serde(skip_serializing_if = "is_false")]
     pub swap_sticks: bool,
+    #[serde(skip_serializing_if = "StickRole::is_default")]
+    left_stick_use: StickRole,
+    #[serde(skip_serializing_if = "StickRole::is_default")]
+    right_stick_use: StickRole,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
     pub left_trigger: TriggerTuning,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
@@ -277,6 +270,8 @@ impl Profile {
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_stick_use: StickRole::default(),
+            right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
         }
@@ -302,6 +297,8 @@ impl Profile {
             "left_stick",
             "right_stick",
             "swap_sticks",
+            "left_stick_use",
+            "right_stick_use",
             "left_trigger",
             "right_trigger",
         ]
@@ -332,6 +329,7 @@ impl Profile {
             .collect();
         let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
         let trigger = |key: &str| root.get(key).map(TriggerTuning::load).unwrap_or_default();
+        let stick_use = |key: &str| root.get(key).map(StickRole::load).unwrap_or_default();
         Some(Self {
             name,
             output_type,
@@ -342,6 +340,8 @@ impl Profile {
                 .get("swap_sticks")
                 .and_then(given::<bool>)
                 .unwrap_or(false),
+            left_stick_use: stick_use("left_stick_use"),
+            right_stick_use: stick_use("right_stick_use"),
             left_trigger: trigger("left_trigger"),
             right_trigger: trigger("right_trigger"),
         })
@@ -385,6 +385,20 @@ impl Profile {
         }
     }
 
+    pub fn stick_use(&self, side: StickSide) -> &StickRole {
+        match side {
+            StickSide::Left => &self.left_stick_use,
+            StickSide::Right => &self.right_stick_use,
+        }
+    }
+
+    pub fn change_stick_use(&mut self, side: StickSide, change: StickUseChange) {
+        match side {
+            StickSide::Left => self.left_stick_use.change(change),
+            StickSide::Right => self.right_stick_use.change(change),
+        }
+    }
+
     pub fn trigger(&self, side: TriggerSide) -> &TriggerTuning {
         match side {
             TriggerSide::Left => &self.left_trigger,
@@ -405,6 +419,8 @@ impl Profile {
             && self.left_stick.is_neutral()
             && self.right_stick.is_neutral()
             && !self.swap_sticks
+            && self.left_stick_use.is_default()
+            && self.right_stick_use.is_default()
             && self.left_trigger.is_neutral()
             && self.right_trigger.is_neutral()
     }
@@ -432,6 +448,8 @@ pub struct Mapper {
     left_stick: StickTuning,
     right_stick: StickTuning,
     swap_sticks: bool,
+    left_stick_use: StickRole,
+    right_stick_use: StickRole,
     left_trigger: TriggerTuning,
     right_trigger: TriggerTuning,
 }
@@ -443,6 +461,8 @@ impl Default for Mapper {
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_stick_use: StickRole::default(),
+            right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
         }
@@ -455,6 +475,8 @@ impl Mapper {
             left_stick: profile.left_stick,
             right_stick: profile.right_stick,
             swap_sticks: profile.swap_sticks,
+            left_stick_use: profile.left_stick_use,
+            right_stick_use: profile.right_stick_use,
             left_trigger: profile.left_trigger,
             right_trigger: profile.right_trigger,
             ..Self::default()
@@ -514,6 +536,10 @@ impl Mapper {
             buttons |= Buttons::R2;
         }
         let (left_stick, right_stick, fine_sticks) = self.sticks(state);
+        self.left_stick_use
+            .press(&self.left_stick, state.left_stick, &mut desktop);
+        self.right_stick_use
+            .press(&self.right_stick, state.right_stick, &mut desktop);
         let shown = ControllerState {
             buttons,
             left_trigger: self.trigger(Input::L2, left_full, state.left_trigger),
@@ -526,16 +552,34 @@ impl Mapper {
         Mapped { shown, desktop }
     }
 
+    pub fn velocity(&self, state: &ControllerState) -> Velocity {
+        let left = self
+            .left_stick_use
+            .velocity(&self.left_stick, state.left_stick);
+        let right = self
+            .right_stick_use
+            .velocity(&self.right_stick, state.right_stick);
+        left + right
+    }
+
     fn sticks(&self, state: &ControllerState) -> (Stick, Stick, Option<FineSticks>) {
-        if self.left_stick.is_neutral() && self.right_stick.is_neutral() {
+        let both_sticks = self.left_stick_use.is_stick() && self.right_stick_use.is_stick();
+        if both_sticks && self.left_stick.is_neutral() && self.right_stick.is_neutral() {
             return if self.swap_sticks {
                 (state.right_stick, state.left_stick, state.fine_sticks)
             } else {
                 (state.left_stick, state.right_stick, state.fine_sticks)
             };
         }
-        let (left, left_wide) = tuned_stick(&self.left_stick, state.left_stick);
-        let (right, right_wide) = tuned_stick(&self.right_stick, state.right_stick);
+        let own = |role: &StickRole, tuning: &StickTuning, stick: Stick| {
+            if role.is_stick() {
+                tuned_stick(tuning, stick)
+            } else {
+                (Stick::CENTER, (0, 0))
+            }
+        };
+        let (left, left_wide) = own(&self.left_stick_use, &self.left_stick, state.left_stick);
+        let (right, right_wide) = own(&self.right_stick_use, &self.right_stick, state.right_stick);
         if self.swap_sticks {
             (right, left, Some(fine(right_wide, left_wide)))
         } else {

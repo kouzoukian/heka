@@ -32,7 +32,7 @@ What one input of a Profile drives: another button, a d-pad direction or a trigg
 _Avoid_: mapping, assignment
 
 **Mapper**:
-The step that turns a Controller's state into the state its Virtual Controller shows and the keys and mouse buttons it holds, by the Controller's Profile.
+The step that turns a Controller's state into the state its Virtual Controller shows and what it does with the PC's keyboard and mouse, by the Controller's Profile.
 
 **Bridge**:
 The live pairing of one Controller with one Virtual Controller, carrying input to the game and Feedback back.

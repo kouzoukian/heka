@@ -22,6 +22,7 @@ use heka_core::profile::{Binding, Input, Profile};
 use heka_core::profiles::Profiles;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
+use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
@@ -85,6 +86,7 @@ enum Command {
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
     ChangeTrigger(String, TriggerSide, TriggerChange),
+    ChangeStickUse(String, StickSide, StickUseChange),
     Quit,
 }
 
@@ -229,6 +231,12 @@ impl Bridging {
         let _ = self
             .commands
             .send(Command::ChangeTrigger(profile, side, change));
+    }
+
+    pub fn change_stick_use(&self, profile: String, side: StickSide, change: StickUseChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeStickUse(profile, side, change));
     }
 
     pub fn quit(&self) {
@@ -398,6 +406,11 @@ fn supervise(
             Ok(Command::SetSwapSticks(id, swap)) => {
                 edit_profile(&mut supervisor, &id, now, |profile| {
                     profile.swap_sticks = swap;
+                })
+            }
+            Ok(Command::ChangeStickUse(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_stick_use(side, change);
                 })
             }
             Ok(Command::ChangeTrigger(id, side, change)) => {

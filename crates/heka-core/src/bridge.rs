@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::desktop::{Desk, Hands};
+use crate::desktop::Desk;
 use crate::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
     Rumble,
@@ -14,8 +14,8 @@ use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
-use crate::profile::Mapped;
 use crate::rate::RateMeter;
+use crate::running::RunningMapper;
 use crate::shortcuts::ShortcutDetector;
 use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
@@ -506,7 +506,7 @@ fn run(
         shortcuts,
         desk,
     } = shared;
-    let mut hands = Hands::new(desk);
+    let mut running = RunningMapper::new(desk);
     let format = link.format();
     let mut mapper = mapper.follow();
     let mut configured = shortcuts.follow();
@@ -519,28 +519,28 @@ fn run(
         }
         let read = link.read(&mut buf);
         if mapper.refresh() {
-            let upcoming = latest.map(|state| mapper.current().mapped(&state).desktop);
-            hands.start_over(upcoming.unwrap_or_default());
+            running.start_over(mapper.current(), latest.as_ref());
         }
         match read {
             LinkRead::Report(len) => {
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
-                let observed = detector.observe(configured.get(), state.buttons, Instant::now());
+                let now = Instant::now();
+                let observed = detector.observe(configured.get(), state.buttons, now);
                 if let Some(action) = observed.action {
                     shortcuts.push(action);
                 }
                 let mut passed_on = state;
                 passed_on.buttons.set(observed.hide, false);
                 latest = Some(passed_on);
-                let Mapped { shown, desktop } = mapper.current().mapped(&passed_on);
+                let shown = running.report(mapper.current(), &passed_on, now);
                 live.set(Some(&state), Some(shown));
                 if let Err(error) = controller.update(&shown) {
                     let _ = unplug(controller, &failures);
                     break InputEnd::Failed(link, error);
                 }
-                hands.hold(desktop);
+                running.act();
             }
             LinkRead::Timeout => {}
             LinkRead::Lost => {
@@ -549,7 +549,7 @@ fn run(
             }
         }
     };
-    hands.let_go();
+    running.let_go();
     live.set(None, None);
     end
 }

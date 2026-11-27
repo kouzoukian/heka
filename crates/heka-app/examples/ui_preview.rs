@@ -316,6 +316,12 @@ impl Backend for Fake {
                 }
                 return;
             }
+            Command::ChangeStickUse(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_stick_use(*side, *change);
+                }
+                return;
+            }
             Command::SetSwapSticks(id, swap) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.swap_sticks = *swap;

@@ -18,7 +18,7 @@ A Binding says what one input of the Controller drives on the Virtual Controller
 
 ## The Mapper
 
-`Mapper` in `heka-core` is a pure function from a Controller state to the state the Virtual Controller shows and what it holds on the keyboard and mouse. It runs on the input thread between parsing a report and `VirtualController::update`, holds no time and no history, and looks up each Binding in a fixed array, so it adds no allocation and no lock to the input path. Sticks, motion, touch and battery pass through unchanged; buttons and the two triggers are the only things it rewrites.
+`Mapper` in `heka-core` is a pure function from a Controller state to the state the Virtual Controller shows and what it holds on the keyboard and mouse. It runs on the input thread between parsing a report and `VirtualController::update`, holds no time and no history ([ADR 0023](0023-time-beside-the-mapper.md) says what does), and looks up each Binding in a fixed array, so it adds no allocation and no lock to the input path. Sticks, motion, touch and battery pass through unchanged; buttons and the two triggers are the only things it rewrites.
 
 Because it depends only on the Controller's present state, a change of Profile needs no release step on the Virtual Controller: the next report produces the new state, and whatever the old Binding held is simply no longer produced. Keys and mouse buttons are released explicitly ([ADR 0022](0022-keyboard-and-mouse-output.md)). The Mapper replaces the Controller state and never the Virtual Controller, which is replaced only when the effective Output Type changes.
 

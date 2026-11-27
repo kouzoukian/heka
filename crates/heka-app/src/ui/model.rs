@@ -17,6 +17,7 @@ use heka_core::release::Version;
 use heka_core::setup::Missing;
 use heka_core::shortcuts::{ShortcutChange, Shortcuts};
 use heka_core::state::{Battery, Stick};
+use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::ControllerView;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::OutputType;
@@ -76,6 +77,7 @@ pub enum Command {
     ExportProfile(String, PathBuf),
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
+    ChangeStickUse(String, StickSide, StickUseChange),
     ChangeTrigger(String, TriggerSide, TriggerChange),
     AddGameRule(String, String),
     SetGameRule(String, String),

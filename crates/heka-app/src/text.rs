@@ -11,6 +11,7 @@ use heka_core::profile::{Binding, Input, Output, ProfileError};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
+use heka_core::stick_use::{Direction, StickUse};
 use heka_core::supervisor::BridgeError;
 use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
@@ -477,6 +478,36 @@ pub const SECTION_BUTTONS: &str = "Buttons";
 pub const SECTION_STICKS: &str = "Sticks";
 pub const SIDE_LEFT: &str = "Left stick";
 pub const SIDE_RIGHT: &str = "Right stick";
+pub const ROW_LEFT_STICK_USE: &str = "Left stick as";
+pub const ROW_RIGHT_STICK_USE: &str = "Right stick as";
+pub const STICK_USE_TIP: &str = "What this stick drives";
+pub const STICK_RESTS: &str = "The Virtual Controller's stick rests at the centre.";
+pub const ROW_SPEED: &str = "Speed";
+pub const SPEED_TIP: &str = "How fast the pointer moves, or the wheel turns, at full travel";
+pub const POINTING_DEAD_ZONE_TIP: &str =
+    "Travel from the centre that does nothing, never less than 6%";
+pub const KEY_DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing, never less than 25%";
+pub const STICK_KEY_TIP: &str = "The key held while the stick points this way";
+
+pub fn stick_use_name(used_as: StickUse) -> &'static str {
+    match used_as {
+        StickUse::Stick => "Stick",
+        StickUse::Mouse => "Mouse",
+        StickUse::Scroll => "Scroll",
+        StickUse::Wasd => "WASD",
+        StickUse::Arrows => "Arrows",
+        StickUse::Keys => "Four keys",
+    }
+}
+
+pub fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Up => "Up",
+        Direction::Left => "Left",
+        Direction::Down => "Down",
+        Direction::Right => "Right",
+    }
+}
 pub const ROW_DEAD_ZONE: &str = "Dead zone";
 pub const DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing";
 pub const ROW_ANTI_DEAD_ZONE: &str = "Anti-dead zone";

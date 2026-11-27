@@ -2,6 +2,7 @@ pub mod about;
 pub mod app_settings;
 pub mod assets;
 pub mod banners;
+pub mod capture;
 pub mod detail;
 pub mod drawing;
 pub mod games;

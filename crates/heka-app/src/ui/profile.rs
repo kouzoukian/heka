@@ -17,8 +17,9 @@ use heka_core::virtual_controller::OutputType;
 
 use crate::text;
 use crate::ui::banners::{clamped, strip, text_button};
+use crate::ui::capture::{CaptureFor, capture_control};
 use crate::ui::detail::row;
-use crate::ui::metrics::{CONTROL, GAP, INSET, SMALL_TEXT, icon};
+use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
 use crate::ui::rules::rule_strip;
@@ -75,7 +76,9 @@ pub enum ProfileAction {
     Side(StickSide),
     TriggerSide(TriggerSide),
     Kind(Kind),
-    Capture(Input),
+    Capture(CaptureFor),
+    Bind(CaptureFor, Chord),
+    ToggleStickUse,
     Duplicate,
     StartRename,
     CommitRename,
@@ -91,7 +94,8 @@ pub type ProfileAct = Rc<dyn Fn(ProfileAction, &mut Window, &mut App)>;
 pub struct ProfileView<'a> {
     pub editing: Option<Input>,
     pub kind: Option<Kind>,
-    pub capturing: bool,
+    pub capturing: Option<CaptureFor>,
+    pub stick_use_open: bool,
     pub key_label: KeyLabel,
     pub section: Section,
     pub side: StickSide,
@@ -118,9 +122,7 @@ pub fn profile_page(
         Section::Profiles => scrolled(profiles_section(screen, entry, chosen, view, send, theme)),
         Section::Buttons => scrolled(buttons_section(chosen, view, send, theme)),
         Section::Sticks => match chosen {
-            Some(profile) => {
-                sticks_section(profile, entry, view.side, &view.act, send, theme).into_any_element()
-            }
+            Some(profile) => sticks_section(profile, entry, view, send, theme).into_any_element(),
             None => scrolled(default_note(text::STICKS_DEFAULT, theme)),
         },
         Section::Triggers => match chosen {
@@ -568,51 +570,19 @@ fn buttons_to_drive(open: OpenBinding<'_>) -> Div {
 }
 
 fn keys_row(open: OpenBinding<'_>) -> Div {
-    let capturing = open.view.capturing;
-    let words: SharedString = match open.binding {
-        _ if capturing => text::CAPTURING_KEY.into(),
-        Binding::Keys(chord) => text::chord_words(chord, open.view.key_label.as_ref()).into(),
-        _ => text::CAPTURE_KEY.into(),
+    let current = match open.binding {
+        Binding::Keys(chord) => Some(chord),
+        _ => None,
     };
-    let act = Rc::clone(&open.view.act);
-    let input = open.input;
-    let capture = control_button(open.id("capture"), words.clone())
-        .selected(capturing)
-        .tooltip(text::CAPTURE_TIP)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(GAP)
-                .text_size(SMALL_TEXT)
-                .child(icon(IconName::Keyboard))
-                .child(words),
-        )
-        .on_click(move |_, window, cx| act(ProfileAction::Capture(input), window, cx));
-    let escape = capturing.then(|| {
-        let pick = open.choose(Binding::Keys(Chord::of(Key::ESCAPE)));
-        control_button(open.id("bind-escape"), text::BIND_ESCAPE.into())
-            .child(div().text_size(SMALL_TEXT).child(text::BIND_ESCAPE))
-            .on_click(move |_, window, cx| pick(window, cx))
-    });
     row(open.theme)
         .child(explained(text::ROW_KEYS, text::KEYS_TIP, open.theme))
-        .child(
-            div()
-                .flex()
-                .gap(GAP)
-                .text_color(open.theme.foreground)
-                .children(escape)
-                .child(capture),
-        )
-}
-
-fn control_button(id: SharedString, label: SharedString) -> Button {
-    Button::new(id)
-        .outline()
-        .h(CONTROL)
-        .px(GAP)
-        .accessibility_label(label)
+        .child(capture_control(
+            open.id("binding").to_string(),
+            current,
+            CaptureFor::Binding(open.input),
+            open.view,
+            open.theme,
+        ))
 }
 
 fn mouse_row(open: OpenBinding<'_>) -> Div {
