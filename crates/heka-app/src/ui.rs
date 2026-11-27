@@ -6,6 +6,7 @@ pub mod capture;
 pub mod detail;
 pub mod drawing;
 pub mod games;
+pub mod gyro;
 pub mod log;
 pub mod metrics;
 pub mod model;

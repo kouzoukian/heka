@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use heka_core::app_settings::AppSettings;
 use heka_core::calibration::Calibration;
 use heka_core::desktop::{Chord, DesktopError, DesktopEvent, DesktopOutput, Key};
+use heka_core::drift::DriftError;
 use heka_core::dualsense::{RumbleMode, usb_output_report};
 use heka_core::dualshock4::{parse_bluetooth_serial, parse_pairing_info};
 use heka_core::feedback::{Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, Rumble};
@@ -17,6 +18,7 @@ use heka_core::link::{
     ControllerModel, FeedbackFormat, LinkKind, LinkRead, LinkReader, LinkWriteError, LinkWriter,
     ReportFormat,
 };
+use heka_core::live_gyro::Measurement;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange, Preferences, RumbleStrength};
 use heka_core::profile::{Binding, Input, Output};
@@ -25,7 +27,7 @@ use heka_core::radio::{Radio, TurnOffError};
 use heka_core::settings::Settings;
 use heka_core::shortcuts::Shortcuts;
 use heka_core::state::{Buttons, ControllerState};
-use heka_core::supervisor::{BridgeError, ShortcutNote, Supervisor};
+use heka_core::supervisor::{BridgeError, DriftStatus, ShortcutNote, Supervisor};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
     OutputType, VirtualBus, VirtualController, VirtualError, VirtualFailure,
@@ -2522,4 +2524,84 @@ fn wait_for_raw_buttons(supervisor: &Supervisor, place: usize, buttons: Buttons)
             .latest_raw()
             .is_some_and(|state| state.buttons == buttons)
     });
+}
+
+fn turning(pitch: i16, at_millis: u32) -> Vec<u8> {
+    let timestamp = (at_millis * 3000).to_le_bytes();
+    let [low, high] = pitch.to_le_bytes();
+    common::derived(&[
+        (16, low),
+        (17, high),
+        (28, timestamp[0]),
+        (29, timestamp[1]),
+        (30, timestamp[2]),
+        (31, timestamp[3]),
+    ])
+}
+
+fn send_a_second_of(link: &LinkHandle, pitch: i16) {
+    for report in 0..300 {
+        link.send(turning(pitch, report * 4));
+    }
+}
+
+fn poll_until_measured(supervisor: &mut Supervisor) -> Vec<(MacAddress, Measurement)> {
+    let mut measured = Vec::new();
+    wait_until(|| {
+        supervisor.poll(Instant::now());
+        measured = supervisor.take_measurements();
+        !measured.is_empty()
+    });
+    measured
+}
+
+#[test]
+fn measuring_the_drift_remembers_it_for_the_controller() {
+    let (mut supervisor, _) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), Instant::now());
+    assert_eq!(supervisor.controllers()[0].drift, DriftStatus::Unmeasured);
+
+    supervisor.measure_drift(mac(1));
+    assert_eq!(supervisor.controllers()[0].drift, DriftStatus::Measuring);
+    send_a_second_of(&link, 20);
+    let measured = poll_until_measured(&mut supervisor);
+
+    let drift = supervisor.settings().controller(mac(1)).gyro_drift;
+    assert_ne!(drift, [0; 3]);
+    assert_eq!(measured, [(mac(1), Ok(drift))]);
+    assert_eq!(supervisor.controllers()[0].drift, DriftStatus::Measured);
+}
+
+#[test]
+fn a_stopped_controller_can_be_measured_too() {
+    let (mut supervisor, _) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), Instant::now());
+    supervisor.stop(mac(1), Instant::now());
+
+    supervisor.measure_drift(mac(1));
+    send_a_second_of(&link, 20);
+
+    assert!(poll_until_measured(&mut supervisor)[0].1.is_ok());
+}
+
+#[test]
+fn a_measurement_cut_short_says_so_and_keeps_the_old_drift() {
+    let (mut supervisor, _) = setup();
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), Instant::now());
+    supervisor.measure_drift(mac(1));
+    link.send(turning(20, 0));
+    shows_live_input(&supervisor, 0, &link);
+
+    supervisor.stop(mac(1), Instant::now());
+    let measured = poll_until_measured(&mut supervisor);
+
+    assert_eq!(measured, [(mac(1), Err(DriftError::NoInput))]);
+    assert_eq!(
+        supervisor.controllers()[0].drift,
+        DriftStatus::Failed(DriftError::NoInput)
+    );
+    assert_eq!(supervisor.settings().controller(mac(1)).gyro_drift, [0; 3]);
 }

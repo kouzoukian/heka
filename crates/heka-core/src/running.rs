@@ -2,9 +2,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::desktop::{Desk, DesktopState, Hands, MouseButton, Nudge};
+use crate::gyro::{FULL_STICK_DEGREES_A_SECOND, GyroActivation, GyroUse, POINTER_PIXELS_A_DEGREE};
 use crate::profile::{Mapped, Mapper};
+use crate::sensor::SensorClock;
 use crate::state::{Buttons, ControllerState};
 use crate::touchpad::{Gesture, Gestures};
+use crate::tuning::push_right_stick;
 
 const LONGEST_STEP: Duration = Duration::from_millis(100);
 const CLICK_TIME: Duration = Duration::from_millis(30);
@@ -49,11 +52,72 @@ impl Travel {
     }
 }
 
+#[derive(Debug, Default)]
+struct Aim {
+    clock: SensorClock,
+    travel: Travel,
+    drift: [i32; 3],
+    held: bool,
+    toggled: bool,
+}
+
+impl Aim {
+    fn follow(
+        &mut self,
+        mapper: &Mapper,
+        state: &ControllerState,
+        now: Instant,
+        shown: &mut ControllerState,
+    ) -> Nudge {
+        let elapsed = self.clock.elapsed(state.motion.timestamp, now);
+        let Some(settings) = mapper.aiming_gyro() else {
+            return Nudge::default();
+        };
+        let held = mapper.pressed(settings.button, state);
+        let pressed = held && !std::mem::replace(&mut self.held, held);
+        self.held = held;
+        self.toggled ^= pressed;
+        let active = match settings.activation {
+            GyroActivation::Always => true,
+            GyroActivation::WhileHeld => held,
+            GyroActivation::Toggle => self.toggled,
+        };
+        let (x, y) = if active {
+            settings.rates(state.motion.gyro, self.drift)
+        } else {
+            (0.0, 0.0)
+        };
+        if settings.used_as == GyroUse::RightStick {
+            if (x, y) != (0.0, 0.0) {
+                let full = FULL_STICK_DEGREES_A_SECOND;
+                push_right_stick(shown, (x / full, y / full));
+            }
+            return Nudge::default();
+        }
+        let pixels = POINTER_PIXELS_A_DEGREE;
+        self.travel.over(
+            (x * pixels, y * pixels),
+            (0.0, 0.0),
+            Some(elapsed.as_secs_f32()),
+        )
+    }
+
+    fn start_over(&mut self, mapper: &Mapper, latest: Option<&ControllerState>) {
+        let held = mapper.aiming_gyro().is_some_and(|settings| {
+            latest.is_some_and(|state| mapper.pressed(settings.button, state))
+        });
+        self.held = held;
+        self.toggled = false;
+        self.travel = Travel::default();
+    }
+}
+
 pub struct RunningMapper {
     hands: Hands,
     sticks: Travel,
     fingers: Travel,
     gestures: Gestures,
+    aim: Aim,
     click: Option<(MouseButton, Instant)>,
     reported: Option<Instant>,
     desktop: DesktopState,
@@ -67,6 +131,7 @@ impl RunningMapper {
             sticks: Travel::default(),
             fingers: Travel::default(),
             gestures: Gestures::default(),
+            aim: Aim::default(),
             click: None,
             reported: None,
             desktop: DesktopState::default(),
@@ -74,7 +139,12 @@ impl RunningMapper {
         }
     }
 
+    pub fn set_drift(&mut self, drift: [i32; 3]) {
+        self.aim.drift = drift;
+    }
+
     pub fn start_over(&mut self, mapper: &Mapper, latest: Option<&ControllerState>) {
+        self.aim.start_over(mapper, latest);
         self.desktop = latest
             .map(|state| mapper.mapped(state).desktop)
             .unwrap_or_default();
@@ -99,7 +169,7 @@ impl RunningMapper {
             now.saturating_duration_since(before).min(LONGEST_STEP)
         });
         self.reported = Some(now);
-        let Mapped { shown, desktop } = mapper.mapped(state);
+        let Mapped { mut shown, desktop } = mapper.mapped(state);
         let gesture = mapper
             .mouse_touchpad()
             .map_or_else(Gesture::default, |settings| {
@@ -114,7 +184,8 @@ impl RunningMapper {
             velocity.pointer,
             velocity.scroll,
             Some(elapsed.as_secs_f32()),
-        ) + self.fingers.over(gesture.pointer, gesture.scroll, None);
+        ) + self.fingers.over(gesture.pointer, gesture.scroll, None)
+            + self.aim.follow(mapper, state, now, &mut shown);
         self.desktop = desktop;
         self.tick(mapper, now);
         shown

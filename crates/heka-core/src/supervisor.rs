@@ -5,11 +5,13 @@ use std::time::Instant;
 use crate::app_settings::AppSettings;
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
 use crate::desktop::{Desk, DesktopOutput};
+use crate::drift::DriftError;
 use crate::feedback::Motor;
 use crate::game_rules::{Front, RuleSelector, Surroundings};
 use crate::idle::{IdleTime, IdleTimer};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
+use crate::live_gyro::{LiveGyro, Measurement};
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
 use crate::mac::MacAddress;
@@ -61,8 +63,18 @@ pub struct ControllerView {
     pub rule_program: Option<String>,
     pub output_type_from_profile: bool,
     pub live: Arc<LiveInput>,
+    pub drift: DriftStatus,
     pub error: Option<BridgeError>,
     pub turn_off_error: Option<TurnOffError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DriftStatus {
+    #[default]
+    Unmeasured,
+    Measuring,
+    Measured,
+    Failed(DriftError),
 }
 
 #[derive(Clone, Copy)]
@@ -84,6 +96,8 @@ struct Slot {
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
+    gyro: Arc<LiveGyro>,
+    drift: DriftStatus,
     links: Vec<LinkSlot>,
     reading: Option<LinkId>,
     bridge: Option<Bridge>,
@@ -170,6 +184,7 @@ pub struct Supervisor {
     rule_selector: RuleSelector,
     rule: Option<(String, String)>,
     shortcut_notes: Vec<ShortcutNote>,
+    measurements: Vec<(MacAddress, Measurement)>,
     next_link_id: u64,
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
@@ -197,6 +212,7 @@ impl Supervisor {
             rule_selector: RuleSelector::default(),
             rule: None,
             shortcut_notes: Vec::new(),
+            measurements: Vec::new(),
             next_link_id: 0,
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
@@ -285,6 +301,7 @@ impl Supervisor {
                     applied_profile: self.profile_id_of(mac),
                     rule_program: self.rule_program(),
                     live: slot.map(|slot| Arc::clone(&slot.live)).unwrap_or_default(),
+                    drift: slot.map(|slot| slot.drift).unwrap_or_default(),
                     error: slot.and_then(|slot| slot.error.clone().or(slot.watch_error.clone())),
                     turn_off_error: slot.and_then(|slot| slot.turn_off_error.clone()),
                 }
@@ -305,7 +322,9 @@ impl Supervisor {
         }
         let link = OpenLink::new(link);
         let format = link.format();
+        let drift = self.settings().controller(mac).gyro_drift;
         let slot = self.slot(mac);
+        slot.gyro.set_drift(drift);
         slot.model = format.model();
         slot.links.push(LinkSlot {
             id,
@@ -464,6 +483,7 @@ impl Supervisor {
         let changes = self.lifecycle.tick(now);
         done.extend(self.apply(changes, now));
         done.extend(self.run_shortcuts(now));
+        self.keep_measurements();
         done.extend(self.turn_off_idle(now));
         self.desk.settle();
         done
@@ -696,6 +716,37 @@ impl Supervisor {
         self.choose_profile(mac, chosen, now)
     }
 
+    pub fn measure_drift(&mut self, mac: MacAddress) {
+        let Some(slot) = self.slots.get_mut(&mac) else {
+            return;
+        };
+        if slot.bridge.is_some() || slot.watch.is_some() {
+            slot.gyro.measure();
+            slot.drift = DriftStatus::Measuring;
+        }
+    }
+
+    pub fn take_measurements(&mut self) -> Vec<(MacAddress, Measurement)> {
+        std::mem::take(&mut self.measurements)
+    }
+
+    fn keep_measurements(&mut self) {
+        for (&mac, slot) in &mut self.slots {
+            let Some(measurement) = slot.gyro.take_measurement() else {
+                continue;
+            };
+            slot.drift = match measurement {
+                Ok(drift) => {
+                    self.lifecycle.settings_mut().set_gyro_drift(mac, drift);
+                    slot.gyro.set_drift(drift);
+                    DriftStatus::Measured
+                }
+                Err(error) => DriftStatus::Failed(error),
+            };
+            self.measurements.push((mac, measurement));
+        }
+    }
+
     pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {
         self.lifecycle.settings_mut().set_nickname(mac, name);
     }
@@ -847,7 +898,8 @@ impl Supervisor {
             let Some(link) = slot.take_active() else {
                 continue;
             };
-            match Watch::start_on(self.threads.as_ref(), link, Arc::clone(&slot.live)) {
+            let (live, gyro) = (Arc::clone(&slot.live), Arc::clone(&slot.gyro));
+            match Watch::start_on(self.threads.as_ref(), link, live, gyro) {
                 Ok(watch) => {
                     slot.watch = Some(watch);
                     slot.watch_error = None;
@@ -921,6 +973,7 @@ impl Supervisor {
         controller.follow(Arc::clone(&slot.preferences));
         controller.map_with(Arc::clone(&slot.mapper));
         controller.use_desk(desk);
+        controller.measure_with(Arc::clone(&slot.gyro));
         match Bridge::resume_on(threads.as_ref(), link, controller, Arc::clone(&slot.live)) {
             Ok(bridge) => {
                 slot.bridge = Some(bridge);

@@ -54,6 +54,10 @@ impl Rig {
         shown
     }
 
+    pub fn drift(&mut self, drift: [i32; 3]) {
+        self.running.set_drift(drift);
+    }
+
     pub fn change(&mut self, mapper: Mapper) {
         self.mapper = mapper;
         self.running.start_over(&self.mapper, self.latest.as_ref());

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::bridge::{Bridge, BridgeEnd, LiveInput, OpenLink, Plugged};
+use crate::live_gyro::LiveGyro;
 use crate::state::ControllerState;
 use crate::threads::Threads;
 use crate::virtual_controller::{OutputType, VirtualController, VirtualError};
@@ -12,8 +13,11 @@ impl Watch {
         threads: &dyn Threads,
         link: OpenLink,
         live: Arc<LiveInput>,
+        gyro: Arc<LiveGyro>,
     ) -> Result<Self, (std::io::Error, OpenLink)> {
-        Bridge::resume_on(threads, link, Plugged::new(Box::new(Nothing)), live)
+        let mut nothing = Plugged::new(Box::new(Nothing));
+        nothing.measure_with(gyro);
+        Bridge::resume_on(threads, link, nothing, live)
             .map(Self)
             .map_err(|failed| (failed.error, failed.link))
     }

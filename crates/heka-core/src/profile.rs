@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::desktop::{Chord, DesktopState, MouseButton, WheelStep};
+use crate::gyro::{GyroChange, GyroSettings, GyroUse};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
 use crate::stick_use::{StickRole, StickUseChange, Velocity};
 use crate::touchpad::{TouchpadChange, TouchpadSettings};
@@ -252,6 +253,8 @@ pub struct Profile {
     pub right_trigger: TriggerTuning,
     #[serde(skip_serializing_if = "TouchpadSettings::is_default")]
     touchpad: TouchpadSettings,
+    #[serde(skip_serializing_if = "GyroSettings::is_default")]
+    gyro: GyroSettings,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -278,6 +281,7 @@ impl Profile {
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
             touchpad: TouchpadSettings::default(),
+            gyro: GyroSettings::default(),
         }
     }
 
@@ -306,6 +310,7 @@ impl Profile {
             "left_trigger",
             "right_trigger",
             "touchpad",
+            "gyro",
         ]
         .iter()
         .any(|key| root.contains_key(*key));
@@ -353,6 +358,7 @@ impl Profile {
                 .get("touchpad")
                 .map(TouchpadSettings::load)
                 .unwrap_or_default(),
+            gyro: root.get("gyro").map(GyroSettings::load).unwrap_or_default(),
         })
     }
 
@@ -416,6 +422,14 @@ impl Profile {
         self.touchpad.change(change);
     }
 
+    pub fn gyro(&self) -> &GyroSettings {
+        &self.gyro
+    }
+
+    pub fn change_gyro(&mut self, change: GyroChange) {
+        self.gyro.change(change);
+    }
+
     pub fn trigger(&self, side: TriggerSide) -> &TriggerTuning {
         match side {
             TriggerSide::Left => &self.left_trigger,
@@ -441,6 +455,7 @@ impl Profile {
             && self.left_trigger.is_neutral()
             && self.right_trigger.is_neutral()
             && self.touchpad.is_default()
+            && self.gyro.is_default()
     }
 }
 
@@ -471,6 +486,7 @@ pub struct Mapper {
     left_trigger: TriggerTuning,
     right_trigger: TriggerTuning,
     touchpad: TouchpadSettings,
+    gyro: GyroSettings,
 }
 
 impl Default for Mapper {
@@ -485,6 +501,7 @@ impl Default for Mapper {
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
             touchpad: TouchpadSettings::default(),
+            gyro: GyroSettings::default(),
         }
     }
 }
@@ -500,6 +517,7 @@ impl Mapper {
             left_trigger: profile.left_trigger,
             right_trigger: profile.right_trigger,
             touchpad: profile.touchpad,
+            gyro: profile.gyro,
             ..Self::default()
         };
         for input in Input::ALL {
@@ -582,6 +600,10 @@ impl Mapper {
         self.touchpad.moves_the_mouse().then_some(&self.touchpad)
     }
 
+    pub fn aiming_gyro(&self) -> Option<&GyroSettings> {
+        (self.gyro.used_as != GyroUse::Off).then_some(&self.gyro)
+    }
+
     pub fn velocity(&self, state: &ControllerState) -> Velocity {
         let left = self
             .left_stick_use
@@ -624,7 +646,7 @@ impl Mapper {
         }
     }
 
-    fn pressed(&self, input: Input, state: &ControllerState) -> bool {
+    pub fn pressed(&self, input: Input, state: &ControllerState) -> bool {
         let travel = match input {
             Input::L2 => state.left_trigger,
             Input::R2 => state.right_trigger,

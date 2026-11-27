@@ -19,6 +19,7 @@ fn a_missing_settings_file_gives_defaults() {
             nickname: None,
             idle_time: None,
             profile: None,
+            gyro_drift: [0; 3],
             preferences: Preferences {
                 rumble: RumbleStrength::FULL,
                 swap_motors: false,
@@ -333,4 +334,21 @@ fn the_number_of_controllers_using_each_profile_is_counted() {
     assert_eq!(users.get("shooter"), Some(&1));
     assert_eq!(users.get("gone"), None);
     assert_eq!(Settings::default().profile_users().len(), 0);
+}
+
+#[test]
+fn the_gyro_drift_is_remembered_and_a_broken_one_ignored() {
+    let mac = MacAddress([1, 2, 3, 4, 5, 6]);
+    let mut settings = Settings::default();
+    settings.set_gyro_drift(mac, [10, -20, 30]);
+
+    let loaded = Settings::load(Some(&settings.to_json()));
+
+    assert_eq!(loaded.controller(mac).gyro_drift, [10, -20, 30]);
+    let broken =
+        r#"{"controllers": {"01:02:03:04:05:06": {"gyro_drift": "none", "stopped": true}}}"#;
+    let loaded = Settings::load(Some(broken));
+    assert_eq!(loaded.controller(mac).gyro_drift, [0; 3]);
+    assert!(loaded.controller(mac).stopped);
+    assert!(!Settings::default().to_json().contains("gyro_drift"));
 }

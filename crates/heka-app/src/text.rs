@@ -1,5 +1,7 @@
 use heka_core::desktop::{Chord, Key, MouseButton, WheelStep};
 use heka_core::discovery::{OpenError, Unopened};
+use heka_core::drift::DriftError;
+use heka_core::gyro::{GyroActivation, GyroAxis, GyroUse};
 use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{
     HidHideError, HidingError, HidingUnavailable, IdentifyError, JournalError,
@@ -12,7 +14,7 @@ use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
 use heka_core::stick_use::{Direction, StickUse};
-use heka_core::supervisor::BridgeError;
+use heka_core::supervisor::{BridgeError, DriftStatus};
 use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
 
@@ -475,6 +477,70 @@ pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
 pub const BINDING_NOTHING: &str = "Nothing";
 pub const SECTION_PROFILES: &str = "Profiles";
 pub const SECTION_TOUCHPAD: &str = "Touchpad";
+pub const SECTION_GYRO: &str = "Gyro";
+pub const ROW_GYRO_USE: &str = "Gyro moves";
+pub const GYRO_USE_TIP: &str = "What turning the Controller moves";
+pub const ROW_ACTIVE: &str = "Active";
+pub const ACTIVE_TIP: &str = "When the gyro moves it";
+pub const ROW_GYRO_BUTTON: &str = "Button";
+pub const GYRO_BUTTON_TIP: &str =
+    "The button held or toggled to use the gyro; it keeps its Binding";
+pub const ROW_AXIS: &str = "Horizontal from";
+pub const AXIS_TIP: &str = "Turning the Controller (yaw) or tilting it sideways (roll)";
+pub const ROW_SENSITIVITY_X: &str = "Sensitivity X";
+pub const SENSITIVITY_X_TIP: &str = "How far it moves sideways";
+pub const ROW_SENSITIVITY_Y: &str = "Sensitivity Y";
+pub const SENSITIVITY_Y_TIP: &str = "How far it moves up and down";
+pub const GYRO_DEAD_ZONE_TIP: &str = "Turning slower than this, in degrees a second, does nothing";
+pub const ROW_DRIFT: &str = "Drift";
+pub const DRIFT_TIP: &str = "What this Controller reads as turning while at rest";
+pub const MEASURE: &str = "Measure";
+pub const MEASURING: &str = "Measuring";
+pub const GYRO_DEFAULT: &str =
+    "The Default Profile does not use the gyro. Choose another Profile, or make a new one.";
+
+pub fn gyro_use_name(used_as: GyroUse) -> &'static str {
+    match used_as {
+        GyroUse::Off => "Off",
+        GyroUse::Mouse => "Mouse",
+        GyroUse::RightStick => "Right stick",
+    }
+}
+
+pub fn activation_name(activation: GyroActivation) -> &'static str {
+    match activation {
+        GyroActivation::Always => "Always",
+        GyroActivation::WhileHeld => "While held",
+        GyroActivation::Toggle => "Toggle",
+    }
+}
+
+pub fn axis_name(axis: GyroAxis) -> &'static str {
+    match axis {
+        GyroAxis::Yaw => "Yaw",
+        GyroAxis::Roll => "Roll",
+    }
+}
+
+pub fn degrees_a_second(degrees: u16) -> String {
+    format!("{degrees}\u{b0}/s")
+}
+
+pub fn drift_note(status: DriftStatus) -> &'static str {
+    match status {
+        DriftStatus::Unmeasured => {
+            "Put the Controller at rest, then measure. heka removes the drift."
+        }
+        DriftStatus::Measuring => "Keep the Controller still on a flat surface.",
+        DriftStatus::Measured => "Drift measured. heka removes it from this Controller.",
+        DriftStatus::Failed(DriftError::Moved) => {
+            "The Controller moved. Put it down and measure again."
+        }
+        DriftStatus::Failed(DriftError::NoInput) => {
+            "The Controller stopped sending input. Measure again."
+        }
+    }
+}
 pub const ROW_TOUCHPAD_USE: &str = "Touchpad goes to";
 pub const TOUCHPAD_USE_TIP: &str = "The Virtual Controller or the mouse, not both";
 pub const TOUCHPAD_CONTROLLER: &str = "Controller";
@@ -876,6 +942,7 @@ pub fn binding_words(binding: Binding, label: &dyn Fn(Key) -> Option<String>) ->
 pub mod log {
     use std::path::Path;
 
+    use heka_core::drift::DriftError;
     use heka_core::hiding::{HidingChange, HidingError};
     use heka_core::lifecycle::{Change, Removal};
     use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
@@ -905,6 +972,18 @@ pub mod log {
 
     pub fn repeated(message: &str, left_out: u32) -> String {
         format!("{message} (left out {left_out} repeats)")
+    }
+
+    pub fn drift(mac: MacAddress, measurement: Result<[i32; 3], DriftError>) -> String {
+        match measurement {
+            Ok(_) => format!("measured the gyro drift of {mac}"),
+            Err(DriftError::Moved) => {
+                format!("cannot measure the gyro drift of {mac}: it moved")
+            }
+            Err(DriftError::NoInput) => {
+                format!("cannot measure the gyro drift of {mac}: it sent no input")
+            }
+        }
     }
 
     pub fn cannot_send_input(error: &str) -> String {

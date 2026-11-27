@@ -223,6 +223,8 @@ impl Backend for WindowBackend {
             Command::ChangeTouchpad(profile, change) => {
                 bridging.change_touchpad(profile, change);
             }
+            Command::ChangeGyro(profile, change) => bridging.change_gyro(profile, change),
+            Command::MeasureDrift(mac) => bridging.measure_drift(mac),
             Command::ChangeTrigger(profile, side, change) => {
                 bridging.change_trigger(profile, side, change);
             }

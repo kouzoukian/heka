@@ -23,7 +23,7 @@ use heka_core::profiles::Profiles;
 use heka_core::release::Version;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
-use heka_core::supervisor::BridgeError;
+use heka_core::supervisor::{BridgeError, DriftStatus};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::{Rect, WindowPlacement};
 use heka_windows::keyboard::{self, KeyHook};
@@ -59,6 +59,7 @@ impl Fake {
             raw_sticks: None,
             raw_triggers: None,
             raw_touch: None,
+            drift: DriftStatus::Unmeasured,
             report_rate: None,
             output_type,
             profile: None,
@@ -240,7 +241,8 @@ impl Backend for Fake {
             | Command::SetNickname(mac, _)
             | Command::ChangePreference(mac, _)
             | Command::TurnOff(mac)
-            | Command::SetIdleTime(mac, _) => *mac,
+            | Command::SetIdleTime(mac, _)
+            | Command::MeasureDrift(mac) => *mac,
             Command::SetStartWithWindows(on) => {
                 self.start_with_windows.set(*on);
                 return;
@@ -327,6 +329,12 @@ impl Backend for Fake {
             Command::ChangeTouchpad(id, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_touchpad(*change);
+                }
+                return;
+            }
+            Command::ChangeGyro(id, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_gyro(*change);
                 }
                 return;
             }

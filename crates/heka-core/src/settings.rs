@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::app_settings::AppSettings;
@@ -25,6 +25,8 @@ pub struct ControllerSettings {
     pub idle_time: Option<IdleTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(deserialize_with = "drift", skip_serializing_if = "is_no_drift")]
+    pub gyro_drift: [i32; 3],
     #[serde(flatten)]
     pub preferences: Preferences,
 }
@@ -103,6 +105,10 @@ impl Settings {
         self.controllers.entry(mac).or_default().idle_time = idle_time;
     }
 
+    pub fn set_gyro_drift(&mut self, mac: MacAddress, drift: [i32; 3]) {
+        self.controllers.entry(mac).or_default().gyro_drift = drift;
+    }
+
     pub fn set_profile(&mut self, mac: MacAddress, profile: Option<String>) {
         self.controllers.entry(mac).or_default().profile = profile.filter(|id| !id.is_empty());
     }
@@ -136,6 +142,15 @@ impl Settings {
     pub fn set_preferences(&mut self, mac: MacAddress, preferences: Preferences) {
         self.controllers.entry(mac).or_default().preferences = preferences;
     }
+}
+
+fn drift<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[i32; 3], D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(<[i32; 3]>::deserialize(value).unwrap_or_default())
+}
+
+fn is_no_drift(drift: &[i32; 3]) -> bool {
+    *drift == [0; 3]
 }
 
 fn nickname(name: &str) -> Option<String> {

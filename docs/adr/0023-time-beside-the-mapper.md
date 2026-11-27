@@ -33,3 +33,16 @@ A Profile sends the touchpad to the Virtual Controller or lets it move the mouse
 - A tap is a touch of at most 250 ms in which no finger moved more than 40 units and the touchpad was not pressed. With one finger it clicks the left button, with two the right, each only if the Profile says so; one is on and the other off to begin with.
 - A tap's click is held for 30 ms, so that a program that looks only now and then sees it. The input thread ends it on a report or on a read that times out.
 - A touch under way when the Mapper changes is ignored until the fingers are lifted.
+
+## The gyro
+
+A Profile leaves the gyro off, or has it move the pointer or add to the right stick, always, while a chosen button is held, or after that button toggles it. The button keeps its Binding. A change of Mapper turns a toggled gyro off.
+
+- Turning (yaw, or roll if chosen) to the right moves right and tilting the far edge up (pitch) moves up. The signs follow the axes of [ADR 0008](0008-controller-state-and-calibration.md) as other tools read them and have not been tried on a Controller; the inversions are there if they are wrong.
+- Below the dead zone, in degrees a second of both axes together, the gyro reads nothing, and above it the speed eases in from nothing. Sensitivity is set for each axis, 10 to 300%.
+- As a mouse it moves 20 pixels for each degree at 100%, by the time on the sensor's own clock between reports, which does not depend on when a Link delivers them. `SensorClock` takes the difference of two timestamps modulo 2^20 ticks, which suits the DualShock 4's short clock and the DualSense's long one alike, and counts nothing over a gap of more than 200 ms, which the short clock could not measure.
+- As a stick it pushes the right stick by the speed of turning, fully at 180 degrees a second at 100%, added to what the Virtual Controller's right stick shows after tuning and swapping, each axis held within its range. A still gyro leaves the report untouched.
+
+### Drift
+
+A gyro at rest rarely reads zero. The player asks for a measurement, per Controller, and `settings.json` keeps it as `gyro_drift` in the Controller's entry; it is subtracted before anything else. `DriftMeter` averages a second of reports on the input thread, of a Bridge or a Watch, and refuses a Controller that moved: a spread of more than 4 degrees a second on an axis, or an average of more than 20. It gives up after 5 seconds without enough reports, and when the Link or the Bridge ends. The motion the Virtual Controller reports to games is left as the Controller sends it.

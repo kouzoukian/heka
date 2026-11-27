@@ -167,6 +167,7 @@ use it. Changes apply at once.
   point past which any press is full, and the point at which a trigger bound to a button
   counts as pressed.
 - **Touchpad:** to the Virtual Controller, or [moving the mouse](#touchpad-as-mouse).
+- **Gyro:** off, or [moving the mouse or the right stick](#gyro-as-mouse-or-stick).
 - **Output Type:** the Controller's own, Xbox or PS4.
 
 Profiles can be renamed, duplicated, deleted, exported to a file and imported from one.
@@ -198,6 +199,20 @@ no longer sees fingers on it.
 - Dragging two fingers scrolls, both ways.
 - The click of the touchpad keeps its Binding under **Buttons**. Bind it to **Mouse
   left** to drag by pressing it down.
+
+#### Gyro as mouse or stick
+
+Under **Gyro**, set **Gyro moves** to **Mouse** or **Right stick**, to aim by turning
+the Controller.
+
+- **Active:** always, while a **Button** is held, or toggled by it. The button keeps
+  its Binding; give it **Nothing** if the game should not see it.
+- **Horizontal from:** turning the Controller (**Yaw**) or tilting it sideways
+  (**Roll**).
+- **Sensitivity** for each axis, a **dead zone** in degrees a second, and inversion.
+- As **Right stick** it adds to the stick you push, up to full.
+- **Drift:** if the pointer creeps while the Controller rests, put it down on a flat
+  surface and press **Measure**. heka keeps the result for that Controller.
 
 #### Keyboard and mouse
 

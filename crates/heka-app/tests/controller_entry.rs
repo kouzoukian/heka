@@ -18,7 +18,7 @@ use heka_core::radio::TurnOffError;
 use heka_core::settings::Settings;
 use heka_core::setup::{Driver, DriverError, Missing};
 use heka_core::state::{Battery, Buttons, Charge};
-use heka_core::supervisor::{BridgeError, ControllerView, Supervisor};
+use heka_core::supervisor::{BridgeError, ControllerView, DriftStatus, Supervisor};
 use heka_core::virtual_controller::OutputType;
 
 const MAC: MacAddress = MacAddress([0x02, 0, 0, 0, 0, 1]);
@@ -39,6 +39,7 @@ fn view(phase: Phase) -> ControllerView {
         rule_program: None,
         output_type_from_profile: false,
         live: Arc::new(LiveInput::default()),
+        drift: DriftStatus::Unmeasured,
         error: None,
         turn_off_error: None,
     }

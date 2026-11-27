@@ -7,6 +7,7 @@ use heka_core::capture::KeyListener;
 use heka_core::desktop::Key;
 use heka_core::feedback::Motor;
 use heka_core::game_rules::GameRule;
+use heka_core::gyro::GyroChange;
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
@@ -18,7 +19,7 @@ use heka_core::setup::Missing;
 use heka_core::shortcuts::{ShortcutChange, Shortcuts};
 use heka_core::state::{Battery, Stick};
 use heka_core::stick_use::StickUseChange;
-use heka_core::supervisor::ControllerView;
+use heka_core::supervisor::{ControllerView, DriftStatus};
 use heka_core::touchpad::TouchpadChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::OutputType;
@@ -80,6 +81,8 @@ pub enum Command {
     SetSwapSticks(String, bool),
     ChangeStickUse(String, StickSide, StickUseChange),
     ChangeTouchpad(String, TouchpadChange),
+    ChangeGyro(String, GyroChange),
+    MeasureDrift(MacAddress),
     ChangeTrigger(String, TriggerSide, TriggerChange),
     AddGameRule(String, String),
     SetGameRule(String, String),
@@ -243,6 +246,7 @@ pub struct ControllerEntry {
     pub raw_sticks: Option<[Stick; 2]>,
     pub raw_triggers: Option<[u8; 2]>,
     pub raw_touch: Option<[Option<TouchDot>; 2]>,
+    pub drift: DriftStatus,
     pub report_rate: Option<u32>,
     pub output_type: OutputType,
     pub profile: Option<String>,
@@ -272,6 +276,7 @@ impl ControllerEntry {
             rule_program,
             output_type_from_profile,
             live,
+            drift,
             error,
             turn_off_error: _,
         } = view;
@@ -299,6 +304,7 @@ impl ControllerEntry {
             raw_sticks: sample.raw.map(|raw| [raw.left_stick, raw.right_stick]),
             raw_triggers: sample.raw.map(|raw| [raw.left_trigger, raw.right_trigger]),
             raw_touch: sample.raw.map(|raw| PadModel::from_state(&raw).touch),
+            drift: *drift,
             report_rate: sample.report_rate.map(|rate| rate.round() as u32),
             output_type: *output_type,
             profile: profile.clone(),

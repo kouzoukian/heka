@@ -11,6 +11,7 @@ use crate::feedback::{
 };
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::live_gyro::{FollowedGyro, LiveGyro};
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
@@ -115,6 +116,7 @@ pub struct Plugged {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -133,6 +135,7 @@ impl Plugged {
             mapper: Arc::default(),
             shortcuts: Arc::default(),
             desk: Arc::default(),
+            gyro: Arc::default(),
             failures: Arc::default(),
         }
     }
@@ -147,6 +150,10 @@ impl Plugged {
 
     pub fn map_with(&mut self, mapper: Arc<LiveMapper>) {
         self.mapper = mapper;
+    }
+
+    pub fn measure_with(&mut self, gyro: Arc<LiveGyro>) {
+        self.gyro = gyro;
     }
 
     pub fn use_desk(&mut self, desk: Arc<Desk>) {
@@ -283,6 +290,7 @@ pub struct Bridge {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -319,6 +327,7 @@ impl Bridge {
             mapper,
             shortcuts,
             desk,
+            gyro,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -333,6 +342,7 @@ impl Bridge {
             mapper: Arc::clone(&mapper),
             shortcuts: Arc::clone(&shortcuts),
             desk: Arc::clone(&desk),
+            gyro: Arc::clone(&gyro),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -363,6 +373,7 @@ impl Bridge {
             mapper,
             shortcuts,
             desk,
+            gyro,
         };
         let started = Worker::spawn(
             threads,
@@ -445,6 +456,7 @@ impl Bridge {
             mapper: Arc::clone(&self.mapper),
             shortcuts: Arc::clone(&self.shortcuts),
             desk: Arc::clone(&self.desk),
+            gyro: Arc::clone(&self.gyro),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -491,6 +503,7 @@ struct Shared {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
 }
 
 fn run(
@@ -505,8 +518,11 @@ fn run(
         mapper,
         shortcuts,
         desk,
+        gyro,
     } = shared;
     let mut running = RunningMapper::new(desk);
+    let mut gyro = FollowedGyro::new(gyro);
+    running.set_drift(gyro.drift());
     let format = link.format();
     let mut mapper = mapper.follow();
     let mut configured = shortcuts.follow();
@@ -521,12 +537,16 @@ fn run(
         if mapper.refresh() {
             running.start_over(mapper.current(), latest.as_ref());
         }
+        if let Some(drift) = gyro.changed_drift() {
+            running.set_drift(drift);
+        }
         match read {
             LinkRead::Report(len) => {
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
                 let now = Instant::now();
+                gyro.read(Some(&state.motion), now);
                 let observed = detector.observe(configured.get(), state.buttons, now);
                 if let Some(action) = observed.action {
                     shortcuts.push(action);
@@ -543,6 +563,7 @@ fn run(
                 running.act();
             }
             LinkRead::Timeout => {
+                gyro.read(None, Instant::now());
                 running.tick(mapper.current(), Instant::now());
                 running.act();
             }

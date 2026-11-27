@@ -141,6 +141,7 @@ struct MainView {
     kind: Option<Kind>,
     capture: Option<Capturing>,
     stick_use_open: bool,
+    gyro_button_open: bool,
     rename: Entity<InputState>,
     manage: Manage,
     section: Section,
@@ -241,6 +242,7 @@ impl MainView {
             kind: None,
             capture: None,
             stick_use_open: false,
+            gyro_button_open: false,
             rename,
             manage: Manage::Idle,
             section: Section::default(),
@@ -316,6 +318,7 @@ impl MainView {
         self.kind = None;
         self.capture = None;
         self.stick_use_open = false;
+        self.gyro_button_open = false;
     }
 
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
@@ -375,6 +378,7 @@ impl MainView {
             }
             ProfileAction::Bind(target, chord) => self.bind_keys(target, chord),
             ProfileAction::ToggleStickUse => self.stick_use_open = !self.stick_use_open,
+            ProfileAction::ToggleGyroButton => self.gyro_button_open = !self.gyro_button_open,
             ProfileAction::TriggerSide(side) => self.trigger_side = side,
             ProfileAction::Duplicate => {
                 self.manage = Manage::Idle;
@@ -626,6 +630,7 @@ impl MainView {
                 kind: self.kind,
                 capturing: self.capture.as_ref().map(|capture| capture.target),
                 stick_use_open: self.stick_use_open,
+                gyro_button_open: self.gyro_button_open,
                 key_label,
                 section: self.section,
                 side: self.side,

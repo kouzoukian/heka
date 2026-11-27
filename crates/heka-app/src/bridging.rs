@@ -12,6 +12,7 @@ use heka_app::{log, text};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::feedback::Motor;
+use heka_core::gyro::GyroChange;
 use heka_core::hider::{Hider, HidingWarning};
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Change;
@@ -89,6 +90,8 @@ enum Command {
     ChangeTrigger(String, TriggerSide, TriggerChange),
     ChangeStickUse(String, StickSide, StickUseChange),
     ChangeTouchpad(String, TouchpadChange),
+    ChangeGyro(String, GyroChange),
+    MeasureDrift(MacAddress),
     Quit,
 }
 
@@ -243,6 +246,14 @@ impl Bridging {
 
     pub fn change_touchpad(&self, profile: String, change: TouchpadChange) {
         let _ = self.commands.send(Command::ChangeTouchpad(profile, change));
+    }
+
+    pub fn change_gyro(&self, profile: String, change: GyroChange) {
+        let _ = self.commands.send(Command::ChangeGyro(profile, change));
+    }
+
+    pub fn measure_drift(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::MeasureDrift(mac));
     }
 
     pub fn quit(&self) {
@@ -424,6 +435,15 @@ fn supervise(
                     profile.change_touchpad(change);
                 })
             }
+            Ok(Command::ChangeGyro(id, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_gyro(change);
+                })
+            }
+            Ok(Command::MeasureDrift(mac)) => {
+                supervisor.measure_drift(mac);
+                Vec::new()
+            }
             Ok(Command::ChangeTrigger(id, side, change)) => {
                 edit_profile(&mut supervisor, &id, now, |profile| {
                     profile.change_trigger(side, change);
@@ -476,6 +496,10 @@ fn supervise(
         }
         report_failures(&mut supervisor, &mut not_unplugged);
         log_hiding_changes(&mut hider);
+        for (mac, measurement) in supervisor.take_measurements() {
+            unsaved |= measurement.is_ok();
+            log::line(&text::log::drift(mac, measurement));
+        }
         let hiding = if detected.is_missing(Driver::HidHide) {
             Vec::new()
         } else {

@@ -19,6 +19,7 @@ use crate::text;
 use crate::ui::banners::{clamped, strip, text_button};
 use crate::ui::capture::{CaptureFor, capture_control};
 use crate::ui::detail::row;
+use crate::ui::gyro::gyro_section;
 use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
@@ -70,6 +71,7 @@ pub enum Section {
     Sticks,
     Triggers,
     Touchpad,
+    Gyro,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +83,7 @@ pub enum ProfileAction {
     Capture(CaptureFor),
     Bind(CaptureFor, Chord),
     ToggleStickUse,
+    ToggleGyroButton,
     Duplicate,
     StartRename,
     CommitRename,
@@ -98,6 +101,7 @@ pub struct ProfileView<'a> {
     pub kind: Option<Kind>,
     pub capturing: Option<CaptureFor>,
     pub stick_use_open: bool,
+    pub gyro_button_open: bool,
     pub key_label: KeyLabel,
     pub section: Section,
     pub side: StickSide,
@@ -138,6 +142,7 @@ pub fn profile_page(
             Some(profile) => touchpad_section(profile, entry, send, theme).into_any_element(),
             None => scrolled(default_note(text::TOUCHPAD_DEFAULT, theme)),
         },
+        Section::Gyro => scrolled(gyro_section(chosen, entry, view, send, theme)),
     };
     div()
         .flex()
@@ -176,6 +181,7 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
         (Section::Sticks, text::SECTION_STICKS),
         (Section::Triggers, text::SECTION_TRIGGERS),
         (Section::Touchpad, text::SECTION_TOUCHPAD),
+        (Section::Gyro, text::SECTION_GYRO),
     ]
     .map(|(section, words)| {
         let act = Rc::clone(&view.act);
