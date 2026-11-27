@@ -12,7 +12,7 @@ use crate::ui::panel::faint;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
-const ICON_SIZE: f32 = 48.;
+const ICON_SIZE: f32 = 36.;
 
 pub fn about(cx: &App) -> Div {
     let theme = cx.theme();
@@ -55,7 +55,7 @@ pub fn about(cx: &App) -> Div {
 }
 
 fn heading(theme: &Theme) -> impl gpui::IntoElement {
-    strip("about-heading", 3, theme)
+    strip("about-heading", 2, theme)
         .gap(px(12.))
         .child(img(APP_ICON).flex_none().size(px(ICON_SIZE)))
         .child(

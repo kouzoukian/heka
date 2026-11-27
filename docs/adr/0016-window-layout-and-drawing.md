@@ -13,7 +13,7 @@ Builds on the look chosen in [ADR 0002](0002-zed-look-through-gpui-component.md)
 - Buttons take icons as children, because `.icon` and `.label` would impose the button's own sizes.
 - Status-bar error and warning counts are one item, so they are spaced like the rest of the window. The buttons for the app settings, the log and About are at its right end, where Zed puts the buttons that open panels. The title bar is flat, as in Zed, instead of `gpui-component`'s gradient.
 - A log entry is one row: its time, then its message cut at two lines, with a tooltip holding the whole line. Equal rows let the list build only those in view.
-- About's heading is three rows high and the rest of it one row each.
+- About's heading is two rows high and the rest of it one row each.
 - The window's minimum size leaves room for the panel beside the drawing and the drawing below the properties.
 
 ## Colour picker
