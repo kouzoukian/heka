@@ -34,6 +34,15 @@ pub fn picked(colour: Hsla) -> Lightbar {
     }
 }
 
+pub fn typed(text: &str) -> Option<Lightbar> {
+    let digits = text.strip_prefix('#')?;
+    if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let [_, red, green, blue] = u32::from_str_radix(&digits[..6], 16).ok()?.to_be_bytes();
+    Some(Lightbar { red, green, blue })
+}
+
 pub fn swatch(colour: Lightbar) -> Div {
     div().size(px(10.)).rounded_full().bg(drawn(colour))
 }

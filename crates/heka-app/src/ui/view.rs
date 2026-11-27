@@ -138,16 +138,14 @@ impl MainView {
         })
         .detach();
         let colour = cx.new(|cx| ColorPickerState::new(window, cx));
-        cx.observe(&colour, |this: &mut Self, colour, cx| {
-            let state = colour.read(cx);
-            let whole = state.hex_input().read(cx).value().len() >= "#RRGGBB".len();
-            if let Some(shown) = state.preview().map(picker::picked)
-                && whole
-                && shown != this.held_colour
+        cx.observe(&colour, |_, _, cx| cx.notify()).detach();
+        let hex = colour.read(cx).hex_input().clone();
+        cx.subscribe(&hex, |this: &mut Self, hex, event: &InputEvent, cx| {
+            if let InputEvent::Change = event
+                && let Some(chosen) = picker::typed(&hex.read(cx).value())
             {
-                this.choose_colour(shown);
+                this.choose_colour(chosen);
             }
-            cx.notify();
         })
         .detach();
         cx.subscribe(
