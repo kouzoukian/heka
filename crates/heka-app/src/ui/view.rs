@@ -18,7 +18,7 @@ use heka_core::desktop::Chord;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
-use heka_core::profile::{Input, MAX_NAME_CHARS};
+use heka_core::profile::{Input, MAX_NAME_CHARS, Profile};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 use heka_core::shortcuts::ShortcutAction;
@@ -116,6 +116,7 @@ pub fn open_window(
 
 struct Capturing {
     profile: String,
+    as_it_was: Option<Profile>,
     target: CaptureFor,
     listener: Box<dyn KeyListener>,
     keys: KeyCapture,
@@ -268,10 +269,14 @@ impl MainView {
 
     fn hear_keys(&mut self, cx: &mut Context<Self>) {
         let chosen = self.chosen_profile();
+        let now = self
+            .capture
+            .as_ref()
+            .and_then(|capture| self.profile(&capture.profile));
         let Some(capture) = &mut self.capture else {
             return;
         };
-        if chosen.as_ref() != Some(&capture.profile) {
+        if chosen.as_ref() != Some(&capture.profile) || now != capture.as_it_was {
             self.capture = None;
             cx.notify();
             return;
@@ -285,6 +290,14 @@ impl MainView {
             self.bind_keys(target, chord);
         }
         cx.notify();
+    }
+
+    fn profile(&self, id: &str) -> Option<Profile> {
+        self.screen
+            .profiles
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.profile.clone())
     }
 
     fn bind_keys(&mut self, target: CaptureFor, chord: Chord) {
@@ -307,6 +320,7 @@ impl MainView {
         self.capture = self.chosen_profile().and_then(|profile| {
             let listener = self.backend.listen_for_keys()?;
             Some(Capturing {
+                as_it_was: self.profile(&profile),
                 profile,
                 target,
                 keys: KeyCapture::new(listener.has_alt_gr()),

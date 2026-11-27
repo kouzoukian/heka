@@ -15,7 +15,7 @@ use crate::ui::segmented::{Segment, on_off, segmented};
 use crate::ui::settings::explained;
 use crate::ui::sticks::choices;
 
-pub const SENSITIVITIES: [u16; 7] = [25, 50, 75, 100, 150, 200, 300];
+pub const SENSITIVITIES: [u16; 6] = [25, 50, 100, 150, 200, 300];
 
 const PAD_WIDTH: f32 = 192.;
 const PAD_HEIGHT: f32 = 108.;

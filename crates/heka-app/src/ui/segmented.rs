@@ -127,12 +127,20 @@ pub fn picked(
     items: impl IntoIterator<Item = (SharedString, &'static str, bool, Pick)>,
     theme: &Theme,
 ) -> Div {
+    picked_padded(items, GAP, theme)
+}
+
+pub fn picked_padded(
+    items: impl IntoIterator<Item = (SharedString, &'static str, bool, Pick)>,
+    padding: Pixels,
+    theme: &Theme,
+) -> Div {
     let buttons = items.into_iter().map(|(id, words, selected, pick)| {
         Button::new(id)
             .ghost()
             .selected(selected)
             .h(segment_height())
-            .px(GAP)
+            .px(padding)
             .rounded(px(3.))
             .map(|this| {
                 if selected {

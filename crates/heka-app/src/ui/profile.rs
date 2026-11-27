@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Div, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, Div, Entity, InteractiveElement, IntoElement, ParentElement, Pixels,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input as TextInput, InputState};
@@ -25,11 +26,13 @@ use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
 use crate::ui::rules::rule_strip;
-use crate::ui::segmented::{Pick, Segment, picked, segmented};
+use crate::ui::segmented::{Pick, Segment, picked, picked_padded, segmented};
 use crate::ui::settings::{explained, group};
 use crate::ui::sticks::sticks_section;
 use crate::ui::touchpad::touchpad_section;
 use crate::ui::triggers::triggers_section;
+
+const SECTION_PADDING: Pixels = px(5.);
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
 
@@ -198,7 +201,9 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
             pick,
         )
     });
-    row(theme).justify_start().child(picked(items, theme))
+    row(theme)
+        .justify_start()
+        .child(picked_padded(items, SECTION_PADDING, theme))
 }
 
 fn profiles_section(
