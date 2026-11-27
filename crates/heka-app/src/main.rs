@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridging;
+mod profiles_file;
 mod releases;
 mod settings_file;
 mod tray;
@@ -46,10 +47,15 @@ fn main() {
     };
     let log_error = start_log();
     let (settings, unreadable) = settings_file::load();
+    let (profiles, profile_problems) = profiles_file::load();
     let app = settings.app().clone();
     let in_tray = app.opens_in_tray(std::env::args_os());
     log::line(&text::log::started(env!("CARGO_PKG_VERSION"), in_tray));
-    for message in log_error.into_iter().chain(unreadable) {
+    for message in log_error
+        .into_iter()
+        .chain(unreadable)
+        .chain(profile_problems)
+    {
         log::line(&message);
     }
     if let Some(error) = unchecked {
@@ -64,7 +70,7 @@ fn main() {
     application.run(move |cx: &mut App| {
         view::init(cx);
 
-        let bridging = Arc::new(Bridging::start(settings));
+        let bridging = Arc::new(Bridging::start(settings, profiles));
         cx.on_app_quit({
             let bridging = Arc::clone(&bridging);
             move |_| {

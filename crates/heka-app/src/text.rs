@@ -638,6 +638,22 @@ pub mod log {
         format!("cannot save {}: {error}", path.display())
     }
 
+    pub fn cannot_read_profiles(folder: &Path, error: &str) -> String {
+        format!("cannot read the profiles in {}: {error}", folder.display())
+    }
+
+    pub fn cannot_read_profile(path: &Path, error: &str) -> String {
+        format!("cannot read {}: {error}", path.display())
+    }
+
+    pub fn profile_skipped(path: &Path) -> String {
+        format!("{} is not a profile and was left out", path.display())
+    }
+
+    pub fn cannot_save_profile(path: &Path, error: &str) -> String {
+        format!("cannot save {}: {error}", path.display())
+    }
+
     pub fn cannot_check_for_running_copy(error: &str) -> String {
         format!("cannot check for a running copy: {error}")
     }

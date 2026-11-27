@@ -6,7 +6,7 @@ use heka_app::log::{Entry, Recent};
 use heka_app::text;
 use heka_app::ui::assets::Assets;
 use heka_app::ui::model::{
-    AppEntry, Backend, Command, ControllerEntry, EntryState, Notice, Screen,
+    AppEntry, Backend, Command, ControllerEntry, EntryState, Notice, ProfileEntry, Screen,
 };
 use heka_app::ui::pad::{PadModel, TouchDot};
 use heka_app::ui::view::{self, Page};
@@ -17,6 +17,7 @@ use heka_core::lifecycle::Change;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
+use heka_core::profiles::Profiles;
 use heka_core::release::Version;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
@@ -29,6 +30,7 @@ const REPORT_EVERY: Duration = Duration::from_secs(2);
 struct Fake {
     started: Instant,
     controllers: RefCell<Vec<ControllerEntry>>,
+    profiles: RefCell<Profiles>,
     missing: RefCell<Vec<Missing>>,
     samples: RefCell<(u32, Instant)>,
     log: Recent,
@@ -52,6 +54,8 @@ impl Fake {
             idle_time: None,
             battery,
             output_type,
+            profile: None,
+            output_type_from_profile: false,
             state,
             bus_missing: missing,
             error: None,
@@ -117,6 +121,7 @@ impl Fake {
         Self {
             started: now,
             controllers: RefCell::new(controllers),
+            profiles: RefCell::new(Profiles::default()),
             missing: RefCell::new(missing),
             samples: RefCell::new((0, now)),
             log: made_up_log(),
@@ -166,6 +171,15 @@ impl Backend for Fake {
             missing,
             notices,
             controllers,
+            profiles: self
+                .profiles
+                .borrow()
+                .list()
+                .map(|(id, profile)| ProfileEntry {
+                    id: id.to_owned(),
+                    profile: profile.clone(),
+                })
+                .collect(),
             log: Recent::clone(&self.log),
             app: AppEntry {
                 start_with_windows: self.start_with_windows.get(),
@@ -202,6 +216,23 @@ impl Backend for Fake {
                 self.app.borrow_mut().window = Some(placement.clone());
                 return;
             }
+            Command::CreateProfile(name) => {
+                self.profiles.borrow_mut().create(name);
+                return;
+            }
+            Command::BindInput(id, input, binding) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.bind(*input, *binding);
+                }
+                return;
+            }
+            Command::SetProfileOutputType(id, output_type) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.output_type = *output_type;
+                }
+                return;
+            }
+            Command::ChooseProfile(mac, _) => *mac,
             Command::TestRumble(..)
             | Command::EndRumbleTest(_)
             | Command::OpenLogFolder
@@ -232,6 +263,13 @@ impl Backend for Fake {
             Command::ChangePreference(_, change) => entry.preferences.change(change),
             Command::TurnOff(mac) => controllers.retain(|entry| entry.mac != mac),
             Command::SetIdleTime(_, idle_time) => entry.idle_time = idle_time,
+            Command::ChooseProfile(_, profile) => {
+                entry.output_type_from_profile = profile
+                    .as_ref()
+                    .and_then(|id| self.profiles.borrow().get(id).and_then(|p| p.output_type))
+                    .is_some();
+                entry.profile = profile;
+            }
             _ => {}
         }
     }

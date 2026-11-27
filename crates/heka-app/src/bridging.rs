@@ -15,6 +15,8 @@ use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::PreferenceChange;
+use heka_core::profile::{Binding, Input, Profile};
+use heka_core::profiles::Profiles;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
 use heka_core::supervisor::{ControllerView, Supervisor};
@@ -25,7 +27,7 @@ use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
 
-use crate::settings_file;
+use crate::{profiles_file, settings_file};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const LOG_FLUSH: Duration = Duration::from_secs(1);
@@ -42,6 +44,7 @@ pub struct Snapshot {
     pub status: Status,
     pub setup: Option<Setup>,
     pub controllers: Vec<ControllerView>,
+    pub profiles: Profiles,
     pub hiding: Vec<HidingWarning>,
     pub unopened: Vec<Unopened>,
     pub not_unplugged: Vec<String>,
@@ -59,6 +62,10 @@ enum Command {
     SetIdleTime(MacAddress, Option<IdleTime>),
     CheckDrivers,
     SetAppSettings(AppSettings),
+    ChooseProfile(MacAddress, Option<String>),
+    CreateProfile(String),
+    BindInput(String, Input, Binding),
+    SetProfileOutputType(String, Option<OutputType>),
     Quit,
 }
 
@@ -69,12 +76,13 @@ pub struct Bridging {
 }
 
 impl Bridging {
-    pub fn start(settings: Settings) -> Self {
+    pub fn start(settings: Settings, profiles: Profiles) -> Self {
         let (commands, inbox) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: Status::Starting,
             setup: None,
             controllers: Vec::new(),
+            profiles: Profiles::default(),
             hiding: Vec::new(),
             unopened: Vec::new(),
             not_unplugged: Vec::new(),
@@ -83,7 +91,7 @@ impl Bridging {
             .name("heka-supervisor".into())
             .spawn({
                 let snapshot = Arc::clone(&snapshot);
-                move || supervise(settings, &inbox, &snapshot)
+                move || supervise(settings, profiles, &inbox, &snapshot)
             })
             .expect("failed to start the supervisor thread");
         Self {
@@ -144,6 +152,26 @@ impl Bridging {
         let _ = self.commands.send(Command::SetAppSettings(app));
     }
 
+    pub fn choose_profile(&self, mac: MacAddress, profile: Option<String>) {
+        let _ = self.commands.send(Command::ChooseProfile(mac, profile));
+    }
+
+    pub fn create_profile(&self, name: String) {
+        let _ = self.commands.send(Command::CreateProfile(name));
+    }
+
+    pub fn bind_input(&self, profile: String, input: Input, binding: Binding) {
+        let _ = self
+            .commands
+            .send(Command::BindInput(profile, input, binding));
+    }
+
+    pub fn set_profile_output_type(&self, profile: String, output_type: Option<OutputType>) {
+        let _ = self
+            .commands
+            .send(Command::SetProfileOutputType(profile, output_type));
+    }
+
     pub fn quit(&self) {
         let _ = self.commands.send(Command::Quit);
         let thread = self
@@ -164,10 +192,16 @@ impl Drop for Bridging {
     }
 }
 
-fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mutex<Snapshot>) {
+fn supervise(
+    settings: Settings,
+    profiles: Profiles,
+    inbox: &mpsc::Receiver<Command>,
+    snapshot: &Mutex<Snapshot>,
+) {
     let mut hider = Hider::new(hidhide::hiding(), settings.never_hidden());
     let mut supervisor =
         Supervisor::without_bus(settings).turning_off_with(Box::new(BluetoothRadios));
+    supervisor.set_profiles(profiles, Instant::now());
     let (mut detected, changes) = setup::check(&InstalledDrivers, &mut supervisor, Instant::now());
     log_all(text::log::drivers(&detected));
     follow(&mut hider, &changes);
@@ -233,6 +267,26 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
                 supervisor.set_app_settings(app);
                 Vec::new()
             }
+            Ok(Command::ChooseProfile(mac, profile)) => {
+                unsaved = true;
+                supervisor.choose_profile(mac, profile, now)
+            }
+            Ok(Command::CreateProfile(name)) => {
+                let mut profiles = supervisor.profiles().clone();
+                let id = profiles.create(&name);
+                save_profile(&profiles, &id);
+                supervisor.set_profiles(profiles, now)
+            }
+            Ok(Command::BindInput(id, input, binding)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.bind(input, binding);
+                })
+            }
+            Ok(Command::SetProfileOutputType(id, output_type)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.output_type = output_type;
+                })
+            }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
                 detected = found;
@@ -282,6 +336,7 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
                 status: status.clone(),
                 setup: Some(detected.clone()),
                 controllers,
+                profiles: supervisor.profiles().clone(),
                 hiding,
                 unopened: discovery.unopened().cloned().collect(),
                 not_unplugged: not_unplugged.clone(),
@@ -298,6 +353,27 @@ fn supervise(settings: Settings, inbox: &mpsc::Receiver<Command>, snapshot: &Mut
         log::line(&text::log::cannot_restore_on_quit(&error));
     }
     log_hiding_changes(&mut hider);
+}
+
+fn save_profile(profiles: &Profiles, id: &str) {
+    if let Some(profile) = profiles.get(id) {
+        profiles_file::save(id, profile);
+    }
+}
+
+fn edit_profile(
+    supervisor: &mut Supervisor,
+    id: &str,
+    now: Instant,
+    change: impl FnOnce(&mut Profile),
+) -> Vec<Change> {
+    let mut profiles = supervisor.profiles().clone();
+    let Some(profile) = profiles.get_mut(id) else {
+        return Vec::new();
+    };
+    change(profile);
+    save_profile(&profiles, id);
+    supervisor.set_profiles(profiles, now)
 }
 
 fn publish(snapshot: &Mutex<Snapshot>, latest: Snapshot) {

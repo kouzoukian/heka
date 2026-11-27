@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{fs, io, process};
 
-use heka_app::ui::model::{AppEntry, Backend, Command, ControllerEntry, Notice, Screen};
+use heka_app::ui::model::{
+    AppEntry, Backend, Command, ControllerEntry, Notice, ProfileEntry, Screen,
+};
 use heka_app::{log, text};
 use heka_core::app_settings::{AppSettings, CloseAction};
 use heka_core::autostart::Autostart;
@@ -122,6 +124,14 @@ impl Backend for WindowBackend {
                 .iter()
                 .map(|view| ControllerEntry::from_view(view, now, bus_missing))
                 .collect(),
+            profiles: snapshot
+                .profiles
+                .list()
+                .map(|(id, profile)| ProfileEntry {
+                    id: id.to_owned(),
+                    profile: profile.clone(),
+                })
+                .collect(),
             log: log::recent(),
             app,
             newer_release: self.releases.newer().filter(|_| app.check_for_releases),
@@ -148,6 +158,14 @@ impl Backend for WindowBackend {
                 self.change_app(|app| app.window = Some(placement));
             }
             Command::OpenSettingsFolder => open_settings_folder(),
+            Command::ChooseProfile(mac, profile) => bridging.choose_profile(mac, profile),
+            Command::CreateProfile(name) => bridging.create_profile(name),
+            Command::BindInput(profile, input, binding) => {
+                bridging.bind_input(profile, input, binding);
+            }
+            Command::SetProfileOutputType(profile, output_type) => {
+                bridging.set_profile_output_type(profile, output_type);
+            }
         }
     }
 

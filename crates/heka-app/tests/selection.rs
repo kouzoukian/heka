@@ -22,6 +22,8 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             idle_time: None,
             battery: None,
             output_type: OutputType::Xbox,
+            profile: None,
+            output_type_from_profile: false,
             state: EntryState::Stopped,
             bus_missing: false,
             error: None,

@@ -262,6 +262,7 @@ fn a_screen_changes_only_when_something_shown_changes() {
         missing: Vec::new(),
         notices: vec![Notice::warning("warning")],
         controllers: vec![entry_of(&held, now + Duration::from_millis(after_ms))],
+        profiles: Vec::new(),
         log: Default::default(),
         app: Default::default(),
         newer_release: None,
@@ -285,6 +286,7 @@ fn the_status_bar_counts_errors_and_warnings_missing_drivers_among_them() {
             Notice::warning("three"),
         ],
         controllers: Vec::new(),
+        profiles: Vec::new(),
         log: Default::default(),
         app: Default::default(),
         newer_release: None,
@@ -306,6 +308,7 @@ fn the_status_bar_counts_controllers_and_bridges() {
                 .iter()
                 .map(|&phase| entry_of(&view(phase), now))
                 .collect(),
+            profiles: Vec::new(),
             log: Default::default(),
             app: Default::default(),
             newer_release: None,

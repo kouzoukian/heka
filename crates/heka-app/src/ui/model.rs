@@ -8,6 +8,7 @@ use heka_core::lifecycle::Phase;
 use heka_core::link::{ControllerModel, LinkKind};
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{PreferenceChange, Preferences};
+use heka_core::profile::{Binding, Input, Profile};
 use heka_core::release::Version;
 use heka_core::setup::Missing;
 use heka_core::state::Battery;
@@ -46,6 +47,10 @@ pub enum Command {
     ChangeAppSetting(AppChange),
     RememberWindow(WindowPlacement),
     OpenSettingsFolder,
+    ChooseProfile(MacAddress, Option<String>),
+    CreateProfile(String),
+    BindInput(String, Input, Binding),
+    SetProfileOutputType(String, Option<OutputType>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +67,7 @@ pub struct Screen {
     pub missing: Vec<Missing>,
     pub notices: Vec<Notice>,
     pub controllers: Vec<ControllerEntry>,
+    pub profiles: Vec<ProfileEntry>,
     pub log: Recent,
     pub app: AppEntry,
     pub newer_release: Option<Version>,
@@ -91,6 +97,12 @@ impl Screen {
             .count();
         text::summary(self.controllers.len(), bridged)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileEntry {
+    pub id: String,
+    pub profile: Profile,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -177,6 +189,8 @@ pub struct ControllerEntry {
     pub idle_time: Option<IdleTime>,
     pub battery: Option<Battery>,
     pub output_type: OutputType,
+    pub profile: Option<String>,
+    pub output_type_from_profile: bool,
     pub state: EntryState,
     pub bus_missing: bool,
     pub error: Option<String>,
@@ -195,8 +209,8 @@ impl ControllerEntry {
             active_link,
             has_bluetooth,
             idle_time,
-            profile: _,
-            output_type_from_profile: _,
+            profile,
+            output_type_from_profile,
             live,
             error,
             turn_off_error: _,
@@ -222,6 +236,8 @@ impl ControllerEntry {
             idle_time: *idle_time,
             battery: input.and_then(|input| input.battery),
             output_type: *output_type,
+            profile: profile.clone(),
+            output_type_from_profile: *output_type_from_profile,
             state,
             bus_missing,
             error: error.as_ref().map(text::bridge_error),
