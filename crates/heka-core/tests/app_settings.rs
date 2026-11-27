@@ -44,6 +44,7 @@ fn heka_keeps_running_and_opens_its_window_by_default() {
             on_close: CloseAction::KeepRunning,
             check_for_releases: true,
             game_rules: Default::default(),
+            shortcuts: Default::default(),
             window: None,
         }
     );
@@ -79,6 +80,7 @@ fn app_settings_survive_a_save_and_load() {
         on_close: CloseAction::Quit,
         check_for_releases: false,
         game_rules: Default::default(),
+        shortcuts: Default::default(),
         window: Some(WindowPlacement {
             bounds: rect(-1200, 40, 900, 700),
             maximized: true,
@@ -106,6 +108,7 @@ fn the_file_names_the_app_settings() {
             on_close: CloseAction::Quit,
             check_for_releases: false,
             game_rules: Default::default(),
+            shortcuts: Default::default(),
             window: Some(placed(rect(10, 20, 700, 600))),
         }
     );
@@ -175,6 +178,7 @@ fn a_change_touches_only_what_it_names() {
             on_close: CloseAction::Quit,
             check_for_releases: false,
             game_rules: Default::default(),
+            shortcuts: Default::default(),
             window: Some(placed(rect(1, 2, 700, 600))),
         }
     );

@@ -10,12 +10,14 @@ use crate::idle::{IdleTime, IdleTimer};
 use crate::lifecycle::{Change, Lifecycle, Phase, Removal};
 use crate::link::{ControllerModel, LinkKind, LinkReader, active_link};
 use crate::live_mapper::LiveMapper;
+use crate::live_shortcuts::LiveShortcuts;
 use crate::mac::MacAddress;
 use crate::preferences::{LivePreferences, PreferenceChange, Preferences};
 use crate::profile::{Mapper, Profile};
 use crate::profiles::Profiles;
 use crate::radio::{Radio, TurnOffError};
 use crate::settings::Settings;
+use crate::shortcuts::{ShortcutAction, cycle};
 use crate::threads::{SystemThreads, Threads};
 use crate::virtual_controller::{
     OutputType, VirtualBus, VirtualError, VirtualFailure, VirtualFailures,
@@ -80,6 +82,7 @@ struct Slot {
     live: Arc<LiveInput>,
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
     links: Vec<LinkSlot>,
     reading: Option<LinkId>,
     bridge: Option<Bridge>,
@@ -150,6 +153,14 @@ impl Slot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutNote {
+    pub mac: MacAddress,
+    pub profile: Option<String>,
+    pub name: Option<String>,
+    pub under_rule: Option<String>,
+}
+
 pub struct Supervisor {
     bus: Option<Box<dyn VirtualBus>>,
     lifecycle: Lifecycle,
@@ -157,6 +168,7 @@ pub struct Supervisor {
     profiles: Profiles,
     rule_selector: RuleSelector,
     rule: Option<(String, String)>,
+    shortcut_notes: Vec<ShortcutNote>,
     next_link_id: u64,
     threads: Arc<dyn Threads>,
     failures: Arc<VirtualFailures>,
@@ -182,6 +194,7 @@ impl Supervisor {
             profiles: Profiles::default(),
             rule_selector: RuleSelector::default(),
             rule: None,
+            shortcut_notes: Vec::new(),
             next_link_id: 0,
             threads: Arc::new(SystemThreads),
             failures: Arc::default(),
@@ -438,6 +451,7 @@ impl Supervisor {
         }
         let changes = self.lifecycle.tick(now);
         done.extend(self.apply(changes, now));
+        done.extend(self.run_shortcuts(now));
         done.extend(self.turn_off_idle(now));
         done
     }
@@ -606,7 +620,67 @@ impl Supervisor {
     }
 
     pub fn set_app_settings(&mut self, app: AppSettings) {
+        for slot in self.slots.values() {
+            slot.shortcuts.set(app.shortcuts);
+        }
         self.lifecycle.settings_mut().set_app(app);
+    }
+
+    pub fn take_shortcut_notes(&mut self) -> Vec<ShortcutNote> {
+        std::mem::take(&mut self.shortcut_notes)
+    }
+
+    fn run_shortcuts(&mut self, now: Instant) -> Vec<Change> {
+        let mut pending: Vec<(MacAddress, ShortcutAction)> = Vec::new();
+        for (&mac, slot) in &self.slots {
+            pending.extend(
+                slot.shortcuts
+                    .take()
+                    .into_iter()
+                    .map(|action| (mac, action)),
+            );
+        }
+        pending.sort_by_key(|(mac, _)| *mac);
+        let mut done = Vec::new();
+        for (mac, action) in pending {
+            match action {
+                ShortcutAction::TurnOff => done.extend(self.turn_off(mac, now)),
+                ShortcutAction::NextProfile | ShortcutAction::PreviousProfile => {
+                    let forward = action == ShortcutAction::NextProfile;
+                    done.extend(self.cycle_profile(mac, forward, now));
+                }
+            }
+        }
+        done
+    }
+
+    fn cycle_profile(&mut self, mac: MacAddress, forward: bool, now: Instant) -> Vec<Change> {
+        let sorted = {
+            let mut listed: Vec<(&str, String)> = self
+                .profiles
+                .list()
+                .map(|(id, profile)| (id, profile.name.to_lowercase()))
+                .collect();
+            listed.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+            listed
+                .into_iter()
+                .map(|(id, _)| id.to_owned())
+                .collect::<Vec<String>>()
+        };
+        let ids: Vec<&str> = sorted.iter().map(String::as_str).collect();
+        let current = self.settings().controller(mac).profile;
+        let chosen = cycle(current.as_deref(), &ids, forward);
+        let name = chosen
+            .as_deref()
+            .and_then(|id| self.profiles.get(id))
+            .map(|profile| profile.name.clone());
+        self.shortcut_notes.push(ShortcutNote {
+            mac,
+            profile: chosen.clone(),
+            name,
+            under_rule: self.rule_program(),
+        });
+        self.choose_profile(mac, chosen, now)
     }
 
     pub fn set_nickname(&mut self, mac: MacAddress, name: &str) {
@@ -819,6 +893,7 @@ impl Supervisor {
     fn bridge_to(&mut self, mac: MacAddress, mut controller: Plugged) -> Result<(), BridgeError> {
         let preferences = self.settings().controller(mac).preferences;
         let mapper = Mapper::new(&self.profile_of(mac));
+        let shortcuts = self.settings().app().shortcuts;
         let threads = Arc::clone(&self.threads);
         let slot = self.slot(mac);
         let link = slot
@@ -826,6 +901,8 @@ impl Supervisor {
             .expect("an unbridged Controller keeps its Active Link open");
         slot.preferences.set(preferences);
         slot.mapper.set(mapper);
+        slot.shortcuts.set(shortcuts);
+        controller.shortcuts_with(Arc::clone(&slot.shortcuts));
         controller.follow(Arc::clone(&slot.preferences));
         controller.map_with(Arc::clone(&slot.mapper));
         match Bridge::resume_on(threads.as_ref(), link, controller, Arc::clone(&slot.live)) {

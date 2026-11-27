@@ -22,8 +22,9 @@ use heka_core::profile::{Binding, Input, Output};
 use heka_core::profiles::Profiles;
 use heka_core::radio::{Radio, TurnOffError};
 use heka_core::settings::Settings;
+use heka_core::shortcuts::Shortcuts;
 use heka_core::state::{Buttons, ControllerState};
-use heka_core::supervisor::{BridgeError, Supervisor};
+use heka_core::supervisor::{BridgeError, ShortcutNote, Supervisor};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
     OutputType, VirtualBus, VirtualController, VirtualError, VirtualFailure,
@@ -2105,4 +2106,246 @@ fn changing_a_controllers_own_choice_under_a_rule_is_kept_for_afterwards() {
 
     link.send(cross());
     wait_for_buttons(&bus, 0, Buttons::NONE);
+}
+
+fn ps() -> Vec<u8> {
+    common::derived(&[(10, 0x01)])
+}
+
+fn ps_with(buttons_1: u8) -> Vec<u8> {
+    common::derived(&[(9, buttons_1), (10, 0x01)])
+}
+
+const R1_BIT: u8 = 0x02;
+const L1_BIT: u8 = 0x01;
+const OPTIONS_BIT: u8 = 0x20;
+
+fn app_with(shortcuts_on: bool, rules: &[(&str, &str)]) -> AppSettings {
+    let mut app = AppSettings {
+        shortcuts: Shortcuts {
+            enabled: shortcuts_on,
+            ..Shortcuts::default()
+        },
+        ..AppSettings::default()
+    };
+    for (program, profile) in rules {
+        app.game_rules.add(program, profile);
+    }
+    app
+}
+
+fn two_profiles() -> Profiles {
+    Profiles::load([
+        (
+            "racing".to_owned(),
+            r#"{"name": "Racing", "bindings": {"r1": "cross"}}"#.to_owned(),
+        ),
+        ("silent".to_owned(), r#"{"name": "Silent"}"#.to_owned()),
+    ])
+}
+
+fn choice(supervisor: &Supervisor) -> Option<String> {
+    supervisor.settings().controller(mac(1)).profile
+}
+
+fn poll_until(
+    supervisor: &mut Supervisor,
+    now: Instant,
+    mut done: impl FnMut(&Supervisor) -> bool,
+) {
+    wait_until(|| {
+        supervisor.poll(now);
+        done(supervisor)
+    });
+}
+
+fn ever_showed(bus: &FakeBus, button: Buttons) -> bool {
+    bus.shown(0)
+        .lock()
+        .unwrap()
+        .updates
+        .iter()
+        .any(|state| state.buttons.contains(button))
+}
+
+#[test]
+fn shortcuts_do_nothing_until_they_are_turned_on() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    wait_for_buttons(&bus, 0, Buttons::PS | Buttons::R1);
+    supervisor.poll(t0);
+
+    assert_eq!(choice(&supervisor), None);
+    assert_eq!(supervisor.take_shortcut_notes(), []);
+}
+
+#[test]
+fn a_shortcut_hides_its_button_from_the_game_and_leaves_ps_as_it_was() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    wait_for_buttons(&bus, 0, Buttons::PS);
+    link.send(ps_with(R1_BIT));
+    link.send(ps());
+    link.send(common::derived(&[]));
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+
+    assert!(ever_showed(&bus, Buttons::PS));
+    assert!(!ever_showed(&bus, Buttons::R1));
+}
+
+#[test]
+fn a_hidden_button_does_not_fire_its_own_binding_either() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.choose_profile(mac(1), Some("racing".into()), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    link.send(ps());
+    link.send(common::derived(&[(9, R1_BIT)]));
+    wait_for_buttons(&bus, 0, Buttons::CROSS);
+
+    let crosses = bus
+        .shown(0)
+        .lock()
+        .unwrap()
+        .updates
+        .iter()
+        .filter(|state| state.buttons.contains(Buttons::CROSS))
+        .count();
+    assert_eq!(crosses, 1);
+}
+
+#[test]
+fn next_and_previous_cycle_the_controllers_own_profile_and_say_which() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("racing")
+    });
+    assert_eq!(
+        supervisor.take_shortcut_notes(),
+        [ShortcutNote {
+            mac: mac(1),
+            profile: Some("racing".into()),
+            name: Some("Racing".into()),
+            under_rule: None,
+        }]
+    );
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("silent")
+    });
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).is_none()
+    });
+    let notes = supervisor.take_shortcut_notes();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[1].profile, None);
+    assert_eq!(notes[1].name, None);
+
+    link.send(ps());
+    link.send(ps_with(L1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("silent")
+    });
+}
+
+#[test]
+fn a_shortcut_under_a_game_rule_changes_the_choice_that_returns_afterwards() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus) = setup();
+    supervisor.set_profiles(two_profiles(), t0);
+    supervisor.set_app_settings(app_with(true, &[("cs2.exe", "silent")]));
+    let link = LinkHandle::default();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+    supervisor.set_foreground(Front::Program("cs2.exe"), &nothing_runs, t0);
+
+    link.send(ps());
+    link.send(ps_with(R1_BIT));
+    poll_until(&mut supervisor, t0, |supervisor| {
+        choice(supervisor).as_deref() == Some("racing")
+    });
+
+    let view = &supervisor.controllers()[0];
+    assert_eq!(view.applied_profile.as_deref(), Some("silent"));
+    assert_eq!(
+        supervisor.take_shortcut_notes()[0].under_rule.as_deref(),
+        Some("cs2.exe")
+    );
+    supervisor.set_foreground(Front::Program("firefox.exe"), &nothing_runs, t0);
+    assert_eq!(
+        supervisor.controllers()[0].applied_profile.as_deref(),
+        Some("racing")
+    );
+}
+
+#[test]
+fn holding_ps_and_the_turn_off_button_turns_a_bluetooth_controller_off_after_two_seconds() {
+    let t0 = Instant::now();
+    let (mut supervisor, _bus, radio) = with_radio();
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send_input(ps());
+    link.send_input(ps_with(OPTIONS_BIT));
+    std::thread::sleep(Duration::from_millis(1500));
+    link.send_input(ps_with(OPTIONS_BIT));
+    std::thread::sleep(Duration::from_millis(100));
+    supervisor.poll(t0);
+    assert_eq!(radio.turned_off(), []);
+
+    std::thread::sleep(Duration::from_millis(600));
+    link.send_input(ps_with(OPTIONS_BIT));
+    poll_until(&mut supervisor, t0, |_| !radio.turned_off().is_empty());
+
+    assert_eq!(radio.turned_off(), [mac(1)]);
+}
+
+#[test]
+fn a_short_press_of_the_turn_off_shortcut_leaves_the_controller_on() {
+    let t0 = Instant::now();
+    let (mut supervisor, bus, radio) = with_radio();
+    supervisor.set_app_settings(app_with(true, &[]));
+    let link = LinkHandle::bluetooth();
+    supervisor.link_arrived(mac(1), link.reader(), t0);
+
+    link.send_input(ps());
+    link.send_input(ps_with(OPTIONS_BIT));
+    link.send_input(ps());
+    link.send_input(common::derived(&[]));
+    wait_for_buttons(&bus, 0, Buttons::NONE);
+    supervisor.poll(t0);
+
+    assert_eq!(radio.turned_off(), []);
+    assert!(!ever_showed(&bus, Buttons::OPTIONS));
 }

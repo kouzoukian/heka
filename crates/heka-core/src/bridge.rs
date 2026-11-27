@@ -11,9 +11,11 @@ use crate::feedback::{
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::live_mapper::LiveMapper;
+use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
 use crate::rate::RateMeter;
-use crate::state::ControllerState;
+use crate::shortcuts::ShortcutDetector;
+use crate::state::{Buttons, ControllerState};
 use crate::threads::{SystemThreads, Threads, Worker};
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
 
@@ -109,6 +111,7 @@ pub struct Plugged {
     asked: Feedback,
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -125,8 +128,13 @@ impl Plugged {
             asked: Feedback::OFF,
             preferences: Arc::default(),
             mapper: Arc::default(),
+            shortcuts: Arc::default(),
             failures: Arc::default(),
         }
+    }
+
+    pub fn shortcuts_with(&mut self, shortcuts: Arc<LiveShortcuts>) {
+        self.shortcuts = shortcuts;
     }
 
     pub fn follow(&mut self, preferences: Arc<LivePreferences>) {
@@ -265,6 +273,7 @@ pub struct Bridge {
     asked: Feedback,
     preferences: Arc<LivePreferences>,
     mapper: Arc<LiveMapper>,
+    shortcuts: Arc<LiveShortcuts>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -299,6 +308,7 @@ impl Bridge {
             asked,
             preferences,
             mapper,
+            shortcuts,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -311,6 +321,7 @@ impl Bridge {
             asked,
             preferences: Arc::clone(&preferences),
             mapper: Arc::clone(&mapper),
+            shortcuts: Arc::clone(&shortcuts),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -340,7 +351,15 @@ impl Bridge {
             "heka-bridge",
             (reader, controller),
             move |(reader, controller): InputParts| {
-                let end = run(reader, controller, &live, &flags.stop, &failures, &mapper);
+                let end = run(
+                    reader,
+                    controller,
+                    &live,
+                    &flags.stop,
+                    &failures,
+                    &mapper,
+                    &shortcuts,
+                );
                 if matches!(end, InputEnd::LinkLost(_)) {
                     flags.link_lost.store(true, Ordering::Release);
                 }
@@ -414,6 +433,7 @@ impl Bridge {
             asked,
             preferences: Arc::clone(&self.preferences),
             mapper: Arc::clone(&self.mapper),
+            shortcuts: Arc::clone(&self.shortcuts),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -457,9 +477,12 @@ fn run(
     stop: &AtomicBool,
     failures: &VirtualFailures,
     mapper: &LiveMapper,
+    shortcuts: &LiveShortcuts,
 ) -> InputEnd {
     let format = link.format();
     let mut mapper = mapper.follow();
+    let mut configured = shortcuts.follow();
+    let mut detector = ShortcutDetector::default();
     let mut buf = [0u8; READ_BUFFER_LEN];
     let end = loop {
         if stop.load(Ordering::Acquire) {
@@ -470,7 +493,17 @@ fn run(
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
-                let shown = mapper.map(&state);
+                let observed = detector.observe(configured.get(), state.buttons, Instant::now());
+                if let Some(action) = observed.action {
+                    shortcuts.push(action);
+                }
+                let shown = if observed.hide == Buttons::NONE {
+                    mapper.map(&state)
+                } else {
+                    let mut buttons = state.buttons;
+                    buttons.set(observed.hide, false);
+                    mapper.map(&ControllerState { buttons, ..state })
+                };
                 live.set(Some(&state), Some(shown));
                 if let Err(error) = controller.update(&shown) {
                     let _ = unplug(controller, failures);
