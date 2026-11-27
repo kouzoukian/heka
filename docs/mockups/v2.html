@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>heka v2 mockup</title>
+<style>
+@font-face { font-family: "Google Sans Code"; src: url("../../crates/heka-app/fonts/GoogleSansCode-VariableFont_wght.ttf"); font-weight: 300 800; }
+:root {
+  color-scheme: dark;
+  --page: #0e0e0e; --bg: #1a1a1a; --side: #141414; --border: #2a2a2a; --accent: #2a2a2a;
+  --fg: #bbbbbb; --bright: #f8f8f8; --muted: #999999; --faint: #999999b3;
+  --blue: #79b8ff; --red: #f97583; --warn: #ffab70; --ok: #6c9c77; --button: #1f1f1f; --outline: #505050;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--fg); font: 13px/1.5 "Google Sans Code", ui-monospace, Consolas, monospace; padding-block: 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+button, input { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 1px solid var(--blue); outline-offset: 1px; }
+.page { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+.page > header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+h1 { font-size: 18px; color: var(--bright); margin: 0; font-weight: 600; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 65ch; }
+h2 { font-size: 13px; color: var(--bright); margin: 0 0 6px; font-weight: 600; }
+nav { display: flex; flex-direction: column; gap: 16px; }
+nav button { display: block; width: 100%; text-align: left; padding: 3px 8px; border-radius: 4px; color: var(--muted); }
+nav button:hover { background: var(--button); }
+nav button.on { background: var(--accent); color: var(--bright); }
+.stage { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.scroller { overflow-x: auto; padding-bottom: 8px; }
+.caption { color: var(--muted); margin: 0; min-height: 40px; max-width: 80ch; }
+.gallery { display: flex; flex-wrap: wrap; gap: 24px; }
+.gallery figure { margin: 0; max-width: 100%; }
+.gallery figcaption { color: var(--muted); padding-bottom: 6px; }
+.approve { max-width: 80ch; }
+.approve ol { margin: 0; padding-left: 3ch; display: flex; flex-direction: column; gap: 6px; }
+footer { color: var(--faint); font-size: 11px; }
+@media (max-width: 820px) { .page { grid-template-columns: minmax(0, 1fr); } nav { flex-direction: row; flex-wrap: wrap; } nav > div { min-width: 140px; } }
+
+.win { position: relative; width: 640px; height: 560px; display: flex; flex-direction: column; background: var(--bg); color: var(--muted); border: 1px solid var(--border); font-size: 13px; line-height: 18px; overflow: hidden; box-sizing: content-box; }
+.win.large { width: 840px; height: 680px; }
+.win svg.i { width: 14px; height: 14px; flex: none; }
+.titlebar { flex: none; height: 34px; display: flex; align-items: center; justify-content: space-between; padding-left: 12px; background: var(--side); border-bottom: 1px solid var(--border); color: var(--fg); }
+.caps { display: flex; }
+.caps span { width: 34px; height: 33px; display: grid; place-items: center; }
+.body { flex: 1; min-height: 0; display: flex; }
+.panel { flex: none; width: 240px; background: var(--side); border-right: 1px solid var(--border); }
+.pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: #bbbbbb33 transparent; }
+.row, .strip, .tabs, .status { flex: none; height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.row { justify-content: space-between; }
+.row.start { justify-content: flex-start; gap: 8px; }
+.row.dim, .dim .row { opacity: .45; pointer-events: none; }
+.seg.dim { opacity: .45; }
+.strip { gap: 8px; font-size: 11px; line-height: 14px; white-space: normal; overflow: hidden; }
+.strip.two { height: 64px; }
+.strip .words { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.strip.warn { background: #ffab7014; color: var(--fg); }
+.strip.warn > svg { color: var(--warn); }
+.strip.error { background: #f9758314; color: var(--fg); }
+.strip.error > svg { color: var(--red); }
+.strip.info { background: #79b8ff14; color: var(--fg); }
+.strip.info > svg { color: var(--blue); }
+.group { color: var(--faint); font-size: 11px; background: var(--side); }
+.value { display: flex; align-items: center; gap: 8px; color: var(--fg); min-width: 0; }
+.small { font-size: 11px; }
+.faint { color: var(--faint); }
+.bright { color: var(--bright); }
+.grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.panelrow { cursor: default; gap: 8px; }
+.panelrow.on { background: var(--accent); color: var(--bright); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.tabs { padding: 0; gap: 0; }
+.tab { height: 31px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-right: 1px solid var(--border); color: var(--muted); }
+button.tab:hover { color: var(--fg); background: var(--button); }
+.tab.on, .tab.on:hover { color: var(--bright); background: var(--bg); box-shadow: 0 1px 0 var(--bg); height: 32px; align-self: flex-start; }
+.tools { margin-left: auto; display: flex; gap: 8px; padding-right: 8px; }
+.tool { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; flex: none; }
+.tool:hover, .tool.on { background: var(--accent); color: var(--bright); }
+.tool[disabled] { opacity: .35; cursor: default; }
+.seg { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 4px; flex: none; }
+.seg button { height: 18px; min-width: 22px; padding: 0 8px; border-radius: 3px; font-size: 11px; line-height: 18px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.seg button:hover { background: var(--button); }
+.seg button.on { background: var(--accent); color: var(--bright); }
+.seg.full { flex: 1; }
+.seg.full button { flex: 1; padding: 0 2px; }
+.btn { height: 24px; display: inline-flex; align-items: center; gap: 8px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 11px; color: var(--fg); flex: none; }
+.btn:hover { background: var(--accent); }
+.btn.bare { border-color: transparent; }
+.btn.danger { color: var(--red); border-color: #f9758355; }
+.btn.capture { border-color: var(--blue); color: var(--bright); }
+.btn .faint { color: var(--faint); }
+.btn:disabled { opacity: .4; cursor: default; }
+.field { height: 24px; border: 1px solid var(--border); border-radius: 4px; background: transparent; padding: 0 8px; width: 220px; color: var(--fg); }
+.link { color: var(--blue); text-decoration: none; }
+.slider { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+.slider input { -webkit-appearance: none; appearance: none; width: 168px; height: 14px; background: transparent; margin: 0; }
+.slider input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--blue) var(--fill), var(--accent) var(--fill)); }
+.slider input::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--bright); }
+.slider input::-moz-range-track { height: 4px; background: var(--accent); }
+.slider input::-moz-range-progress { height: 4px; background: var(--blue); }
+.slider input::-moz-range-thumb { width: 12px; height: 12px; border: 0; background: var(--bright); }
+.slider output { width: 6ch; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.facts { flex: none; display: flex; height: 32px; border-bottom: 1px solid var(--border); color: var(--fg); }
+.facts > div { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-right: 1px solid var(--border); white-space: nowrap; }
+.facts > div:nth-child(2) { flex: 1; }
+.facts > div:last-child { border: 0; }
+.status { height: 32px; border: 0; border-top: 1px solid var(--border); background: var(--side); font-size: 11px; justify-content: space-between; }
+.status .value { gap: 12px; color: var(--muted); }
+.drawing { flex: 1; min-height: 264px; display: grid; place-items: center; }
+.popover { position: absolute; z-index: 5; min-width: 168px; max-height: 296px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px; box-shadow: 0 8px 24px #0009; font-size: 11px; }
+.popover button { width: 100%; height: 24px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 3px; color: var(--fg); text-align: left; white-space: nowrap; }
+.popover button:hover { background: var(--accent); }
+.popover button:disabled { opacity: .4; cursor: default; background: none; }
+.popover button .end { margin-left: auto; padding-left: 12px; color: var(--faint); }
+.popover hr { border: 0; border-top: 1px solid var(--border); margin: 4px -4px; }
+.popover .head { padding: 2px 8px; color: var(--faint); }
+.readout { flex: none; display: flex; gap: 8px; height: 128px; padding-left: 12px; align-items: center; border-bottom: 1px solid var(--border); }
+.plot { position: relative; flex: none; width: 112px; height: 112px; border: 1px solid var(--border); border-radius: 4px; background: var(--side); touch-action: none; }
+.plot svg { display: block; }
+.plot label { position: absolute; left: 4px; top: 1px; font-size: 11px; color: var(--faint); pointer-events: none; }
+.numbers { flex: 1; min-width: 0; align-self: stretch; display: flex; flex-direction: column; margin-left: 4px; border-left: 1px solid var(--border); font-size: 11px; font-variant-numeric: tabular-nums; }
+.numbers > div { height: 32px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.numbers > div:last-child { border: 0; height: 31px; }
+.bar { position: relative; flex: none; width: 52px; height: 112px; border: 1px solid var(--border); border-radius: 4px; background: var(--side); overflow: hidden; }
+.bar i { position: absolute; left: 0; right: 0; bottom: 0; background: #79b8ff59; border-top: 1px solid var(--blue); }
+.bar b { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--warn); }
+.bar label { position: absolute; left: 0; right: 0; top: 1px; text-align: center; font-size: 11px; color: var(--faint); }
+.pad { flex: none; margin: 0 12px; width: calc(100% - 24px); height: 112px; touch-action: none; }
+.padbox { flex: none; height: 128px; display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <h1>heka v2 mockup</h1>
+      <p>App settings and the Profile editor, for approval before they are built (issue 23). Click inside the window: tabs, switches, sliders, menus and rows respond.</p>
+    </div>
+    <div class="mode"></div>
+  </header>
+  <nav aria-label="Screens"></nav>
+  <main class="stage">
+    <div class="single">
+      <p class="caption"></p>
+      <div class="scroller"><div class="win" id="live-window"></div></div>
+    </div>
+    <div class="gallery" hidden></div>
+    <section class="approve">
+      <h2>Choices to approve</h2>
+      <ol></ol>
+    </section>
+    <footer>Names, programs and values are examples. Icons: Lucide, ISC license. Theme: Min Dark, MIT.</footer>
+  </main>
+</div>
+<script>
+const ICONS = {"pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "copy": "<rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\" /> <path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\" />", "gamepad-2": "<line x1=\"6\" x2=\"10\" y1=\"11\" y2=\"11\" /> <line x1=\"8\" x2=\"8\" y1=\"9\" y2=\"13\" /> <line x1=\"15\" x2=\"15.01\" y1=\"12\" y2=\"12\" /> <line x1=\"18\" x2=\"18.01\" y1=\"10\" y2=\"10\" /> <path d=\"M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z\" />", "bluetooth": "<path d=\"m7 7 10 10-5 5V2l5 5L7 17\" />", "usb": "<circle cx=\"10\" cy=\"7\" r=\"1\" /> <circle cx=\"4\" cy=\"20\" r=\"1\" /> <path d=\"M4.7 19.3 19 5\" /> <path d=\"m21 3-3 1 2 2Z\" /> <path d=\"M9.26 7.68 5 12l2 5\" /> <path d=\"m10 14 5 2 3.5-3.5\" /> <path d=\"m18 12 1-1 1 1-1 1Z\" />", "battery-full": "<path d=\"M10 10v4\" /> <path d=\"M14 10v4\" /> <path d=\"M22 14v-4\" /> <path d=\"M6 10v4\" /> <rect x=\"2\" y=\"6\" width=\"16\" height=\"12\" rx=\"2\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "power": "<path d=\"M12 2v10\" /> <path d=\"M18.4 6.6a9 9 0 1 1-12.77.04\" />", "square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />", "play": "<path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\" />", "scroll-text": "<path d=\"M15 12h-5\" /> <path d=\"M15 8h-5\" /> <path d=\"M19 17V5a2 2 0 0 0-2-2H4\" /> <path d=\"M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "trash": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "arrow-left": "<path d=\"m12 19-7-7 7-7\" /> <path d=\"M19 12H5\" />", "arrow-up": "<path d=\"m5 12 7-7 7 7\" /> <path d=\"M12 19V5\" />", "arrow-down": "<path d=\"M12 5v14\" /> <path d=\"m19 12-7 7-7-7\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "app-window": "<rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" /> <path d=\"M10 4v4\" /> <path d=\"M2 8h20\" /> <path d=\"M6 4v4\" />", "minus": "<path d=\"M5 12h14\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "palette": "<path d=\"M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z\" /> <circle cx=\"13.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" /> <circle cx=\"17.5\" cy=\"10.5\" r=\".5\" fill=\"currentColor\" /> <circle cx=\"6.5\" cy=\"12.5\" r=\".5\" fill=\"currentColor\" /> <circle cx=\"8.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "circle-arrow-up": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 12-4-4-4 4\" /> <path d=\"M12 16V8\" />", "layers": "<path d=\"M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z\" /> <path d=\"M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12\" /> <path d=\"M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "rotate-ccw": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" />", "keyboard": "<path d=\"M10 8h.01\" /> <path d=\"M12 12h.01\" /> <path d=\"M14 8h.01\" /> <path d=\"M16 12h.01\" /> <path d=\"M18 8h.01\" /> <path d=\"M6 8h.01\" /> <path d=\"M7 16h10\" /> <path d=\"M8 12h.01\" /> <rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\" />"};
+const icon = (name) => `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const BASE = {
+  view: "controller", tab: "live", section: "buttons", appSection: "general", profile: "Shooter",
+  binding: null, menu: null, dialog: null, rule: false, edge: false, release: false, capturing: false, measuring: false, tray: false,
+  v: {
+    output: "Xbox", override: "own", name: "", rumble: "100%", swap: "Off", light: "Default", batteryColour: "Off", flash: "Off", players: "Default", mute: "Default", hide: "On", idle: "Off",
+    touchclick: "Whole", kind: "default", target: "B", keys: "Ctrl + Shift + M", mode: "Hold", turbo: 10, mousebutton: "Right", wheel: "None", runs: "Once per press",
+    steps: [["Press", "Q"], ["Wait", "50 ms"], ["Release", "Q"], ["Press", "Mouse left"], ["Release", "Mouse left"]],
+    side: "Left", stickuse: "Stick", dead: 8, anti: 0, max: 96, sens: 100, curve: "Linear", invx: "Off", invy: "Off", swapsticks: "Off", speed: 100, k1: "W", k2: "A", k3: "S", k4: "D",
+    trigger: "L2", tdead: 4, tmax: 92, tcurve: "Linear", hair: "Off", hairat: 20, pressat: 50, effect: "Off", from: 30, to: 70, force: 60,
+    touchuse: "Controller", touchsens: 100, touchinv: "Off", tap: "On", tap2: "Off",
+    gyro: "Off", active: "While held", gyrobutton: "L2", axis: "Yaw", gx: 100, gy: 100, gdead: 2, gix: "Off", giy: "Off",
+    winstart: "On", traystart: "Off", closing: "Keep running", lowbattery: "On", bridgefail: "On", connects: "Off", updates: "On",
+    shortcuts: "On", next: "R1", prev: "L1", off: "Options",
+    rules: [["eldenring.exe", "Souls"], ["cs2.exe", "Shooter"], ["RocketLeague.exe", "Default"]]
+  },
+  raw: { Left: [0.46, -0.28], Right: [0.1, 0.62] }, travel: { L2: 0.58, R2: 0.23 }, finger: [0.38, 0.45]
+};
+
+const SCREENS = [
+  ["Controller", [
+    ["live", "Live view", "The pane's tab strip now switches between Live, Controller and Profile. A Profile row joins the properties.", {}],
+    ["controller", "Controller settings", "Preferences, grouped. Turn off sits beside Stop for a Controller on Bluetooth.", { tab: "controller" }],
+    ["controller-lights", "Settings, scrolled", "Lights and power.", { tab: "controller", scrollTo: "Lights" }],
+    ["live-rule", "A game rule applies", "A rule picked the Profile. The window says which one and why.", { rule: true }],
+    ["live-override", "Output Type set", "A Profile sets the Output Type, so the switch is disabled. Its tooltip says why.", { v: { override: "Xbox" } }],
+    ["live-more", "Update and Edge", "A new release banner, and the DualSense Edge's extra buttons.", { release: true, edge: true }]
+  ]],
+  ["Profiles", [
+    ["buttons", "Bindings", "One row per input. Faint targets are the default; bright ones were changed.", { tab: "profile" }],
+    ["profile-choose", "Choose a Profile", "The selector assigns the Profile to this Controller and shows it for editing.", { tab: "profile", menu: "profile" }],
+    ["profile-manage", "Manage", "New, duplicate, rename, export, import and delete.", { tab: "profile", menu: "manage" }],
+    ["profile-rename", "Rename", "The name is edited in place.", { tab: "profile", dialog: "rename" }],
+    ["profile-delete", "Delete", "Deleting is confirmed and says who is affected.", { tab: "profile", dialog: "delete" }],
+    ["profile-import", "Import failed", "A file that cannot be read says why and changes nothing.", { tab: "profile", dialog: "import" }],
+    ["profile-default", "Default Profile", "It cannot be changed, only duplicated.", { tab: "profile", profile: "Default" }],
+    ["profile-rule", "Editing under a rule", "The selector still holds the Controller's own Profile. Souls changes the Output Type, so it stays while the game runs.", { tab: "profile", rule: "kept" }]
+  ]],
+  ["Bindings", [
+    ["bind-button", "Controller input", "A Binding opens in place, with a way back.", { tab: "profile", binding: "Circle", v: { kind: "button", target: "X" } }],
+    ["bind-key", "Keyboard key", "Keys are captured by pressing them. Click the box and try.", { tab: "profile", binding: "L3", v: { kind: "key" } }],
+    ["bind-turbo", "Turbo", "Hold, Toggle or Turbo apply to any bound button or key.", { tab: "profile", binding: "R1", v: { kind: "button", target: "A", mode: "Turbo" } }],
+    ["bind-mouse", "Mouse", "Five buttons and wheel steps.", { tab: "profile", binding: "L1", v: { kind: "mouse" } }],
+    ["bind-macro", "Macro", "Steps are edited by hand.", { tab: "profile", binding: "Triangle", v: { kind: "macro" } }]
+  ]],
+  ["Tuning", [
+    ["sticks", "Sticks", "The readout stays put while the rows under it scroll. Drag the Raw dot.", { tab: "profile", section: "sticks" }],
+    ["sticks-mouse", "Stick as mouse", "Rows follow what the stick is used as.", { tab: "profile", section: "sticks", v: { stickuse: "Mouse", side: "Right" } }],
+    ["sticks-keys", "Stick as keys", "WASD, arrows or four chosen keys.", { tab: "profile", section: "sticks", v: { stickuse: "Four keys" } }],
+    ["triggers", "Triggers", "Raw and tuned travel, with the hair trigger point dashed. Drag the Raw bar.", { tab: "profile", section: "triggers", v: { hair: "On" } }],
+    ["effects", "Trigger effects", "Adaptive effects sit under each trigger.", { tab: "profile", section: "triggers", scrollTo: "Adaptive effect", v: { effect: "Break" } }],
+    ["touchpad", "Touchpad", "The touchpad goes to the Virtual Controller or moves the mouse.", { tab: "profile", section: "touchpad", v: { touchuse: "Mouse" } }],
+    ["gyro", "Gyro", "Off until chosen.", { tab: "profile", section: "gyro", v: { gyro: "Mouse" } }],
+    ["gyro-drift", "Gyro drift", "Measuring the drift with the Controller at rest.", { tab: "profile", section: "gyro", measuring: true, scrollTo: "Drift", v: { gyro: "Right stick" } }]
+  ]],
+  ["App", [
+    ["app-general", "Settings", "Opened by the gear in the status bar, Ctrl+, or the tray menu.", { view: "app" }],
+    ["app-files", "Settings, scrolled", "Updates and the settings folder.", { view: "app", scrollTo: "Updates" }],
+    ["app-shortcuts", "Shortcuts", "Controller shortcuts, off until turned on.", { view: "app", appSection: "shortcuts" }],
+    ["app-rules", "Game rules", "A rule names a program and a Profile, for every Controller.", { view: "app", appSection: "games" }],
+    ["app-add-rule", "Add a rule", "From the running programs or a file.", { view: "app", appSection: "games", menu: "programs" }],
+    ["app-tray", "From the tray", "The tray menu gets a Settings item.", { view: "app", tray: true }]
+  ]]
+];
+
+const CHOICES = [
+  "The pane's tab strip holds Live, Controller and Profile, and the panel alone names the selected Controller. The gear leaves the strip.",
+  "App settings open from a gear in the status bar, from Ctrl+, and from a tray menu item. Its sections are General, Shortcuts and Game rules.",
+  "Game rules live in app settings, because a rule applies to every Controller.",
+  "The Profile selector both assigns a Profile to the Controller and shows it for editing. Changes save at once and reach every Controller using that Profile.",
+  "The editor has five sections: Buttons, Sticks, Triggers, Touchpad and Gyro. Trigger effects sit under Triggers; macros, turbo and toggle are part of a Binding.",
+  "A Binding opens in place with a back button, in place of a popup.",
+  "Live readouts stay pinned above the rows that tune them. Output curves are three presets: Linear, Gentle and Steep.",
+  "The Output Type a Profile overrides is chosen beside the Profile selector. The Live view's switch is then disabled and says why.",
+  "Controller settings gain the groups Rumble, Lights and Power. Battery colour is its own switch, since the light bar switch has no room.",
+  "The DualSense Edge's Fn and back buttons show as a row of chips in the Live view, because the drawing has no place for them."
+];
+
+const preset = (patch) => {
+  const state = structuredClone(BASE);
+  const { v, ...rest } = patch;
+  Object.assign(state, structuredClone(rest));
+  Object.assign(state.v, structuredClone(v || {}));
+  return state;
+};
+
+const seg = (key, options, state, cls = "") => `<div class="seg ${cls}">${options.map((o) => {
+  const [value, label, title] = Array.isArray(o) ? o : [o, o];
+  return `<button class="${state.v[key] === value ? "on" : ""}" data-set="${key}" data-value="${esc(value)}" ${title ? `title="${title}" aria-label="${title}"` : ""}>${label}</button>`;
+}).join("")}</div>`;
+const onOff = (key, state) => seg(key, ["On", "Off"], state);
+const row = (label, control, cls = "", tip = "") => `<div class="row ${cls}" data-row="${esc(label)}"><span ${tip ? `title="${tip}"` : ""}>${label}</span>${control}</div>`;
+const group = (label) => `<div class="row start group" data-row="${esc(label)}">${label}</div>`;
+const strip = (words, kind = "", iconName = "", extra = "", two = false) => `<div class="strip ${kind} ${two ? "two" : ""}" title="${esc(words.replace(/<[^>]*>/g, ""))}">${iconName ? icon(iconName) : ""}<span class="words">${words}</span>${extra}</div>`;
+const slider = (key, state, min, max, unit = "%") => `<span class="slider"><input type="range" id="${key}-range" aria-label="${key}" min="${min}" max="${max}" value="${state.v[key]}" data-range="${key}" data-unit="${unit}" style="--fill:${(state.v[key] - min) / (max - min) * 100}%"><output>${state.v[key]}${unit}</output></span>`;
+const select = (menu, label, title = "") => `<button class="btn" data-menu="${menu}" ${title ? `title="${title}"` : ""}>${label}${icon("chevron-down")}</button>`;
+const tool = (name, label, attrs = "", cls = "") => `<button class="tool ${cls}" title="${label}" aria-label="${label}" ${attrs}>${icon(name)}</button>`;
+
+const CONTROLLERS = [["DualSense", "a4:f1", "bluetooth"], ["DualShock 4", "09:3c", "usb"]];
+
+function panel(state) {
+  return `<div class="panel"><div class="row start">Controllers</div>${CONTROLLERS.map(([name, mac, link], i) => `<div class="row start panelrow ${i === 0 && state.view === "controller" ? "on" : ""}" data-go="controller"><span style="color:var(--ok);display:flex">${icon("gamepad-2")}</span><span>${name}</span><span class="grow small faint">${mac}</span>${icon(link)}</div>`).join("")}</div>`;
+}
+
+function tabStrip(state) {
+  if (state.view !== "controller") {
+    const [name, title] = { app: ["settings", "Settings"], log: ["scroll-text", "Log"], about: ["info", "About heka"] }[state.view];
+    return `<div class="tabs"><div class="tab on">${icon(name)}${title}</div></div>`;
+  }
+  const tabs = [["live", "gamepad-2", "Live", "Live view"], ["controller", "sliders-horizontal", "Controller", "Controller settings"], ["profile", "layers", "Profile", "Profile"]];
+  return `<div class="tabs" role="tablist">${tabs.map(([id, name, label, title]) => `<button role="tab" class="tab ${state.tab === id ? "on" : ""}" aria-selected="${state.tab === id}" title="${title}" data-tab="${id}">${icon(name)}${label}</button>`).join("")}<div class="tools">${tool("power", "Turn off")}${tool("square", "Stop")}</div></div>`;
+}
+
+function shape(start, curves) { return { start, curves }; }
+const mirror = ([x, y]) => [360 - x, y];
+const mirrored = (s) => shape(mirror(s.start), s.curves.map((c) => c.map(mirror)));
+const symmetric = (start, right) => {
+  const curves = right.slice();
+  for (let i = right.length - 1; i >= 0; i--) curves.push([mirror(right[i][1]), mirror(right[i][0]), mirror(i ? right[i - 1][2] : start)]);
+  return shape(start, curves);
+};
+const d = (s) => `M${s.start}` + s.curves.map((c) => `C${c.join(" ")}`).join("") + "Z";
+
+function drawing(state) {
+  const ink = "#505050", fill = "#161616";
+  const path = (s, f = fill) => `<path d="${d(s)}" fill="${f}" stroke="${ink}" stroke-width="1.2"/>`;
+  const trigger = shape([66, 27.1], [[[63, 15.5], [73, 4], [89, 4]], [[104, 4], [112, 14], [113.8, 26.3]], [[107, 24], [99, 23], [90, 23]], [[80, 23], [72, 24], [66, 27.1]]]);
+  const bumper = shape([54, 46], [[[58, 29], [70, 25], [90, 25]], [[108, 25], [122, 29], [130, 39.1]], [[119.1, 36], [108, 33.7], [94, 34.4]], [[77.6, 34.9], [64.1, 39.1], [54, 46]]]);
+  const body = symmetric([180, 46], [[[196, 46], [206, 46], [216, 45]], [[232, 40], [246, 35], [266, 36]], [[296, 37], [316, 50], [324, 70]], [[340, 108], [355, 158], [355, 192]], [[355, 220], [343, 236], [325, 236]], [[306, 236], [294, 218], [278, 200]], [[264, 184], [252, 176], [232, 176]], [[214, 176], [196, 176], [180, 176]]]);
+  const circle = (x, y, r, f = fill) => `<circle cx="${x}" cy="${y}" r="${r}" fill="${f}" stroke="${ink}" stroke-width="1.2"/>`;
+  const stick = (x, y) => circle(x, y, 24) + `<circle cx="${x}" cy="${y}" r="16" fill="none" stroke="#999" stroke-width="2"/>` + circle(x, y, 9, "none");
+  const face = [["Y", 272, 72, "#ffab70"], ["B", 292, 92, "#f97583"], ["A", 272, 112, "#6c9c77"], ["X", 252, 92, "#79b8ff"]];
+  const arm = [0, 90, 180, 270].map((a) => `<path transform="translate(132 146) rotate(${a})" d="M0 0-7-7-7-20-5-22 5-22 7-20 7-7Z" fill="${fill}" stroke="${ink}"/>`).join("");
+  const text = (x, y, words, color = "#999") => `<text x="${x}" y="${y + 3.2}" text-anchor="middle" font-size="9" fill="${color}">${words}</text>`;
+  return `<svg viewBox="0 0 360 240" role="img" aria-label="Xbox controller drawing">${path(trigger)}${path(mirrored(trigger))}${path(bumper)}${path(mirrored(bumper))}${path(body, "#1f1f1f")}${circle(180, 66, 12)}<path d="M174 60l12 12M186 60l-12 12" stroke="#999" stroke-width="2"/>${circle(157, 94, 8)}${circle(203, 94, 8)}<path d="M199 91h8M199 94h8M199 97h8" stroke="#999"/><path d="M153 90h5.5v5.5H153zM155.5 92.500h5.500v5.500h-5.500z" fill="none" stroke="#999"/><rect x="172" y="108" width="16" height="8" rx="4" fill="${fill}" stroke="${ink}"/>${stick(88, 92)}<circle cx="132" cy="146" r="27" fill="${fill}" stroke="#333"/>${arm}${stick(228, 146)}${face.map(([l, x, y, c]) => circle(x, y, 10.5) + text(x, y, l, c)).join("")}${text(89, 13.5, "LT")}${text(271, 13.5, "RT")}${text(90, 30, "LB")}${text(270, 30, "RB")}</svg>`;
+}
+
+const activeProfile = (state) => state.rule ? "Souls" : state.profile;
+
+function ruleBanner(state) {
+  if (!state.rule) return "";
+  const why = state.rule === "kept" ? "eldenring.exe is still running, so Souls stays until it exits." : "eldenring.exe is in front, so Souls applies.";
+  return strip(why, "info", "app-window", state.tab === "profile" ? `<button class="btn" data-set-profile="Souls">Edit Souls</button>` : "", true);
+}
+
+function live(state) {
+  const large = state.large;
+  const used = 4 + (state.rule ? 2 : 0) + (state.release ? 1 : 0) + (state.edge ? 1 : 0);
+  const paneW = (large ? 840 : 640) - 240;
+  const room = (large ? 680 : 560) - 34 - 32 - 32 - used * 32;
+  const width = Math.max(360, Math.min(560, paneW - 40, (room - 24) * 1.5));
+  const overridden = !state.rule && state.v.override !== "own";
+  const output = `<span class="seg ${overridden ? "dim" : ""}" ${overridden ? `title="Set by the Profile ${state.profile}"` : `title="Output Type"`}>${["Xbox", "PS4"].map((o) => `<button class="${(overridden ? state.v.override : state.v.output) === o ? "on" : ""}" ${overridden ? "disabled" : `data-set="output" data-value="${o}"`}>${o}</button>`).join("")}</span>`;
+  const chips = ["Fn L", "Fn R", "Back L", "Back R"].map((c, i) => `<span class="btn" style="height:18px;${i === 2 ? "background:var(--fg);color:#141414" : ""}">${c}</span>`).join("");
+  return `<div class="scroll">${state.release ? strip(`heka 0.3.0 is available. <a class="link" href="#live-more">Release notes</a>`, "info", "circle-arrow-up") : ""}${ruleBanner(state)}
+    ${row("State", `<span class="value"><span class="dot"></span>Bridged</span>`)}
+    <div class="facts"><div title="Active Link">${icon("bluetooth")}Bluetooth</div><div title="Battery">${icon("battery-full")}85%</div><div>${output}</div></div>
+    ${row("Profile", state.rule ? `<span class="value" title="Your choice, ${state.profile}, returns after eldenring.exe">Souls<span class="small faint">for eldenring.exe</span></span>` : select("profile", state.profile))}
+    ${row("Address", `<span class="value">02:00:00:00:00:01</span>`)}
+    ${state.edge ? row("Fn and back", `<span class="value">${chips}</span>`) : ""}
+    <div class="drawing"><div style="width:${width}px">${drawing(state)}</div></div></div>`;
+}
+
+function controllerSettings(state) {
+  const colours = ["#00f", "#f00", "#0f0", "#ff0080", "#ff6000", "#fff"];
+  const names = ["Blue", "Red", "Green", "Pink", "Orange", "White"];
+  const dot = (c) => `<span style="width:10px;height:10px;border-radius:50%;background:${c}"></span>`;
+  const light = seg("light", ["Default", ...colours.map((c, i) => [names[i], dot(c), names[i]]), ["Rainbow", `<span style="width:10px;height:10px;background:linear-gradient(90deg,red,yellow,lime,cyan,blue)"></span>`, "Rainbow"], ["Custom", icon("palette"), "Custom colour"]], state);
+  return `<div class="scroll">
+    ${row("Name", `<input class="field" id="name-field" aria-label="Name" placeholder="DualSense" value="${esc(state.v.name)}">`, "", "Shown in place of the Controller's model.")}
+    ${row("Hide from games", onOff("hide", state), "", "Off lets games see the Controller too, which can cause double input.")}
+    ${group("Rumble")}
+    ${row("Strength", seg("rumble", ["Off", "25%", "50%", "75%", "100%"], state), "", "How strongly the Controller rumbles when a game asks it to.")}
+    ${row("Swap motors", onOff("swap", state), "", "Exchanges the large and small motor of a game's rumble.")}
+    ${row("Test", `<span class="value"><button class="btn">${icon("play")}Large motor</button><button class="btn">${icon("play")}Small motor</button></span>`, "", "Runs a motor for a second at the chosen strength.")}
+    ${group("Lights")}
+    ${row("Light bar", light, "", "The colour while no game sets one.")}
+    ${row("Battery colour", onOff("batteryColour", state), "", "Shows the battery level as a colour. A game's colour still wins.")}
+    ${row("Low battery flash", onOff("flash", state), "", "Flashes at 20% or less while not charging, also over a game's colour.")}
+    ${row("Player lights", seg("players", ["Default", "1", "2", "3", "4"], state), "", "The white lights under the touchpad.")}
+    ${row("Mute light", seg("mute", ["Default", "Off", "On", ["Button", "Button", "Toggled by the mute button"]], state))}
+    ${strip("The mute light does not change the microphone.")}
+    ${group("Power")}
+    ${row("Turn off when idle", seg("idle", ["Off", ["5", "5"], "10", "15", ["30", "30 min"]], state), "", "Bluetooth only. Motion alone does not count as use.")}
+    ${strip("Rumble and lights apply while the Controller is Bridged.")}</div>`;
+}
+
+const INPUTS = [
+  ["Face buttons", [["Cross", "A"], ["Circle", "B"], ["Square", "X"], ["Triangle", "Y", "Macro, 5 steps"]]],
+  ["D-pad", [["Up", "D-pad up"], ["Down", "D-pad down"], ["Left", "D-pad left"], ["Right", "D-pad right"]]],
+  ["Shoulders and sticks", [["L1", "LB", "Mouse right"], ["R1", "RB", "A, turbo"], ["L2", "LT"], ["R2", "RT"], ["L3", "LS", "Key Left Shift"], ["R3", "RS"]]],
+  ["System", [["Create", "View"], ["Options", "Menu"], ["PS", "Guide"], ["Mute", "Nothing"]]],
+  ["Touchpad", [["Touchpad click", "Nothing"]]],
+  ["DualSense Edge", [["Fn left", "Nothing"], ["Fn right", "Nothing"], ["Back left", "Nothing", "X"], ["Back right", "Nothing", "B"]]]
+];
+
+function buttons(state) {
+  const fixed = state.profile === "Default";
+  return INPUTS.map(([name, inputs]) => {
+    let list = inputs;
+    let head = "";
+    if (name === "Touchpad") {
+      head = row("Touchpad click", seg("touchclick", ["Whole", ["Halves", "Left and right"]], state), fixed ? "dim" : "");
+      list = state.v.touchclick === "Whole" ? [["Whole pad click", "Nothing"]] : [["Left half click", "Nothing", "Key M"], ["Right half click", "Nothing"]];
+    }
+    return group(name) + head + list.map(([input, standard, changed]) => {
+      const shown = !fixed && changed;
+      return `<button class="row ${fixed ? "dim" : ""}" style="width:100%" data-bind="${input}" data-row="${input}"><span>${input}</span><span class="value small ${shown ? "bright" : "faint"}">${shown || standard}${icon("chevron-down").replace('class="i"', 'class="i" style="transform:rotate(-90deg)"')}</span></button>`;
+    }).join("");
+  }).join("");
+}
+
+function bindingEditor(state) {
+  const ps = state.v.override === "PS4";
+  const targets = ps
+    ? [["Face", ["Cross", "Circle", "Square", "Triangle"]], ["D-pad", ["Up", "Down", "Left", "Right"]], ["Shoulders", ["L1", "R1", "L2", "R2"]], ["Sticks", ["L3", "R3"]], ["System", ["Share", "Options", "PS", "Pad"]]]
+    : [["Face", ["A", "B", "X", "Y"]], ["D-pad", [["Up", "↑", "D-pad up"], ["Down", "↓", "D-pad down"], ["Left", "←", "D-pad left"], ["Right", "→", "D-pad right"]]], ["Shoulders", ["LB", "RB", ["LT", "LT", "LT, fully pressed"], ["RT", "RT", "RT, fully pressed"]]], ["Sticks", ["LS", "RS"]], ["System", ["View", "Menu", "Guide"]]];
+  const mode = row("Press", seg("mode", ["Hold", "Toggle", "Turbo"], state), "", "Hold: while held. Toggle: one press holds, the next releases. Turbo: repeats while held.") + (state.v.mode === "Turbo" ? row("Repeats per second", slider("turbo", state, 2, 30, "")) : "");
+  const keyNote = strip("Programs run as administrator ignore keys and clicks unless heka is too. Anti-cheat may reject them.", "", "", "", true);
+  const bodies = {
+    default: () => strip("The input drives its usual Virtual Controller input."),
+    none: () => strip("The input drives nothing."),
+    button: () => targets.map(([name, list]) => row(name, seg("target", list, state))).join("") + mode,
+    key: () => row("Keys", `<span class="value"><button class="btn ${state.capturing ? "capture" : ""}" data-capture="keys" title="Capture a key or combination">${icon("keyboard")}${state.capturing === "keys" ? "Press a key, Esc cancels" : esc(state.v.keys)}</button></span>`) + mode + keyNote,
+    mouse: () => row("Button", seg("mousebutton", ["Left", "Right", "Middle", "Back", ["Forward", "Fwd", "Forward"]], state)) + row("Wheel", seg("wheel", ["None", "Up", "Down"], state)) + mode + keyNote,
+    macro: () => row("Runs", seg("runs", ["Once per press", "While held"], state)) + group("Steps") + state.v.steps.map(([kind, value], i) => `<div class="row start"><span class="small faint" style="width:2ch">${i + 1}</span>${select("step-" + i, kind)}${kind === "Wait" ? `<input class="field small" style="width:96px" id="step-${i}-value" aria-label="Delay" value="${value}">` : `<button class="btn" title="Change the key or mouse button">${value}</button>`}<span class="grow"></span>${tool("arrow-up", "Move up", `data-step="up" data-index="${i}" ${i ? "" : "disabled"}`)}${tool("arrow-down", "Move down", `data-step="down" data-index="${i}" ${i === state.v.steps.length - 1 ? "disabled" : ""}`)}${tool("trash", "Delete step", `data-step="delete" data-index="${i}"`)}</div>`).join("") + `<div class="row start"><button class="btn" data-step="add">${icon("plus")}Add step</button></div>` + keyNote
+  };
+  return `<div class="row start">${tool("arrow-left", "Back to Bindings", "data-back")}<span class="bright">${state.binding}</span><span class="grow"></span><button class="btn bare" data-set="kind" data-value="default">${icon("rotate-ccw")}Reset</button></div>
+    <div class="row">${seg("kind", [["default", "Default"], ["button", "Button"], ["key", "Key"], ["mouse", "Mouse"], ["macro", "Macro"], ["none", "None"]], state, "full")}</div>
+    <div class="scroll">${bodies[state.v.kind]()}</div>`;
+}
+
+const CURVES = { Linear: 1, Gentle: 1.6, Steep: 0.6 };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+function tuneStick(state) {
+  const [x, y] = state.raw[state.v.side];
+  const length = Math.hypot(x, y);
+  const dead = state.v.dead / 100, max = Math.max(state.v.max / 100, dead + 0.01);
+  if (length <= dead) return [0, 0];
+  const travel = clamp((length - dead) / (max - dead), 0, 1);
+  const anti = state.v.anti / 100;
+  const out = clamp((anti + (1 - anti) * Math.pow(travel, CURVES[state.v.curve])) * state.v.sens / 100, 0, 1);
+  return [x / length * out * (state.v.invx === "On" ? -1 : 1), y / length * out * (state.v.invy === "On" ? -1 : 1)];
+}
+function tuneTrigger(state) {
+  const raw = state.travel[state.v.trigger];
+  const dead = state.v.tdead / 100, max = Math.max(state.v.tmax / 100, dead + 0.01);
+  if (raw <= dead) return 0;
+  if (state.v.hair === "On" && raw >= state.v.hairat / 100) return 1;
+  return Math.pow(clamp((raw - dead) / (max - dead), 0, 1), CURVES[state.v.tcurve]);
+}
+const pair = ([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`;
+
+function plot(label, [x, y], rings, drag) {
+  const circle = (r, color, dash = "") => r > 0 ? `<circle cx="55" cy="55" r="${r * 46}" fill="none" stroke="${color}" ${dash}/>` : "";
+  return `<div class="plot" ${drag ? `data-drag="stick" title="Drag to move" style="cursor:crosshair"` : ""}><label>${label}</label><svg width="110" height="110" viewBox="0 0 110 110"><path d="M55 9v92M9 55h92" stroke="#2a2a2a"/>${circle(1, "#505050")}${rings.map(([r, color]) => circle(r, color, 'stroke-dasharray="3 2"')).join("")}<circle cx="${55 + x * 46}" cy="${55 + y * 46}" r="4" fill="${drag ? "#bbbbbb" : "#79b8ff"}"/></svg></div>`;
+}
+
+function stickReadout(state) {
+  const raw = state.raw[state.v.side], out = tuneStick(state);
+  return `${plot("Raw", raw, [[state.v.dead / 100, "#ffab70"], [state.v.max / 100, "#999999"]], true)}${plot("Tuned", out, [], false)}<div class="numbers"><div>${seg("side", ["Left", "Right"], state, "full")}</div><div><span class="faint">Raw</span><span>${pair(raw)}</span></div><div><span class="faint">Out</span><span class="bright">${pair(out)}</span></div><div title="The Controller's report rate"><span class="faint">Rate</span><span>250 Hz</span></div></div>`;
+}
+
+function triggerReadout(state) {
+  const raw = state.travel[state.v.trigger], out = tuneTrigger(state);
+  const mark = (percent) => `<b style="bottom:${percent}%"></b>`;
+  const bar = (label, amount, extra, drag) => `<div class="bar" ${drag ? 'data-drag="trigger" title="Drag to pull" style="cursor:ns-resize;touch-action:none"' : ""}><i style="height:${amount * 100}%"></i>${extra}<label>${label}</label></div>`;
+  return `${bar("Raw", raw, state.v.hair === "On" ? mark(state.v.hairat) : "", true)}${bar("Out", out, "", false)}<div class="numbers"><div>${seg("trigger", ["L2", "R2"], state, "full")}</div><div><span class="faint">Raw</span><span>${Math.round(raw * 100)}%</span></div><div><span class="faint">Tuned</span><span class="bright">${Math.round(out * 100)}%</span></div><div><span class="faint">As button</span><span>${raw * 100 >= state.v.pressat ? "Pressed" : "Released"}</span></div></div>`;
+}
+
+function sticks(state) {
+  const use = state.v.stickuse, side = state.v.side;
+  const dead = row("Dead zone", slider("dead", state, 0, 50));
+  const curve = row("Curve", seg("curve", ["Linear", "Gentle", "Steep"], state));
+  const key = (k, label) => row(label, `<button class="btn" data-capture="${k}" title="Capture a key">${state.capturing === k ? "Press a key" : esc(state.v[k])}</button>`);
+  const rest = strip("The Virtual Controller's stick rests at the centre.");
+  const rows = {
+    Stick: () => dead + row("Anti-dead zone", slider("anti", state, 0, 50)) + row("Max zone", slider("max", state, 50, 100)) + row("Sensitivity", slider("sens", state, 50, 200)) + curve + row("Invert X", onOff("invx", state)) + row("Invert Y", onOff("invy", state)) + row("Swap sticks", onOff("swapsticks", state), "", "Exchanges the left and right stick."),
+    Mouse: () => rest + dead + row("Speed", slider("speed", state, 10, 300)) + curve,
+    Scroll: () => rest + dead + row("Speed", slider("speed", state, 10, 300)) + curve,
+    WASD: () => rest + dead,
+    Arrows: () => rest + dead,
+    "Four keys": () => rest + dead + key("k1", "Up") + key("k2", "Left") + key("k3", "Down") + key("k4", "Right")
+  };
+  return `<div class="readout" data-readout="stick">${stickReadout(state)}</div><div class="scroll">${row(side + " stick as", select("stickuse", use))}${rows[use]()}</div>`;
+}
+
+function triggers(state) {
+  const effect = state.v.effect;
+  const positions = effect === "Off" ? "" : row("Starts at", slider("from", state, 0, 100)) + (effect === "Break" ? row("Breaks at", slider("to", state, 0, 100)) : "") + row("Strength", slider("force", state, 0, 100));
+  return `<div class="readout" data-readout="trigger">${triggerReadout(state)}</div><div class="scroll">
+    ${row("Dead zone", slider("tdead", state, 0, 50))}${row("Max zone", slider("tmax", state, 50, 100))}${row("Curve", seg("tcurve", ["Linear", "Gentle", "Steep"], state))}
+    ${row("Hair trigger", onOff("hair", state), "", "A press past this point reads as fully pressed.")}${state.v.hair === "On" ? row("Full press past", slider("hairat", state, 1, 100)) : ""}
+    ${row("Button press at", slider("pressat", state, 1, 100), "", "Used when this trigger is bound to a button or key.")}
+    ${group("Adaptive effect")}${row("Effect", seg("effect", ["Off", ["Resistance", "Resist", "Constant resistance"], "Break", ["Vibration", "Vibrate", "Vibration"]], state))}${positions}
+    ${strip("DualSense only. A DualShock 4 ignores it.")}</div>`;
+}
+
+function touchReadout(state) {
+  const [x, y] = state.finger;
+  return `<svg class="pad" data-drag="touch" viewBox="0 0 100 100" preserveAspectRatio="none" style="cursor:crosshair" role="img" aria-label="Touchpad"><rect x="0.200" y="0.500" width="99.600" height="99" fill="#141414" stroke="#2a2a2a" vector-effect="non-scaling-stroke"/>${state.v.touchclick === "Halves" ? '<path d="M50 4v92" stroke="#505050" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>' : ""}<path d="M${x * 100} ${y * 100}h0.001" stroke="#79b8ff" stroke-width="12" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function touchpad(state) {
+  const mouse = state.v.touchuse === "Mouse";
+  return `<div class="padbox" data-readout="touch">${touchReadout(state)}</div><div class="scroll">
+    ${row("Touchpad goes to", seg("touchuse", [["Controller", "Controller", "The Virtual Controller"], "Mouse"], state))}
+    ${mouse ? row("Sensitivity", slider("touchsens", state, 25, 300)) + row("Invert vertical", onOff("touchinv", state)) + row("Tap to left click", onOff("tap", state)) + row("Two-finger right click", onOff("tap2", state), "", "A two-finger tap clicks the right button.") + strip("Drag two fingers to scroll.") : ""}
+    ${strip("Touchpad click Bindings are under Buttons and work either way.")}</div>`;
+}
+
+function gyro(state) {
+  const on = state.v.gyro !== "Off";
+  const settings = row("Active", seg("active", ["Always", "While held", "Toggle"], state))
+    + (state.v.active === "Always" ? "" : row("Button", select("gyrobutton", state.v.gyrobutton)))
+    + row("Horizontal from", seg("axis", ["Yaw", "Roll"], state))
+    + row("Sensitivity X", slider("gx", state, 10, 300)) + row("Sensitivity Y", slider("gy", state, 10, 300)) + row("Dead zone", slider("gdead", state, 0, 20, "°/s"))
+    + row("Invert X", onOff("gix", state)) + row("Invert Y", onOff("giy", state));
+  return `<div class="scroll">${row("Gyro moves", seg("gyro", ["Off", "Mouse", "Right stick"], state))}${on ? settings : ""}
+    ${row("Drift", `<button class="btn" data-measure ${state.measuring ? "disabled" : ""}>${icon("rotate-ccw")}${state.measuring ? "Measuring" : "Measure"}</button>`)}
+    ${strip(state.measuring ? "Keep the Controller still on a flat surface." : "Put the Controller at rest, then measure. heka removes the drift.")}</div>`;
+}
+
+function profile(state) {
+  const fixed = state.profile === "Default";
+  const override = { own: "Controller's", Xbox: "Xbox", PS4: "PS4" }[state.v.override];
+  let head = `<div class="row start">${select("profile", icon("layers") + state.profile, "Profile")}${tool("ellipsis", "Manage Profiles", 'data-menu="manage"')}<span class="grow"></span>${fixed ? "" : select("override", `<span class="faint">Output</span>${override}`, "The Output Type while this Profile applies")}</div>`;
+  if (state.dialog === "rename") head = `<div class="row start">${icon("layers")}<input class="field" id="rename-field" aria-label="Profile name" value="${state.profile}" style="flex:1;border-color:var(--blue)">${tool("check", "Rename", "data-close")}${tool("x", "Cancel", "data-close")}</div>`;
+  const dialogs = {
+    delete: strip(`Delete ${state.profile}? 2 Controllers go back to the Default Profile.`, "error", "trash", `<button class="btn" data-close>Cancel</button><button class="btn danger" data-delete>Delete</button>`, true),
+    import: strip("Could not import racing.json: line 4 is not valid JSON. Nothing changed.", "error", "circle-x", tool("x", "Dismiss", "data-close"), true)
+  };
+  const sections = seg("section", [["buttons", "Buttons"], ["sticks", "Sticks"], ["triggers", "Triggers"], ["touchpad", "Touchpad"], ["gyro", "Gyro"]], { v: { section: state.section } }, "full");
+  const locked = fixed ? strip("The Default Profile cannot be changed.", "", "info", `<button class="btn" data-duplicate>${icon("plus")}Duplicate</button>`) : "";
+  const banners = `${ruleBanner(state)}${head}${dialogs[state.dialog] || ""}`;
+  if (state.binding && state.section === "buttons") return banners + bindingEditor(state);
+  const editors = { buttons: () => `<div class="scroll">${buttons(state)}</div>`, sticks: () => sticks(state), triggers: () => triggers(state), touchpad: () => touchpad(state), gyro: () => gyro(state) };
+  const editor = editors[state.section]();
+  return `${banners}<div class="row">${sections}</div>${locked}${fixed ? `<div class="dim" style="display:flex;flex-direction:column;flex:1;min-height:0">${editor}</div>` : editor}`;
+}
+
+function appSettings(state) {
+  const sections = seg("appSection", [["general", "General"], ["shortcuts", "Shortcuts"], ["games", "Game rules"]], { v: { appSection: state.appSection } }, "full");
+  const bodies = {
+    general: () => row("Start with Windows", onOff("winstart", state), "", "The same choice as the tray menu item.")
+      + row("Start in the tray", onOff("traystart", state), "", "Also when started by hand.")
+      + row("Closing the window", seg("closing", ["Keep running", "Quit"], state), "", "Keep running leaves heka in the tray.")
+      + group("Notifications")
+      + row("Low battery", onOff("lowbattery", state), "", "At 20% or less while not charging, once per discharge.")
+      + row("A Bridge fails", onOff("bridgefail", state))
+      + row("Connected or removed", onOff("connects", state), "", "When a Controller connects or is removed.")
+      + group("Updates")
+      + row("Check for new releases", onOff("updates", state), "", "At start and once a day. heka downloads nothing.")
+      + group("Files")
+      + row("Settings folder", `<button class="btn">${icon("folder-open")}Open folder</button>`),
+    shortcuts: () => row("Controller shortcuts", onOff("shortcuts", state))
+      + strip("Hold PS and press a button. PS on its own works as before.")
+      + `<div class="${state.v.shortcuts === "On" ? "" : "dim"}" style="flex:none">${row("Next Profile", select("next", "PS + " + state.v.next))}${row("Previous Profile", select("prev", "PS + " + state.v.prev))}${row("Turn off", select("off", "PS + " + state.v.off))}</div>`
+      + strip("Turn off needs a two-second hold, for a Controller on Bluetooth.")
+      + strip("The other button does not reach the game while a shortcut is recognised."),
+    games: () => strip("A program in front applies its Profile to every Controller. Leaving it restores their own.", "", "", "", true)
+      + state.v.rules.map(([program, name], i) => `<div class="row start">${icon("app-window")}<span class="grow" style="color:var(--fg)">${program}</span>${i === 0 ? '<span class="dot" title="Applies now"></span>' : ""}${select("rule-" + i, name)}${tool("trash", "Delete rule", `data-rule-delete="${i}"`)}</div>`).join("")
+      + `<div class="row start">${select("programs", icon("plus") + "Add rule")}</div>`
+      + strip("heka cannot see a program run as administrator unless heka is too, so its rule will not apply.", "warn", "triangle-alert", "", true)
+  };
+  return `<div class="row">${sections}</div><div class="scroll">${bodies[state.appSection]()}</div>`;
+}
+
+function menuItems(state, menu) {
+  const item = (label, attrs = "", end = "", iconName = "") => `<button ${attrs}>${iconName ? icon(iconName) : ""}${label}${end ? `<span class="end">${end}</span>` : ""}</button>`;
+  const choose = (key, options, current) => options.map((o) => item(o, `data-set="${key}" data-value="${esc(o)}"`, current === o ? icon("check") : "")).join("");
+  const profiles = ["Default", "Shooter", "Souls"];
+  const fixed = state.profile === "Default";
+  if (menu === "profile") return profiles.map((p) => item(p, `data-set-profile="${p}"`, state.profile === p ? icon("check") : "")).join("");
+  if (menu === "manage") return item("New Profile", "data-close", "", "plus") + item("Duplicate", "data-duplicate", "", "copy") + item("Rename", `data-dialog="rename" ${fixed ? "disabled" : ""}`, "", "pencil") + "<hr>" + item("Import", `data-dialog="import"`, "", "arrow-down") + item("Export", "data-close", "", "arrow-up") + "<hr>" + item("Delete", `data-dialog="delete" ${fixed ? "disabled" : ""}`, "", "trash");
+  if (menu === "override") return [["own", "Controller's own"], ["Xbox", "Xbox"], ["PS4", "PS4"]].map(([value, label]) => item(label, `data-set="override" data-value="${value}"`, state.v.override === value ? icon("check") : "")).join("");
+  if (menu === "stickuse") return choose("stickuse", ["Stick", "Mouse", "Scroll", "WASD", "Arrows", "Four keys"], state.v.stickuse);
+  if (["gyrobutton", "next", "prev", "off"].includes(menu)) return choose(menu, ["L1", "R1", "L2", "R2", "Square", "Triangle", "Options", "Create"], state.v[menu]);
+  if (menu.startsWith("step-")) return ["Press", "Release", "Wait"].map((k) => item(k, `data-step="kind" data-index="${menu.slice(5)}" data-value="${k}"`)).join("");
+  if (menu.startsWith("rule-")) return profiles.map((p) => item(p, `data-rule="${menu.slice(5)}" data-value="${p}"`, state.v.rules[menu.slice(5)][1] === p ? icon("check") : "")).join("");
+  if (menu === "programs") return `<div class="head">Running programs</div>` + ["witcher3.exe", "Hades2.exe", "steam.exe", "firefox.exe"].map((p) => item(p, `data-rule-add="${p}"`, "", "app-window")).join("") + "<hr>" + item("Choose a file", `data-rule-add="game.exe"`, "", "folder-open");
+  return "";
+}
+
+function windowHtml(state) {
+  const content = state.view === "app" ? appSettings(state)
+    : state.view === "log" ? strip("The log view stays as it is today.")
+    : state.view === "about" ? strip("About stays as it is today.")
+    : state.tab === "live" ? live(state)
+    : state.tab === "controller" ? controllerSettings(state)
+    : profile(state);
+  const page = (view, name, label) => tool(name, label, `data-go="${view}"`, state.view === view ? "on" : "");
+  const tray = state.tray ? `<div class="popover" style="right:72px;bottom:40px">${["Open heka", "Settings"].map((label, i) => `<button data-go="${i ? "app" : "controller"}">${label}</button>`).join("")}<hr><button>Start with Windows<span class="end">${state.v.winstart === "On" ? icon("check") : ""}</span></button><button>Quit</button></div>` : "";
+  return `<div class="titlebar">heka<span class="caps"><span>${icon("minus")}</span><span>${icon("square")}</span><span>${icon("x")}</span></span></div>
+    <div class="body">${panel(state)}<div class="pane">${tabStrip(state)}${content}</div></div>
+    <div class="status"><span class="value">${icon("circle-x")}0 ${icon("triangle-alert")}0</span><span class="value">2 Controllers, 2 Bridged ${page("app", "settings", "Settings (Ctrl+,)")}${page("log", "scroll-text", "Log")}${page("about", "info", "About heka")}</span></div>${tray}`;
+}
+
+function paint(win, state) {
+  const old = win.querySelector(".scroll");
+  const keep = old && win.dataset.where === where(state) ? old.scrollTop : null;
+  win.innerHTML = windowHtml(state);
+  win.dataset.where = where(state);
+  const scroller = win.querySelector(".scroll");
+  if (scroller) {
+    if (keep !== null) scroller.scrollTop = keep;
+    else if (state.scrollTo) {
+      const target = scroller.querySelector(`[data-row="${state.scrollTo}"]`);
+      if (target) scroller.scrollTop = target.offsetTop - scroller.offsetTop;
+    }
+  }
+  if (!state.menu) return;
+  const anchor = win.querySelector(`[data-menu="${state.menu}"]`);
+  if (!anchor) return;
+  const popover = document.createElement("div");
+  popover.className = "popover";
+  popover.innerHTML = menuItems(state, state.menu);
+  win.appendChild(popover);
+  const frame = win.getBoundingClientRect(), at = anchor.getBoundingClientRect();
+  const left = Math.min(at.left - frame.left, win.clientWidth - popover.offsetWidth - 8);
+  const below = at.bottom - frame.top + 4;
+  const top = below + popover.offsetHeight > win.clientHeight - 8 ? Math.max(8, at.top - frame.top - popover.offsetHeight - 4) : below;
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+const where = (s) => [s.view, s.tab, s.section, s.appSection, s.binding].join("|");
+
+const all = SCREENS.flatMap(([, list]) => list);
+const liveWindow = document.querySelector("#live-window");
+const gallery = document.querySelector(".gallery");
+const nav = document.querySelector("nav");
+let current = "live", state = preset({}), large = false, showAll = false;
+
+function draw() {
+  state.large = large;
+  paint(liveWindow, state);
+}
+function chrome() {
+  document.querySelector(".mode").innerHTML = `<span style="display:flex;gap:8px;flex-wrap:wrap"><span class="seg">${[[false, "640 × 560"], [true, "840 × 680"]].map(([value, label]) => `<button class="${large === value ? "on" : ""}" data-size="${value}">${label}</button>`).join("")}</span><span class="seg">${[[false, "One screen"], [true, "All screens"]].map(([value, label]) => `<button class="${showAll === value ? "on" : ""}" data-all="${value}">${label}</button>`).join("")}</span></span>`;
+  liveWindow.classList.toggle("large", large);
+  nav.innerHTML = SCREENS.map(([name, list]) => `<div><h2>${name}</h2>${list.map(([id, label]) => `<button class="${id === current ? "on" : ""}" data-screen="${id}">${label}</button>`).join("")}</div>`).join("");
+  document.querySelector(".single").hidden = showAll;
+  gallery.hidden = !showAll;
+}
+function show(id) {
+  const found = all.find((screen) => screen[0] === id) || all[0];
+  current = found[0];
+  state = preset(found[3]);
+  showAll = false;
+  chrome();
+  document.querySelector(".caption").textContent = found[2];
+  draw();
+}
+function drawAll() {
+  gallery.innerHTML = all.map(([id, label]) => `<figure><figcaption>${label}</figcaption><div class="scroller"><div class="win ${large ? "large" : ""}" inert></div></div></figure>`).join("");
+  gallery.querySelectorAll(".win").forEach((win, i) => {
+    const each = preset(all[i][3]);
+    each.large = large;
+    paint(win, each);
+  });
+}
+
+document.querySelector(".approve ol").innerHTML = CHOICES.map((c) => `<li>${c}</li>`).join("");
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("button, [data-go]");
+  if (!button) {
+    if (state.menu && liveWindow.contains(event.target) && !event.target.closest(".popover")) { state.menu = null; draw(); }
+    return;
+  }
+  const data = button.dataset;
+  if ("screen" in data) { history.replaceState(null, "", "#" + data.screen); show(data.screen); return; }
+  if ("size" in data) { large = data.size === "true"; chrome(); draw(); if (showAll) drawAll(); return; }
+  if ("all" in data) { showAll = data.all === "true"; chrome(); if (showAll) drawAll(); else draw(); return; }
+  if (!liveWindow.contains(button)) return;
+  if ("menu" in data) state.menu = state.menu === data.menu ? null : data.menu;
+  else {
+    state.menu = null;
+    if ("tab" in data) { state.tab = data.tab; state.binding = null; state.dialog = null; }
+    if ("go" in data) { state.view = data.go; state.tray = false; }
+    if ("set" in data) {
+      if (data.set === "section") { state.section = data.value; state.binding = null; }
+      else if (data.set === "appSection") state.appSection = data.value;
+      else state.v[data.set] = data.value;
+    }
+    if ("setProfile" in data) { state.profile = data.setProfile; state.binding = null; state.dialog = null; }
+    if ("bind" in data) {
+      state.binding = data.bind;
+      const changed = INPUTS.flatMap((g) => g[1]).find((i) => i[0] === data.bind);
+      const words = changed && changed[2];
+      state.v.kind = !words ? "default" : words.startsWith("Key") ? "key" : words.startsWith("Mouse") ? "mouse" : words.startsWith("Macro") ? "macro" : "button";
+    }
+    if ("back" in data) state.binding = null;
+    if ("dialog" in data) state.dialog = data.dialog;
+    if ("close" in data) { const field = liveWindow.querySelector("#rename-field"); if (field && button.title === "Rename" && field.value.trim()) state.profile = field.value.trim(); state.dialog = null; }
+    if ("delete" in data) { state.profile = "Default"; state.dialog = null; }
+    if ("duplicate" in data) { state.profile = state.profile + " 2"; state.dialog = null; }
+    if ("capture" in data) state.capturing = data.capture;
+    if ("measure" in data) state.measuring = true;
+    if ("rule" in data) state.v.rules[data.rule][1] = data.value;
+    if ("ruleAdd" in data) state.v.rules.push([data.ruleAdd, "Default"]);
+    if ("ruleDelete" in data) state.v.rules.splice(Number(data.ruleDelete), 1);
+    if ("step" in data) {
+      const steps = state.v.steps, i = Number(data.index);
+      if (data.step === "add") steps.push(["Wait", "50 ms"]);
+      if (data.step === "delete") steps.splice(i, 1);
+      if (data.step === "up") [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]];
+      if (data.step === "down") [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]];
+      if (data.step === "kind") steps[i] = [data.value, data.value === "Wait" ? "50 ms" : "Q"];
+    }
+  }
+  draw();
+});
+
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (input.id === "name-field") state.v.name = input.value;
+  const key = input.dataset.range;
+  if (!key) return;
+  state.v[key] = Number(input.value);
+  input.style.setProperty("--fill", `${(input.value - input.min) / (input.max - input.min) * 100}%`);
+  input.nextElementSibling.textContent = input.value + input.dataset.unit;
+  readouts();
+});
+function readouts() {
+  const box = liveWindow.querySelector("[data-readout]");
+  if (box) box.innerHTML = { stick: stickReadout, trigger: triggerReadout, touch: touchReadout }[box.dataset.readout](state);
+}
+
+let dragging = null;
+function drag(event) {
+  const target = liveWindow.querySelector(`[data-drag="${dragging}"]`);
+  const box = target.getBoundingClientRect();
+  const x = (event.clientX - box.left) / box.width, y = (event.clientY - box.top) / box.height;
+  if (dragging === "stick") {
+    let px = (x - 0.5) * 2 * 56 / 46, py = (y - 0.5) * 2 * 56 / 46;
+    const length = Math.hypot(px, py);
+    if (length > 1) { px /= length; py /= length; }
+    state.raw[state.v.side] = [px, py];
+  }
+  if (dragging === "trigger") state.travel[state.v.trigger] = clamp(1 - y, 0, 1);
+  if (dragging === "touch") state.finger = [clamp(x, 0.02, 0.98), clamp(y, 0.05, 0.95)];
+  readouts();
+}
+liveWindow.addEventListener("pointerdown", (event) => {
+  const target = event.target.closest("[data-drag]");
+  if (!target) return;
+  event.preventDefault();
+  dragging = target.dataset.drag;
+  drag(event);
+});
+addEventListener("pointermove", (event) => { if (dragging) drag(event); });
+addEventListener("pointerup", () => { dragging = null; });
+
+addEventListener("keydown", (event) => {
+  if (event.ctrlKey && event.key === "," && !state.capturing) { event.preventDefault(); state.view = "app"; draw(); return; }
+  if (!state.capturing) { if (event.key === "Escape" && state.menu) { state.menu = null; draw(); } return; }
+  event.preventDefault();
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
+  if (event.key !== "Escape") {
+    const name = event.key === " " ? "Space" : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    state.v[state.capturing] = [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", name].filter(Boolean).join(" + ");
+  }
+  state.capturing = false;
+  draw();
+});
+addEventListener("hashchange", () => show(location.hash.slice(1)));
+show(location.hash.slice(1));
+</script>
+</body>
+</html>
