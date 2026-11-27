@@ -1,5 +1,9 @@
 use std::fmt;
+use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use serde::{Deserialize, Serialize, Serializer};
+use serde_json::Value;
 
 const EXTENDED_PREFIX: u16 = 0xE000;
 const KEY_SLOTS: usize = 512;
@@ -101,8 +105,23 @@ pub struct Chord {
     key: Key,
 }
 
+impl Serialize for Chord {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.keys().map(Key::scan))
+    }
+}
+
 impl Chord {
-    pub fn of(key: Key) -> Self {
+    pub(crate) fn load(value: &Value) -> Option<Self> {
+        let keys = Vec::<u16>::deserialize(value)
+            .ok()?
+            .into_iter()
+            .map(Key::from_scan)
+            .collect::<Option<Vec<_>>>()?;
+        Self::new(&keys)
+    }
+
+    pub const fn of(key: Key) -> Self {
         Self { modifiers: 0, key }
     }
 
@@ -133,9 +152,7 @@ impl Chord {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseButton {
     Left,
@@ -159,9 +176,7 @@ impl MouseButton {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WheelStep {
     Up,
@@ -177,6 +192,26 @@ pub enum DesktopEvent {
     Key { key: Key, down: bool },
     Button { button: MouseButton, down: bool },
     Wheel(WheelStep),
+    Move { x: i32, y: i32 },
+    Scroll { x: i32, y: i32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Nudge {
+    pub pointer: (i32, i32),
+    pub scroll: (i32, i32),
+}
+
+impl Add for Nudge {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        let sum = |a: (i32, i32), b: (i32, i32)| (a.0 + b.0, a.1 + b.1);
+        Self {
+            pointer: sum(self.pointer, other.pointer),
+            scroll: sum(self.scroll, other.scroll),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -428,6 +463,22 @@ impl Hands {
         if held != self.held {
             self.desk.desktop().change(&self.held, &held);
             self.held = held;
+        }
+    }
+
+    pub fn nudge(&mut self, nudge: Nudge) {
+        let Nudge {
+            pointer: (x, y),
+            scroll: (across, along),
+        } = nudge;
+        let moved = (x != 0 || y != 0).then_some(DesktopEvent::Move { x, y });
+        let scrolled = (across != 0 || along != 0).then_some(DesktopEvent::Scroll {
+            x: across,
+            y: along,
+        });
+        if moved.is_some() || scrolled.is_some() {
+            let events: Vec<DesktopEvent> = moved.into_iter().chain(scrolled).collect();
+            self.desk.desktop().send(&events);
         }
     }
 

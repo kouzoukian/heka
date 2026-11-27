@@ -17,8 +17,9 @@ use heka_core::link::{
     FeedbackFormat, LinkRead, LinkReader, LinkWriteError, LinkWriter, ReportFormat,
 };
 use heka_core::live_mapper::LiveMapper;
+use heka_core::macros::Mode;
 use heka_core::preferences::{LightbarChoice, LivePreferences, Preferences, RumbleStrength};
-use heka_core::profile::{Binding, Input, Mapper, Profile};
+use heka_core::profile::{Binding, Input, Mapper, Output, Profile};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::threads::{SystemThreads, Task, Threads};
 use heka_core::virtual_controller::{
@@ -1454,4 +1455,34 @@ fn a_bridge_dropped_by_a_panicking_thread_still_releases_its_keys() {
 
     assert!(panicked.is_err());
     wait_until(|| desktop.sent() == [down(M), up(M)]);
+}
+
+#[test]
+fn a_turbo_button_goes_on_repeating_while_no_report_arrives() {
+    let (link, steps, _) = FakeLink::live();
+    let (controller, record) = FakeController::new();
+    let mut profile = Profile::named("Turbo");
+    profile.bind(Input::Cross, Binding::To(Output::Circle));
+    profile.set_mode(Input::Cross, Mode::Turbo(30));
+    let mapper = Arc::new(LiveMapper::default());
+    mapper.set(Mapper::new(&profile));
+    let mut plugged = Plugged::new(controller);
+    plugged.map_with(mapper);
+    let bridge = Bridge::resume(OpenLink::new(link), plugged, Arc::default()).unwrap();
+
+    steps.send(Step::Report(cross())).unwrap();
+
+    wait_until(|| record.lock().unwrap().updates.len() >= 5);
+    bridge.stop();
+    let record = record.lock().unwrap();
+    let shown: Vec<Buttons> = record.updates[..4].iter().map(|s| s.buttons).collect();
+    assert_eq!(
+        shown,
+        [
+            Buttons::CIRCLE,
+            Buttons::NONE,
+            Buttons::CIRCLE,
+            Buttons::NONE
+        ]
+    );
 }

@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::state::{FineSticks, Stick};
+use crate::state::{ControllerState, FineSticks, Stick};
 
 pub const MAX_DEAD_ZONE: u8 = 50;
 pub const MAX_ANTI_DEAD_ZONE: u8 = 50;
@@ -212,6 +212,37 @@ pub fn fine(left: (i16, i16), right: (i16, i16)) -> FineSticks {
         left_y: left.1,
         right_x: right.0,
         right_y: right.1,
+    }
+}
+
+pub fn push_right_stick(state: &mut ControllerState, (x, y): (f32, f32)) {
+    let sticks = state.fine_sticks.unwrap_or_else(|| {
+        fine(
+            (wide_byte(state.left_stick.x), wide_byte(state.left_stick.y)),
+            (
+                wide_byte(state.right_stick.x),
+                wide_byte(state.right_stick.y),
+            ),
+        )
+    });
+    let pushed = |own: i16, push: f32| (narrow(own) + push).clamp(-1.0, 1.0);
+    let (x, y) = (pushed(sticks.right_x, x), pushed(sticks.right_y, y));
+    state.right_stick = Stick {
+        x: byte(x),
+        y: byte(y),
+    };
+    state.fine_sticks = Some(FineSticks {
+        right_x: wide(x),
+        right_y: wide(y),
+        ..sticks
+    });
+}
+
+fn narrow(wide: i16) -> f32 {
+    if wide < 0 {
+        f32::from(wide) / 32768.0
+    } else {
+        f32::from(wide) / 32767.0
     }
 }
 

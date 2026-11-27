@@ -2,6 +2,7 @@ use heka_app::ui::model::{ControllerEntry, EntryState, Selection};
 use heka_app::ui::view::Page;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::Preferences;
+use heka_core::supervisor::DriftStatus;
 use heka_core::virtual_controller::OutputType;
 
 fn mac(last: u8) -> MacAddress {
@@ -23,6 +24,8 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             battery: None,
             raw_sticks: None,
             raw_triggers: None,
+            raw_touch: None,
+            drift: DriftStatus::Unmeasured,
             report_rate: None,
             output_type: OutputType::Xbox,
             profile: None,

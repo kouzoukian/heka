@@ -13,7 +13,7 @@ use heka_core::radio::TurnOffError;
 use heka_core::release::{CheckError, Version};
 use heka_core::settings::Settings;
 use heka_core::setup::{self, BusUnavailable, Drivers};
-use heka_core::supervisor::{BridgeError, ControllerView, Supervisor};
+use heka_core::supervisor::{BridgeError, ControllerView, DriftStatus, Supervisor};
 use heka_core::virtual_controller::{OutputType, VirtualBus};
 
 const MAC: MacAddress = MacAddress([0x02, 0, 0, 0, 0, 1]);
@@ -34,6 +34,7 @@ fn view(error: Option<BridgeError>) -> ControllerView {
         rule_program: None,
         output_type_from_profile: false,
         live: Arc::new(LiveInput::default()),
+        drift: DriftStatus::Unmeasured,
         error,
         turn_off_error: None,
     }

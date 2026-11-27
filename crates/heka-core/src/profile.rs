@@ -1,12 +1,17 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 
-use crate::desktop::{Chord, DesktopState, Key, MouseButton, WheelStep};
+use crate::desktop::{Chord, DesktopState, MouseButton, WheelStep};
+use crate::gyro::{GyroChange, GyroSettings, GyroUse};
+use crate::macros::{Macro, MacroChange, Mode};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
+use crate::stick_use::{StickRole, StickUseChange, Velocity};
+use crate::touchpad::{TouchpadChange, TouchpadSettings};
 use crate::tuning::{
     StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
     tuned_stick,
@@ -103,8 +108,12 @@ impl Input {
         }
     }
 
-    fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         self as usize
+    }
+
+    pub(crate) fn bit(self) -> u32 {
+        1 << self.index()
     }
 }
 
@@ -182,56 +191,89 @@ pub enum Binding {
     Keys(Chord),
     Mouse(MouseButton),
     Wheel(WheelStep),
+    Macro,
 }
 
 impl Binding {
+    pub fn takes_mode(self) -> bool {
+        matches!(
+            self,
+            Self::To(_) | Self::Keys(_) | Self::Mouse(_) | Self::Wheel(_)
+        )
+    }
+}
+
+const TARGETS: [&str; 5] = ["button", "keys", "mouse", "wheel", "macro"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Assigned {
+    binding: Binding,
+    mode: Mode,
+    steps: Macro,
+}
+
+impl Assigned {
+    fn plain(binding: Binding) -> Self {
+        Self {
+            binding,
+            mode: Mode::Hold,
+            steps: Macro::default(),
+        }
+    }
+
     fn load(value: &Value) -> Option<Self> {
-        match value {
-            Value::Null => Some(Self::Nothing),
-            Value::Object(fields) => {
-                match (fields.get("keys"), fields.get("mouse"), fields.get("wheel")) {
-                    (Some(keys), None, None) => chord(keys).map(Self::Keys),
-                    (None, Some(button), None) => given(button).map(Self::Mouse),
-                    (None, None, Some(step)) => given(step).map(Self::Wheel),
-                    _ => None,
-                }
+        let fields = match value {
+            Value::Null => return Some(Self::plain(Binding::Nothing)),
+            Value::Object(fields) => fields,
+            other => return given(other).map(|output| Self::plain(Binding::To(output))),
+        };
+        let mut targets = TARGETS
+            .into_iter()
+            .filter_map(|tag| Some((tag, fields.get(tag)?)));
+        let (tag, target) = targets.next()?;
+        if targets.next().is_some() {
+            return None;
+        }
+        let binding = match tag {
+            "button" => given(target).map(Binding::To),
+            "keys" => Chord::load(target).map(Binding::Keys),
+            "mouse" => given(target).map(Binding::Mouse),
+            "wheel" => given(target).map(Binding::Wheel),
+            _ => {
+                return Some(Self {
+                    steps: Macro::load(target, value)?,
+                    ..Self::plain(Binding::Macro)
+                });
             }
-            other => given(other).map(Self::To),
-        }
+        }?;
+        Some(Self {
+            mode: Mode::load(value),
+            ..Self::plain(binding)
+        })
     }
 }
 
-impl Serialize for Binding {
+impl Serialize for Assigned {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        fn tagged<S: Serializer>(
-            serializer: S,
-            tag: &str,
-            value: impl Serialize,
-        ) -> Result<S::Ok, S::Error> {
-            let mut map = serializer.serialize_map(Some(1))?;
-            map.serialize_entry(tag, &value)?;
-            map.end()
+        match self.binding {
+            Binding::Default | Binding::Nothing => return serializer.serialize_none(),
+            Binding::To(output) if self.mode == Mode::Hold => {
+                return output.serialize(serializer);
+            }
+            _ => {}
         }
-        match self {
-            Self::Default | Self::Nothing => serializer.serialize_none(),
-            Self::To(output) => output.serialize(serializer),
-            Self::Keys(chord) => tagged(
-                serializer,
-                "keys",
-                chord.keys().map(Key::scan).collect::<Vec<_>>(),
-            ),
-            Self::Mouse(button) => tagged(serializer, "mouse", button),
-            Self::Wheel(step) => tagged(serializer, "wheel", step),
+        let mut map = serializer.serialize_map(None)?;
+        match self.binding {
+            Binding::Default | Binding::Nothing => {}
+            Binding::To(output) => map.serialize_entry("button", &output)?,
+            Binding::Keys(chord) => map.serialize_entry("keys", &chord)?,
+            Binding::Mouse(button) => map.serialize_entry("mouse", &button)?,
+            Binding::Wheel(step) => map.serialize_entry("wheel", &step)?,
+            Binding::Macro => self.steps.serialize_into(&mut map)?,
         }
+        self.mode.serialize_into(&mut map)?;
+        map.end()
     }
-}
-
-fn chord(value: &Value) -> Option<Chord> {
-    let keys = given::<Vec<u16>>(value)?
-        .into_iter()
-        .map(Key::from_scan)
-        .collect::<Option<Vec<_>>>()?;
-    Chord::new(&keys)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,17 +287,25 @@ pub struct Profile {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_type: Option<OutputType>,
-    bindings: BTreeMap<Input, Binding>,
+    bindings: BTreeMap<Input, Assigned>,
     #[serde(skip_serializing_if = "StickTuning::is_neutral")]
     pub left_stick: StickTuning,
     #[serde(skip_serializing_if = "StickTuning::is_neutral")]
     pub right_stick: StickTuning,
     #[serde(skip_serializing_if = "is_false")]
     pub swap_sticks: bool,
+    #[serde(skip_serializing_if = "StickRole::is_default")]
+    left_stick_use: StickRole,
+    #[serde(skip_serializing_if = "StickRole::is_default")]
+    right_stick_use: StickRole,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
     pub left_trigger: TriggerTuning,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
     pub right_trigger: TriggerTuning,
+    #[serde(skip_serializing_if = "TouchpadSettings::is_default")]
+    touchpad: TouchpadSettings,
+    #[serde(skip_serializing_if = "GyroSettings::is_default")]
+    gyro: GyroSettings,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -277,8 +327,12 @@ impl Profile {
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_stick_use: StickRole::default(),
+            right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            touchpad: TouchpadSettings::default(),
+            gyro: GyroSettings::default(),
         }
     }
 
@@ -302,8 +356,12 @@ impl Profile {
             "left_stick",
             "right_stick",
             "swap_sticks",
+            "left_stick_use",
+            "right_stick_use",
             "left_trigger",
             "right_trigger",
+            "touchpad",
+            "gyro",
         ]
         .iter()
         .any(|key| root.contains_key(*key));
@@ -327,11 +385,12 @@ impl Profile {
             .flatten()
             .filter_map(|(input, binding)| {
                 let input = given::<Input>(&Value::String(input.clone()))?;
-                Some((input, Binding::load(binding)?))
+                Some((input, Assigned::load(binding)?))
             })
             .collect();
         let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
         let trigger = |key: &str| root.get(key).map(TriggerTuning::load).unwrap_or_default();
+        let stick_use = |key: &str| root.get(key).map(StickRole::load).unwrap_or_default();
         Some(Self {
             name,
             output_type,
@@ -342,8 +401,15 @@ impl Profile {
                 .get("swap_sticks")
                 .and_then(given::<bool>)
                 .unwrap_or(false),
+            left_stick_use: stick_use("left_stick_use"),
+            right_stick_use: stick_use("right_stick_use"),
             left_trigger: trigger("left_trigger"),
             right_trigger: trigger("right_trigger"),
+            touchpad: root
+                .get("touchpad")
+                .map(TouchpadSettings::load)
+                .unwrap_or_default(),
+            gyro: root.get("gyro").map(GyroSettings::load).unwrap_or_default(),
         })
     }
 
@@ -360,15 +426,55 @@ impl Profile {
     pub fn binding(&self, input: Input) -> Binding {
         self.bindings
             .get(&input)
-            .copied()
-            .unwrap_or(Binding::Default)
+            .map_or(Binding::Default, |assigned| assigned.binding)
     }
 
     pub fn bind(&mut self, input: Input, binding: Binding) {
-        match binding {
-            Binding::Default => self.bindings.remove(&input),
-            binding => self.bindings.insert(input, binding),
-        };
+        if binding == Binding::Default {
+            self.bindings.remove(&input);
+            return;
+        }
+        let before = self.bindings.remove(&input);
+        let mut assigned = Assigned::plain(binding);
+        if let Some(before) = before {
+            if binding.takes_mode() && before.binding.takes_mode() {
+                assigned.mode = before.mode;
+            }
+            if binding == Binding::Macro {
+                assigned.steps = before.steps;
+            }
+        }
+        self.bindings.insert(input, assigned);
+    }
+
+    pub fn mode(&self, input: Input) -> Mode {
+        self.bindings
+            .get(&input)
+            .map_or(Mode::Hold, |assigned| assigned.mode)
+    }
+
+    pub fn set_mode(&mut self, input: Input, mode: Mode) {
+        if let Some(assigned) = self.bindings.get_mut(&input)
+            && assigned.binding.takes_mode()
+        {
+            assigned.mode = mode.clamped();
+        }
+    }
+
+    pub fn macro_of(&self, input: Input) -> Option<&Macro> {
+        self.bindings
+            .get(&input)
+            .filter(|assigned| assigned.binding == Binding::Macro)
+            .map(|assigned| &assigned.steps)
+    }
+
+    pub fn change_macro(&mut self, input: Input, change: MacroChange) {
+        if self.binding(input) != Binding::Macro {
+            self.bind(input, Binding::Macro);
+        }
+        if let Some(assigned) = self.bindings.get_mut(&input) {
+            assigned.steps.change(change);
+        }
     }
 
     pub fn stick(&self, side: StickSide) -> &StickTuning {
@@ -383,6 +489,36 @@ impl Profile {
             StickSide::Left => self.left_stick.change(change),
             StickSide::Right => self.right_stick.change(change),
         }
+    }
+
+    pub fn stick_use(&self, side: StickSide) -> &StickRole {
+        match side {
+            StickSide::Left => &self.left_stick_use,
+            StickSide::Right => &self.right_stick_use,
+        }
+    }
+
+    pub fn change_stick_use(&mut self, side: StickSide, change: StickUseChange) {
+        match side {
+            StickSide::Left => self.left_stick_use.change(change),
+            StickSide::Right => self.right_stick_use.change(change),
+        }
+    }
+
+    pub fn touchpad(&self) -> &TouchpadSettings {
+        &self.touchpad
+    }
+
+    pub fn change_touchpad(&mut self, change: TouchpadChange) {
+        self.touchpad.change(change);
+    }
+
+    pub fn gyro(&self) -> &GyroSettings {
+        &self.gyro
+    }
+
+    pub fn change_gyro(&mut self, change: GyroChange) {
+        self.gyro.change(change);
     }
 
     pub fn trigger(&self, side: TriggerSide) -> &TriggerTuning {
@@ -405,8 +541,12 @@ impl Profile {
             && self.left_stick.is_neutral()
             && self.right_stick.is_neutral()
             && !self.swap_sticks
+            && self.left_stick_use.is_default()
+            && self.right_stick_use.is_default()
             && self.left_trigger.is_neutral()
             && self.right_trigger.is_neutral()
+            && self.touchpad.is_default()
+            && self.gyro.is_default()
     }
 }
 
@@ -429,22 +569,34 @@ pub struct Mapped {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mapper {
     slots: [Binding; Input::ALL.len()],
+    modes: [Mode; Input::ALL.len()],
+    macros: BTreeMap<Input, Arc<Macro>>,
     left_stick: StickTuning,
     right_stick: StickTuning,
     swap_sticks: bool,
+    left_stick_use: StickRole,
+    right_stick_use: StickRole,
     left_trigger: TriggerTuning,
     right_trigger: TriggerTuning,
+    touchpad: TouchpadSettings,
+    gyro: GyroSettings,
 }
 
 impl Default for Mapper {
     fn default() -> Self {
         Self {
             slots: [Binding::Default; Input::ALL.len()],
+            modes: [Mode::Hold; Input::ALL.len()],
+            macros: BTreeMap::new(),
             left_stick: StickTuning::default(),
             right_stick: StickTuning::default(),
             swap_sticks: false,
+            left_stick_use: StickRole::default(),
+            right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            touchpad: TouchpadSettings::default(),
+            gyro: GyroSettings::default(),
         }
     }
 }
@@ -455,12 +607,20 @@ impl Mapper {
             left_stick: profile.left_stick,
             right_stick: profile.right_stick,
             swap_sticks: profile.swap_sticks,
+            left_stick_use: profile.left_stick_use,
+            right_stick_use: profile.right_stick_use,
             left_trigger: profile.left_trigger,
             right_trigger: profile.right_trigger,
+            touchpad: profile.touchpad,
+            gyro: profile.gyro,
             ..Self::default()
         };
         for input in Input::ALL {
             mapper.slots[input.index()] = profile.binding(input);
+            mapper.modes[input.index()] = profile.mode(input);
+            if let Some(steps) = profile.macro_of(input) {
+                mapper.macros.insert(input, Arc::new(steps.clone()));
+            }
         }
         mapper
     }
@@ -470,26 +630,16 @@ impl Mapper {
     }
 
     pub fn mapped(&self, state: &ControllerState) -> Mapped {
-        let mut buttons = Buttons::NONE;
-        let mut left_full = false;
-        let mut right_full = false;
-        let mut desktop = DesktopState::default();
-        let mut drive = |source: Input, own: Buttons| match self.slot(source) {
-            Binding::Default => buttons |= own,
-            Binding::Nothing => {}
-            Binding::To(Output::LeftTrigger) => left_full = true,
-            Binding::To(Output::RightTrigger) => right_full = true,
-            Binding::To(output) => buttons |= output.buttons(),
-            Binding::Keys(chord) => desktop.add_chord(chord),
-            Binding::Mouse(button) => desktop.add_button(button),
-            Binding::Wheel(step) => desktop.add_wheel(source.index(), step),
-        };
+        self.drive(state, self.sources(state))
+    }
+
+    pub(crate) fn sources(&self, state: &ControllerState) -> u32 {
+        let mut sources = 0;
         for input in Input::ALL {
-            let own = input.buttons();
             if !self.pressed(input, state) {
                 continue;
             }
-            match input {
+            let source = match input {
                 Input::Touchpad => {
                     let half = state.touch[0].map(|finger| {
                         if finger.x < TOUCHPAD_WIDTH / 2 {
@@ -498,13 +648,50 @@ impl Mapper {
                             Input::TouchpadRight
                         }
                     });
-                    let source = half
-                        .filter(|&half| self.is_bound(half))
-                        .unwrap_or(Input::Touchpad);
-                    drive(source, own);
+                    half.filter(|&half| self.is_bound(half))
+                        .unwrap_or(Input::Touchpad)
                 }
-                Input::TouchpadLeft | Input::TouchpadRight => {}
-                _ => drive(input, own),
+                Input::TouchpadLeft | Input::TouchpadRight => continue,
+                other => other,
+            };
+            sources |= source.bit();
+        }
+        sources
+    }
+
+    pub(crate) fn mode(&self, input: Input) -> Mode {
+        self.modes[input.index()]
+    }
+
+    pub(crate) fn toggled_inputs(&self) -> u32 {
+        Input::ALL
+            .into_iter()
+            .filter(|&input| self.mode(input) == Mode::Toggle)
+            .fold(0, |bits, input| bits | input.bit())
+    }
+
+    pub(crate) fn shared_macro(&self, input: Input) -> Option<&Arc<Macro>> {
+        self.macros.get(&input)
+    }
+
+    pub(crate) fn drive(&self, state: &ControllerState, active: u32) -> Mapped {
+        let mut buttons = Buttons::NONE;
+        let mut left_full = false;
+        let mut right_full = false;
+        let mut desktop = DesktopState::default();
+        for source in Input::ALL {
+            if active & source.bit() == 0 {
+                continue;
+            }
+            match self.slot(source) {
+                Binding::Default => buttons |= source.buttons(),
+                Binding::Nothing | Binding::Macro => {}
+                Binding::To(Output::LeftTrigger) => left_full = true,
+                Binding::To(Output::RightTrigger) => right_full = true,
+                Binding::To(output) => buttons |= output.buttons(),
+                Binding::Keys(chord) => desktop.add_chord(chord),
+                Binding::Mouse(button) => desktop.add_button(button),
+                Binding::Wheel(step) => desktop.add_wheel(source.index(), step),
             }
         }
         if left_full || self.hair_trigger_fires(Input::L2, state.left_trigger) {
@@ -514,6 +701,10 @@ impl Mapper {
             buttons |= Buttons::R2;
         }
         let (left_stick, right_stick, fine_sticks) = self.sticks(state);
+        self.left_stick_use
+            .press(&self.left_stick, state.left_stick, &mut desktop);
+        self.right_stick_use
+            .press(&self.right_stick, state.right_stick, &mut desktop);
         let shown = ControllerState {
             buttons,
             left_trigger: self.trigger(Input::L2, left_full, state.left_trigger),
@@ -521,21 +712,52 @@ impl Mapper {
             left_stick,
             right_stick,
             fine_sticks,
+            touch: if self.touchpad.moves_the_mouse() {
+                [None; 2]
+            } else {
+                state.touch
+            },
             ..*state
         };
         Mapped { shown, desktop }
     }
 
+    pub fn mouse_touchpad(&self) -> Option<&TouchpadSettings> {
+        self.touchpad.moves_the_mouse().then_some(&self.touchpad)
+    }
+
+    pub fn aiming_gyro(&self) -> Option<&GyroSettings> {
+        (self.gyro.used_as != GyroUse::Off).then_some(&self.gyro)
+    }
+
+    pub fn velocity(&self, state: &ControllerState) -> Velocity {
+        let left = self
+            .left_stick_use
+            .velocity(&self.left_stick, state.left_stick);
+        let right = self
+            .right_stick_use
+            .velocity(&self.right_stick, state.right_stick);
+        left + right
+    }
+
     fn sticks(&self, state: &ControllerState) -> (Stick, Stick, Option<FineSticks>) {
-        if self.left_stick.is_neutral() && self.right_stick.is_neutral() {
+        let both_sticks = self.left_stick_use.is_stick() && self.right_stick_use.is_stick();
+        if both_sticks && self.left_stick.is_neutral() && self.right_stick.is_neutral() {
             return if self.swap_sticks {
                 (state.right_stick, state.left_stick, state.fine_sticks)
             } else {
                 (state.left_stick, state.right_stick, state.fine_sticks)
             };
         }
-        let (left, left_wide) = tuned_stick(&self.left_stick, state.left_stick);
-        let (right, right_wide) = tuned_stick(&self.right_stick, state.right_stick);
+        let own = |role: &StickRole, tuning: &StickTuning, stick: Stick| {
+            if role.is_stick() {
+                tuned_stick(tuning, stick)
+            } else {
+                (Stick::CENTER, (0, 0))
+            }
+        };
+        let (left, left_wide) = own(&self.left_stick_use, &self.left_stick, state.left_stick);
+        let (right, right_wide) = own(&self.right_stick_use, &self.right_stick, state.right_stick);
         if self.swap_sticks {
             (right, left, Some(fine(right_wide, left_wide)))
         } else {
@@ -550,7 +772,7 @@ impl Mapper {
         }
     }
 
-    fn pressed(&self, input: Input, state: &ControllerState) -> bool {
+    pub fn pressed(&self, input: Input, state: &ControllerState) -> bool {
         let travel = match input {
             Input::L2 => state.left_trigger,
             Input::R2 => state.right_trigger,

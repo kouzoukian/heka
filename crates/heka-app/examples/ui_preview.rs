@@ -23,7 +23,7 @@ use heka_core::profiles::Profiles;
 use heka_core::release::Version;
 use heka_core::setup::{Driver, Missing};
 use heka_core::state::{Battery, Buttons, Charge, Stick};
-use heka_core::supervisor::BridgeError;
+use heka_core::supervisor::{BridgeError, DriftStatus};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::{Rect, WindowPlacement};
 use heka_windows::keyboard::{self, KeyHook};
@@ -58,6 +58,8 @@ impl Fake {
             battery,
             raw_sticks: None,
             raw_triggers: None,
+            raw_touch: None,
+            drift: DriftStatus::Unmeasured,
             report_rate: None,
             output_type,
             profile: None,
@@ -173,6 +175,7 @@ impl Backend for Fake {
                 entry.pad = Some(moving_pad(t));
                 entry.raw_sticks = entry.pad.map(|pad| [pad.left_stick, pad.right_stick]);
                 entry.raw_triggers = entry.pad.map(|pad| [pad.left_trigger, pad.right_trigger]);
+                entry.raw_touch = entry.pad.map(|pad| pad.touch);
                 entry.report_rate = Some(250);
             }
             if let EntryState::Held { .. } = entry.state {
@@ -238,7 +241,8 @@ impl Backend for Fake {
             | Command::SetNickname(mac, _)
             | Command::ChangePreference(mac, _)
             | Command::TurnOff(mac)
-            | Command::SetIdleTime(mac, _) => *mac,
+            | Command::SetIdleTime(mac, _)
+            | Command::MeasureDrift(mac) => *mac,
             Command::SetStartWithWindows(on) => {
                 self.start_with_windows.set(*on);
                 return;
@@ -313,6 +317,36 @@ impl Backend for Fake {
             Command::ChangeTrigger(id, side, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_trigger(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeStickUse(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_stick_use(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeTouchpad(id, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_touchpad(*change);
+                }
+                return;
+            }
+            Command::ChangeGyro(id, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_gyro(*change);
+                }
+                return;
+            }
+            Command::SetMode(id, input, mode) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.set_mode(*input, *mode);
+                }
+                return;
+            }
+            Command::ChangeMacro(id, input, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_macro(*input, *change);
                 }
                 return;
             }

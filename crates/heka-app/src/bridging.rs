@@ -12,17 +12,21 @@ use heka_app::{log, text};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::feedback::Motor;
+use heka_core::gyro::GyroChange;
 use heka_core::hider::{Hider, HidingWarning};
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::Change;
 use heka_core::link::controller_model;
 use heka_core::mac::MacAddress;
+use heka_core::macros::{MacroChange, Mode};
 use heka_core::preferences::PreferenceChange;
 use heka_core::profile::{Binding, Input, Profile};
 use heka_core::profiles::Profiles;
 use heka_core::settings::Settings;
 use heka_core::setup::{self, Driver, Setup};
+use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::{ControllerView, Supervisor};
+use heka_core::touchpad::TouchpadChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
@@ -85,6 +89,12 @@ enum Command {
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
     ChangeTrigger(String, TriggerSide, TriggerChange),
+    ChangeStickUse(String, StickSide, StickUseChange),
+    ChangeTouchpad(String, TouchpadChange),
+    ChangeGyro(String, GyroChange),
+    MeasureDrift(MacAddress),
+    SetMode(String, Input, Mode),
+    ChangeMacro(String, Input, MacroChange),
     Quit,
 }
 
@@ -229,6 +239,34 @@ impl Bridging {
         let _ = self
             .commands
             .send(Command::ChangeTrigger(profile, side, change));
+    }
+
+    pub fn change_stick_use(&self, profile: String, side: StickSide, change: StickUseChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeStickUse(profile, side, change));
+    }
+
+    pub fn change_touchpad(&self, profile: String, change: TouchpadChange) {
+        let _ = self.commands.send(Command::ChangeTouchpad(profile, change));
+    }
+
+    pub fn change_gyro(&self, profile: String, change: GyroChange) {
+        let _ = self.commands.send(Command::ChangeGyro(profile, change));
+    }
+
+    pub fn measure_drift(&self, mac: MacAddress) {
+        let _ = self.commands.send(Command::MeasureDrift(mac));
+    }
+
+    pub fn set_mode(&self, profile: String, input: Input, mode: Mode) {
+        let _ = self.commands.send(Command::SetMode(profile, input, mode));
+    }
+
+    pub fn change_macro(&self, profile: String, input: Input, change: MacroChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeMacro(profile, input, change));
     }
 
     pub fn quit(&self) {
@@ -400,6 +438,35 @@ fn supervise(
                     profile.swap_sticks = swap;
                 })
             }
+            Ok(Command::ChangeStickUse(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_stick_use(side, change);
+                })
+            }
+            Ok(Command::ChangeTouchpad(id, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_touchpad(change);
+                })
+            }
+            Ok(Command::ChangeGyro(id, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_gyro(change);
+                })
+            }
+            Ok(Command::MeasureDrift(mac)) => {
+                supervisor.measure_drift(mac);
+                Vec::new()
+            }
+            Ok(Command::SetMode(id, input, mode)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.set_mode(input, mode);
+                })
+            }
+            Ok(Command::ChangeMacro(id, input, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_macro(input, change);
+                })
+            }
             Ok(Command::ChangeTrigger(id, side, change)) => {
                 edit_profile(&mut supervisor, &id, now, |profile| {
                     profile.change_trigger(side, change);
@@ -452,6 +519,10 @@ fn supervise(
         }
         report_failures(&mut supervisor, &mut not_unplugged);
         log_hiding_changes(&mut hider);
+        for (mac, measurement) in supervisor.take_measurements() {
+            unsaved |= measurement.is_ok();
+            log::line(&text::log::drift(mac, measurement));
+        }
         let hiding = if detected.is_missing(Driver::HidHide) {
             Vec::new()
         } else {

@@ -217,6 +217,18 @@ impl Backend for WindowBackend {
                 bridging.change_stick(profile, side, change);
             }
             Command::SetSwapSticks(profile, swap) => bridging.set_swap_sticks(profile, swap),
+            Command::ChangeStickUse(profile, side, change) => {
+                bridging.change_stick_use(profile, side, change);
+            }
+            Command::ChangeTouchpad(profile, change) => {
+                bridging.change_touchpad(profile, change);
+            }
+            Command::ChangeGyro(profile, change) => bridging.change_gyro(profile, change),
+            Command::MeasureDrift(mac) => bridging.measure_drift(mac),
+            Command::SetMode(profile, input, mode) => bridging.set_mode(profile, input, mode),
+            Command::ChangeMacro(profile, input, change) => {
+                bridging.change_macro(profile, input, change);
+            }
             Command::ChangeTrigger(profile, side, change) => {
                 bridging.change_trigger(profile, side, change);
             }

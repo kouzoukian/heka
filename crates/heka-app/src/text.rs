@@ -1,5 +1,7 @@
 use heka_core::desktop::{Chord, Key, MouseButton, WheelStep};
 use heka_core::discovery::{OpenError, Unopened};
+use heka_core::drift::DriftError;
+use heka_core::gyro::{GyroActivation, GyroAxis, GyroUse};
 use heka_core::hider::{HideError, HidingWarning};
 use heka_core::hiding::{
     HidHideError, HidingError, HidingUnavailable, IdentifyError, JournalError,
@@ -7,11 +9,13 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
-use heka_core::profile::{Binding, Input, Output, ProfileError};
+use heka_core::macros::{Mode, Target};
+use heka_core::profile::{Binding, Input, Output, Profile, ProfileError};
 use heka_core::radio::TurnOffError;
 use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
-use heka_core::supervisor::BridgeError;
+use heka_core::stick_use::{Direction, StickUse};
+use heka_core::supervisor::{BridgeError, DriftStatus};
 use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
 
@@ -473,10 +477,121 @@ pub const OUTPUT_OWN: &str = "Controller's own";
 pub const OUTPUT_SET_BY_PROFILE: &str = "Set by the Profile";
 pub const BINDING_NOTHING: &str = "Nothing";
 pub const SECTION_PROFILES: &str = "Profiles";
+pub const SECTION_TOUCHPAD: &str = "Touchpad";
+pub const SECTION_GYRO: &str = "Gyro";
+pub const ROW_GYRO_USE: &str = "Gyro moves";
+pub const GYRO_USE_TIP: &str = "What turning the Controller moves";
+pub const ROW_ACTIVE: &str = "Active";
+pub const ACTIVE_TIP: &str = "When the gyro moves it";
+pub const ROW_GYRO_BUTTON: &str = "Button";
+pub const GYRO_BUTTON_TIP: &str =
+    "The button held or toggled to use the gyro; it keeps its Binding";
+pub const ROW_AXIS: &str = "Horizontal from";
+pub const AXIS_TIP: &str = "Turning the Controller (yaw) or tilting it sideways (roll)";
+pub const ROW_SENSITIVITY_X: &str = "Sensitivity X";
+pub const SENSITIVITY_X_TIP: &str = "How far it moves sideways";
+pub const ROW_SENSITIVITY_Y: &str = "Sensitivity Y";
+pub const SENSITIVITY_Y_TIP: &str = "How far it moves up and down";
+pub const GYRO_DEAD_ZONE_TIP: &str = "Turning slower than this, in degrees a second, does nothing";
+pub const ROW_DRIFT: &str = "Drift";
+pub const DRIFT_TIP: &str = "What this Controller reads as turning while at rest";
+pub const MEASURE: &str = "Measure";
+pub const MEASURING: &str = "Measuring";
+pub const GYRO_DEFAULT: &str =
+    "The Default Profile does not use the gyro. Choose another Profile, or make a new one.";
+
+pub fn gyro_use_name(used_as: GyroUse) -> &'static str {
+    match used_as {
+        GyroUse::Off => "Off",
+        GyroUse::Mouse => "Mouse",
+        GyroUse::RightStick => "Right stick",
+    }
+}
+
+pub fn activation_name(activation: GyroActivation) -> &'static str {
+    match activation {
+        GyroActivation::Always => "Always",
+        GyroActivation::WhileHeld => "While held",
+        GyroActivation::Toggle => "Toggle",
+    }
+}
+
+pub fn axis_name(axis: GyroAxis) -> &'static str {
+    match axis {
+        GyroAxis::Yaw => "Yaw",
+        GyroAxis::Roll => "Roll",
+    }
+}
+
+pub fn degrees_a_second(degrees: u16) -> String {
+    format!("{degrees}\u{b0}/s")
+}
+
+pub fn drift_note(status: DriftStatus) -> &'static str {
+    match status {
+        DriftStatus::Unmeasured => {
+            "Put the Controller at rest, then measure. heka removes the drift."
+        }
+        DriftStatus::Measuring => "Keep the Controller still on a flat surface.",
+        DriftStatus::Measured => "Drift measured. heka removes it from this Controller.",
+        DriftStatus::Failed(DriftError::Moved) => {
+            "The Controller moved. Put it down and measure again."
+        }
+        DriftStatus::Failed(DriftError::NoInput) => {
+            "The Controller stopped sending input. Measure again."
+        }
+    }
+}
+pub const ROW_TOUCHPAD_USE: &str = "Touchpad goes to";
+pub const TOUCHPAD_USE_TIP: &str = "The Virtual Controller or the mouse, not both";
+pub const TOUCHPAD_CONTROLLER: &str = "Controller";
+pub const TOUCHPAD_MOUSE: &str = "Mouse";
+pub const TOUCHPAD_SENSITIVITY_TIP: &str = "How far the pointer moves for a finger's travel";
+pub const ROW_INVERT_VERTICAL: &str = "Invert vertical";
+pub const INVERT_VERTICAL_TIP: &str = "A finger moving up moves the pointer down";
+pub const ROW_TAP_CLICK: &str = "Tap to left click";
+pub const TAP_CLICK_TIP: &str = "A short touch clicks the left button";
+pub const ROW_TWO_FINGER_CLICK: &str = "Two-finger right click";
+pub const TWO_FINGER_CLICK_TIP: &str = "A two-finger tap clicks the right button";
+pub const TOUCHPAD_SCROLL_NOTE: &str = "Drag two fingers to scroll.";
+pub const TOUCHPAD_CLICK_NOTE: &str =
+    "Touchpad click Bindings are under Buttons and work either way.";
+pub const TOUCHPAD_DEFAULT: &str =
+    "The Default Profile does not change the touchpad. Choose another Profile, or make a new one.";
 pub const SECTION_BUTTONS: &str = "Buttons";
 pub const SECTION_STICKS: &str = "Sticks";
 pub const SIDE_LEFT: &str = "Left stick";
 pub const SIDE_RIGHT: &str = "Right stick";
+pub const ROW_LEFT_STICK_USE: &str = "Left stick as";
+pub const ROW_RIGHT_STICK_USE: &str = "Right stick as";
+pub const STICK_USE_TIP: &str = "What this stick drives";
+pub const STICK_RESTS: &str = "The Virtual Controller's stick rests at the centre.";
+pub const ROW_SPEED: &str = "Speed";
+pub const SPEED_TIP: &str = "How fast the pointer moves, or the wheel turns, at full travel";
+pub const POINTING_DEAD_ZONE_TIP: &str =
+    "Travel from the centre that does nothing, never less than 6%";
+pub const KEY_DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing, never less than 25%";
+pub const STICK_KEY_TIP: &str = "The key held while the stick points this way";
+
+pub fn stick_use_name(used_as: StickUse) -> &'static str {
+    match used_as {
+        StickUse::Stick => "Stick",
+        StickUse::Mouse => "Mouse",
+        StickUse::Scroll => "Scroll",
+        StickUse::Wasd => "WASD",
+        StickUse::Arrows => "Arrows",
+        StickUse::Keys => "Four keys",
+    }
+}
+
+pub fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Up => "Up",
+        Direction::Left => "Left",
+        Direction::Down => "Down",
+        Direction::Right => "Right",
+    }
+}
 pub const ROW_DEAD_ZONE: &str = "Dead zone";
 pub const DEAD_ZONE_TIP: &str = "Travel from the centre that does nothing";
 pub const ROW_ANTI_DEAD_ZONE: &str = "Anti-dead zone";
@@ -606,6 +721,74 @@ pub const BINDING_TIP: &str = "What this input drives";
 pub const KIND_BUTTON: &str = "Button";
 pub const KIND_KEY: &str = "Key";
 pub const KIND_MOUSE: &str = "Mouse";
+pub const KIND_MACRO: &str = "Macro";
+pub const ROW_PRESS_MODE: &str = "Press";
+pub const PRESS_MODE_TIP: &str =
+    "Hold: while held. Toggle: one press holds, the next releases. Turbo: repeats while held.";
+pub const ROW_TURBO_RATE: &str = "Repeats a second";
+pub const TURBO_RATE_TIP: &str = "How often turbo presses it while held";
+pub const ROW_RUNS: &str = "Runs";
+pub const RUNS_TIP: &str = "Letting the input go cancels the macro either way";
+pub const RUNS_ONCE: &str = "Once per press";
+pub const RUNS_HELD: &str = "While held";
+pub const GROUP_STEPS: &str = "Steps";
+pub const STEP_PRESS: &str = "Press";
+pub const STEP_RELEASE: &str = "Release";
+pub const STEP_WAIT: &str = "Wait";
+pub const ROW_DELAY: &str = "Delay in ms";
+pub const DELAY_TIP: &str = "How long the macro waits here";
+pub const ROW_SENDS: &str = "Sends";
+pub const SENDS_TIP: &str = "The key or mouse button this step presses or releases";
+pub const STEP_KEY_TIP: &str = "The key or combination of this step";
+pub const STEP_MOUSE_TIP: &str = "The mouse button of this step";
+pub const ADD_STEP: &str = "Add step";
+pub const MOVE_UP: &str = "Move up";
+pub const MOVE_DOWN: &str = "Move down";
+pub const DELETE_STEP: &str = "Delete step";
+
+pub fn step(number: usize) -> String {
+    format!("{number}.")
+}
+
+pub fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Hold => "Hold",
+        Mode::Toggle => "Toggle",
+        Mode::Turbo(_) => "Turbo",
+    }
+}
+
+pub fn mouse_button_short(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Forward => FORWARD_SHORT,
+        other => mouse_button_name(other),
+    }
+}
+
+pub fn target_words(target: Target, label: &dyn Fn(Key) -> Option<String>) -> String {
+    match target {
+        Target::Keys(chord) => binding_words(Binding::Keys(chord), label),
+        Target::Mouse(button) => binding_words(Binding::Mouse(button), label),
+    }
+}
+
+pub fn input_words(
+    profile: &Profile,
+    input: Input,
+    label: &dyn Fn(Key) -> Option<String>,
+) -> String {
+    let words = binding_words(profile.binding(input), label);
+    if let Some(found) = profile.macro_of(input) {
+        return match found.steps().len() {
+            1 => format!("{words}, 1 step"),
+            steps => format!("{words}, {steps} steps"),
+        };
+    }
+    match profile.mode(input) {
+        Mode::Hold => words,
+        mode => format!("{words}, {}", mode_name(mode).to_lowercase()),
+    }
+}
 pub const ROW_KEYS: &str = "Keys";
 pub const CAPTURE_KEY: &str = "Capture a key";
 pub const CAPTURING_KEY: &str = "Press a key, Esc cancels";
@@ -822,12 +1005,14 @@ pub fn binding_words(binding: Binding, label: &dyn Fn(Key) -> Option<String>) ->
             format!("{KIND_MOUSE} {button}")
         }
         Binding::Wheel(step) => format!("{ROW_WHEEL} {}", wheel_name(step).to_lowercase()),
+        Binding::Macro => KIND_MACRO.to_owned(),
     }
 }
 
 pub mod log {
     use std::path::Path;
 
+    use heka_core::drift::DriftError;
     use heka_core::hiding::{HidingChange, HidingError};
     use heka_core::lifecycle::{Change, Removal};
     use heka_core::link::{ControllerModel, LinkKind, LinkProblem};
@@ -857,6 +1042,18 @@ pub mod log {
 
     pub fn repeated(message: &str, left_out: u32) -> String {
         format!("{message} (left out {left_out} repeats)")
+    }
+
+    pub fn drift(mac: MacAddress, measurement: Result<[i32; 3], DriftError>) -> String {
+        match measurement {
+            Ok(_) => format!("measured the gyro drift of {mac}"),
+            Err(DriftError::Moved) => {
+                format!("cannot measure the gyro drift of {mac}: it moved")
+            }
+            Err(DriftError::NoInput) => {
+                format!("cannot measure the gyro drift of {mac}: it sent no input")
+            }
+        }
     }
 
     pub fn cannot_send_input(error: &str) -> String {

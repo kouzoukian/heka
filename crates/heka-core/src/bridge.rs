@@ -4,18 +4,19 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::desktop::{Desk, Hands};
+use crate::desktop::Desk;
 use crate::feedback::{
     Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
     Rumble,
 };
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
+use crate::live_gyro::{FollowedGyro, LiveGyro};
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
 use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
-use crate::profile::Mapped;
 use crate::rate::RateMeter;
+use crate::running::RunningMapper;
 use crate::shortcuts::ShortcutDetector;
 use crate::state::ControllerState;
 use crate::threads::{SystemThreads, Threads, Worker};
@@ -70,6 +71,10 @@ impl LiveInput {
         self.seen().times_used
     }
 
+    fn show(&self, shown: ControllerState) {
+        self.seen().latest = Some(shown);
+    }
+
     fn set(&self, physical: Option<&ControllerState>, shown: Option<ControllerState>) {
         let mut seen = self.seen();
         match physical {
@@ -115,6 +120,7 @@ pub struct Plugged {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -133,6 +139,7 @@ impl Plugged {
             mapper: Arc::default(),
             shortcuts: Arc::default(),
             desk: Arc::default(),
+            gyro: Arc::default(),
             failures: Arc::default(),
         }
     }
@@ -147,6 +154,10 @@ impl Plugged {
 
     pub fn map_with(&mut self, mapper: Arc<LiveMapper>) {
         self.mapper = mapper;
+    }
+
+    pub fn measure_with(&mut self, gyro: Arc<LiveGyro>) {
+        self.gyro = gyro;
     }
 
     pub fn use_desk(&mut self, desk: Arc<Desk>) {
@@ -283,6 +294,7 @@ pub struct Bridge {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -319,6 +331,7 @@ impl Bridge {
             mapper,
             shortcuts,
             desk,
+            gyro,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -333,6 +346,7 @@ impl Bridge {
             mapper: Arc::clone(&mapper),
             shortcuts: Arc::clone(&shortcuts),
             desk: Arc::clone(&desk),
+            gyro: Arc::clone(&gyro),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
@@ -363,6 +377,7 @@ impl Bridge {
             mapper,
             shortcuts,
             desk,
+            gyro,
         };
         let started = Worker::spawn(
             threads,
@@ -445,6 +460,7 @@ impl Bridge {
             mapper: Arc::clone(&self.mapper),
             shortcuts: Arc::clone(&self.shortcuts),
             desk: Arc::clone(&self.desk),
+            gyro: Arc::clone(&self.gyro),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -491,6 +507,7 @@ struct Shared {
     mapper: Arc<LiveMapper>,
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
+    gyro: Arc<LiveGyro>,
 }
 
 fn run(
@@ -505,8 +522,11 @@ fn run(
         mapper,
         shortcuts,
         desk,
+        gyro,
     } = shared;
-    let mut hands = Hands::new(desk);
+    let mut running = RunningMapper::new(desk);
+    let mut gyro = FollowedGyro::new(gyro);
+    running.set_drift(gyro.drift());
     let format = link.format();
     let mut mapper = mapper.follow();
     let mut configured = shortcuts.follow();
@@ -519,37 +539,52 @@ fn run(
         }
         let read = link.read(&mut buf);
         if mapper.refresh() {
-            let upcoming = latest.map(|state| mapper.current().mapped(&state).desktop);
-            hands.start_over(upcoming.unwrap_or_default());
+            running.start_over(mapper.current(), latest.as_ref());
+        }
+        if let Some(drift) = gyro.changed_drift() {
+            running.set_drift(drift);
         }
         match read {
             LinkRead::Report(len) => {
                 let Ok(state) = format.parse(&buf[..len.min(buf.len())]) else {
                     continue;
                 };
-                let observed = detector.observe(configured.get(), state.buttons, Instant::now());
+                let now = Instant::now();
+                gyro.read(Some(&state.motion), now);
+                let observed = detector.observe(configured.get(), state.buttons, now);
                 if let Some(action) = observed.action {
                     shortcuts.push(action);
                 }
                 let mut passed_on = state;
                 passed_on.buttons.set(observed.hide, false);
                 latest = Some(passed_on);
-                let Mapped { shown, desktop } = mapper.current().mapped(&passed_on);
+                let shown = running.report(mapper.current(), &passed_on, now);
                 live.set(Some(&state), Some(shown));
                 if let Err(error) = controller.update(&shown) {
                     let _ = unplug(controller, &failures);
                     break InputEnd::Failed(link, error);
                 }
-                hands.hold(desktop);
+                running.act();
             }
-            LinkRead::Timeout => {}
+            LinkRead::Timeout => {
+                let now = Instant::now();
+                gyro.read(None, now);
+                if let Some(shown) = running.tick(mapper.current(), now) {
+                    live.show(shown);
+                    if let Err(error) = controller.update(&shown) {
+                        let _ = unplug(controller, &failures);
+                        break InputEnd::Failed(link, error);
+                    }
+                }
+                running.act();
+            }
             LinkRead::Lost => {
                 let _ = release(controller.as_mut(), &failures);
                 break InputEnd::LinkLost(controller);
             }
         }
     };
-    hands.let_go();
+    running.let_go();
     live.set(None, None);
     end
 }

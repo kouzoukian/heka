@@ -14,16 +14,18 @@ use gpui_component::status_bar::StatusBar;
 use gpui_component::{ActiveTheme, Root, TitleBar};
 use gpui_kit_assets::IconName;
 use heka_core::capture::{Captured, KeyCapture, KeyListener};
+use heka_core::desktop::Chord;
 use heka_core::feedback::Lightbar;
 use heka_core::mac::MacAddress;
 use heka_core::preferences::{LightbarChoice, PreferenceChange};
-use heka_core::profile::{Binding, Input, MAX_NAME_CHARS};
+use heka_core::profile::{Input, MAX_NAME_CHARS, Profile};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
 use heka_core::shortcuts::ShortcutAction;
 use heka_core::tuning::{StickSide, TriggerSide};
 
 use crate::ui::app_settings::AppView;
+use crate::ui::capture::CaptureFor;
 use crate::ui::detail::{Showing, ToggleSettings, Toggles, selected_button, tool_button};
 use crate::ui::games::{GamesAct, GamesAction, GamesView};
 use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
@@ -114,7 +116,8 @@ pub fn open_window(
 
 struct Capturing {
     profile: String,
-    input: Input,
+    as_it_was: Option<Profile>,
+    target: CaptureFor,
     listener: Box<dyn KeyListener>,
     keys: KeyCapture,
 }
@@ -138,6 +141,9 @@ struct MainView {
     editing: Option<Input>,
     kind: Option<Kind>,
     capture: Option<Capturing>,
+    stick_use_open: bool,
+    gyro_button_open: bool,
+    step_open: Option<usize>,
     rename: Entity<InputState>,
     manage: Manage,
     section: Section,
@@ -237,6 +243,9 @@ impl MainView {
             editing: None,
             kind: None,
             capture: None,
+            stick_use_open: false,
+            gyro_button_open: false,
+            step_open: None,
             rename,
             manage: Manage::Idle,
             section: Section::default(),
@@ -260,10 +269,14 @@ impl MainView {
 
     fn hear_keys(&mut self, cx: &mut Context<Self>) {
         let chosen = self.chosen_profile();
+        let now = self
+            .capture
+            .as_ref()
+            .and_then(|capture| self.profile(&capture.profile));
         let Some(capture) = &mut self.capture else {
             return;
         };
-        if chosen.as_ref() != Some(&capture.profile) {
+        if chosen.as_ref() != Some(&capture.profile) || now != capture.as_it_was {
             self.capture = None;
             cx.notify();
             return;
@@ -271,25 +284,45 @@ impl MainView {
         let Some(captured) = capture.hear() else {
             return;
         };
-        if let Captured::Chord(chord) = captured {
-            let command =
-                Command::BindInput(capture.profile.clone(), capture.input, Binding::Keys(chord));
-            self.backend.command(command);
-            self.close_binding();
-        }
+        let target = capture.target;
         self.capture = None;
+        if let Captured::Chord(chord) = captured {
+            self.bind_keys(target, chord);
+        }
         cx.notify();
     }
 
-    fn toggle_capture(&mut self, input: Input) {
-        if self.capture.take().is_some() {
+    fn profile(&self, id: &str) -> Option<Profile> {
+        self.screen
+            .profiles
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.profile.clone())
+    }
+
+    fn bind_keys(&mut self, target: CaptureFor, chord: Chord) {
+        if let Some(profile) = self.chosen_profile() {
+            self.backend.command(target.command(profile, chord));
+        }
+        if let CaptureFor::MacroStep(..) = target {
+            self.step_open = None;
+        }
+    }
+
+    fn toggle_capture(&mut self, target: CaptureFor) {
+        if self
+            .capture
+            .take()
+            .is_some_and(|capture| capture.target == target)
+        {
             return;
         }
         self.capture = self.chosen_profile().and_then(|profile| {
             let listener = self.backend.listen_for_keys()?;
             Some(Capturing {
+                as_it_was: self.profile(&profile),
                 profile,
-                input,
+                target,
                 keys: KeyCapture::new(listener.has_alt_gr()),
                 listener,
             })
@@ -300,6 +333,9 @@ impl MainView {
         self.editing = None;
         self.kind = None;
         self.capture = None;
+        self.stick_use_open = false;
+        self.gyro_button_open = false;
+        self.step_open = None;
     }
 
     fn choose(&mut self, mac: MacAddress, cx: &mut Context<Self>) {
@@ -342,17 +378,30 @@ impl MainView {
         cx: &mut Context<Self>,
     ) {
         let chosen = self.chosen_profile();
-        if !matches!(action, ProfileAction::Capture(_)) {
-            self.capture = None;
+        let running = self.capture.take();
+        if matches!(action, ProfileAction::Capture(_)) {
+            self.capture = running;
         }
         match action {
             ProfileAction::Show(section) => {
                 self.section = section;
                 self.close_binding();
             }
-            ProfileAction::Kind(kind) => self.kind = Some(kind),
-            ProfileAction::Capture(input) => self.toggle_capture(input),
-            ProfileAction::Side(side) => self.side = side,
+            ProfileAction::Kind(kind) => {
+                self.kind = Some(kind);
+                self.step_open = None;
+            }
+            ProfileAction::ToggleStep(index) => {
+                self.step_open = (self.step_open != Some(index)).then_some(index);
+            }
+            ProfileAction::Capture(target) => self.toggle_capture(target),
+            ProfileAction::Side(side) => {
+                self.side = side;
+                self.stick_use_open = false;
+            }
+            ProfileAction::Bind(target, chord) => self.bind_keys(target, chord),
+            ProfileAction::ToggleStickUse => self.stick_use_open = !self.stick_use_open,
+            ProfileAction::ToggleGyroButton => self.gyro_button_open = !self.gyro_button_open,
             ProfileAction::TriggerSide(side) => self.trigger_side = side,
             ProfileAction::Duplicate => {
                 self.manage = Manage::Idle;
@@ -602,7 +651,10 @@ impl MainView {
             Page::Profile => Showing::Profile(ProfileView {
                 editing: self.editing,
                 kind: self.kind,
-                capturing: self.capture.is_some(),
+                capturing: self.capture.as_ref().map(|capture| capture.target),
+                stick_use_open: self.stick_use_open,
+                gyro_button_open: self.gyro_button_open,
+                step_open: self.step_open,
                 key_label,
                 section: self.section,
                 side: self.side,

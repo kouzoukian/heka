@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Div, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, Div, Entity, InteractiveElement, IntoElement, ParentElement, Pixels,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input as TextInput, InputState};
@@ -17,15 +18,21 @@ use heka_core::virtual_controller::OutputType;
 
 use crate::text;
 use crate::ui::banners::{clamped, strip, text_button};
+use crate::ui::capture::{CaptureFor, capture_control};
 use crate::ui::detail::row;
-use crate::ui::metrics::{CONTROL, GAP, INSET, SMALL_TEXT, icon};
+use crate::ui::gyro::gyro_section;
+use crate::ui::macros::{macro_rows, mode_rows};
+use crate::ui::metrics::{GAP, INSET, SMALL_TEXT, icon};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, Screen, SendCommand};
 use crate::ui::panel::faint;
 use crate::ui::rules::rule_strip;
-use crate::ui::segmented::{Pick, Segment, picked, segmented};
+use crate::ui::segmented::{Pick, Segment, picked, picked_padded, segmented};
 use crate::ui::settings::{explained, group};
 use crate::ui::sticks::sticks_section;
+use crate::ui::touchpad::touchpad_section;
 use crate::ui::triggers::triggers_section;
+
+const SECTION_PADDING: Pixels = px(5.);
 
 pub type ToggleBinding = Rc<dyn Fn(Input, &mut Window, &mut App)>;
 
@@ -37,6 +44,7 @@ pub enum Kind {
     Button,
     Key,
     Mouse,
+    Macro,
     Nothing,
 }
 
@@ -48,6 +56,7 @@ impl Kind {
             Binding::To(_) => Self::Button,
             Binding::Keys(_) => Self::Key,
             Binding::Mouse(_) | Binding::Wheel(_) => Self::Mouse,
+            Binding::Macro => Self::Macro,
         }
     }
 }
@@ -67,6 +76,8 @@ pub enum Section {
     Buttons,
     Sticks,
     Triggers,
+    Touchpad,
+    Gyro,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +86,11 @@ pub enum ProfileAction {
     Side(StickSide),
     TriggerSide(TriggerSide),
     Kind(Kind),
-    Capture(Input),
+    Capture(CaptureFor),
+    Bind(CaptureFor, Chord),
+    ToggleStickUse,
+    ToggleGyroButton,
+    ToggleStep(usize),
     Duplicate,
     StartRename,
     CommitRename,
@@ -91,7 +106,10 @@ pub type ProfileAct = Rc<dyn Fn(ProfileAction, &mut Window, &mut App)>;
 pub struct ProfileView<'a> {
     pub editing: Option<Input>,
     pub kind: Option<Kind>,
-    pub capturing: bool,
+    pub capturing: Option<CaptureFor>,
+    pub stick_use_open: bool,
+    pub gyro_button_open: bool,
+    pub step_open: Option<usize>,
     pub key_label: KeyLabel,
     pub section: Section,
     pub side: StickSide,
@@ -118,9 +136,7 @@ pub fn profile_page(
         Section::Profiles => scrolled(profiles_section(screen, entry, chosen, view, send, theme)),
         Section::Buttons => scrolled(buttons_section(chosen, view, send, theme)),
         Section::Sticks => match chosen {
-            Some(profile) => {
-                sticks_section(profile, entry, view.side, &view.act, send, theme).into_any_element()
-            }
+            Some(profile) => sticks_section(profile, entry, view, send, theme).into_any_element(),
             None => scrolled(default_note(text::STICKS_DEFAULT, theme)),
         },
         Section::Triggers => match chosen {
@@ -130,6 +146,11 @@ pub fn profile_page(
             }
             None => scrolled(default_note(text::TRIGGERS_DEFAULT, theme)),
         },
+        Section::Touchpad => match chosen {
+            Some(profile) => touchpad_section(profile, entry, send, theme).into_any_element(),
+            None => scrolled(default_note(text::TOUCHPAD_DEFAULT, theme)),
+        },
+        Section::Gyro => scrolled(gyro_section(chosen, entry, view, send, theme)),
     };
     div()
         .flex()
@@ -167,6 +188,8 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
         (Section::Buttons, text::SECTION_BUTTONS),
         (Section::Sticks, text::SECTION_STICKS),
         (Section::Triggers, text::SECTION_TRIGGERS),
+        (Section::Touchpad, text::SECTION_TOUCHPAD),
+        (Section::Gyro, text::SECTION_GYRO),
     ]
     .map(|(section, words)| {
         let act = Rc::clone(&view.act);
@@ -178,7 +201,9 @@ fn section_switch(view: &ProfileView<'_>, theme: &Theme) -> Div {
             pick,
         )
     });
-    row(theme).justify_start().child(picked(items, theme))
+    row(theme)
+        .justify_start()
+        .child(picked_padded(items, SECTION_PADDING, theme))
 }
 
 fn profiles_section(
@@ -423,7 +448,11 @@ fn binding_block<'a>(
     let open = view.editing == Some(input);
     let toggle = Rc::clone(&view.toggle);
     let changed = binding != Binding::Default;
-    let words = SharedString::from(text::binding_words(binding, view.key_label.as_ref()));
+    let words = SharedString::from(text::input_words(
+        &profile.profile,
+        input,
+        view.key_label.as_ref(),
+    ));
     let current = Button::new(SharedString::from(format!(
         "binding-{}-{input:?}",
         profile.id
@@ -459,17 +488,17 @@ fn binding_block<'a>(
 }
 
 #[derive(Clone, Copy)]
-struct OpenBinding<'a> {
-    profile: &'a ProfileEntry,
-    input: Input,
+pub(super) struct OpenBinding<'a> {
+    pub(super) profile: &'a ProfileEntry,
+    pub(super) input: Input,
     binding: Binding,
-    view: &'a ProfileView<'a>,
-    send: &'a SendCommand,
-    theme: &'a Theme,
+    pub(super) view: &'a ProfileView<'a>,
+    pub(super) send: &'a SendCommand,
+    pub(super) theme: &'a Theme,
 }
 
 impl OpenBinding<'_> {
-    fn id(&self, control: impl std::fmt::Display) -> SharedString {
+    pub(super) fn id(&self, control: impl std::fmt::Display) -> SharedString {
         format!("{control}-{}-{:?}", self.profile.id, self.input).into()
     }
 
@@ -477,10 +506,13 @@ impl OpenBinding<'_> {
         let input = self.input;
         let command = Command::BindInput(self.profile.id.clone(), input, choice);
         let send = Rc::clone(self.send);
+        let done = !choice.takes_mode();
         let toggle = Rc::clone(&self.view.toggle);
         Rc::new(move |window, cx| {
             send(command.clone());
-            toggle(input, window, cx);
+            if done {
+                toggle(input, window, cx);
+            }
         })
     }
 
@@ -505,13 +537,24 @@ fn options(open: OpenBinding<'_>) -> Div {
         .flex_col()
         .flex_none()
         .child(kind_row(open, kind));
+    let modes = || {
+        let bound = open.binding.takes_mode() && Kind::of(open.binding) == kind;
+        bound.then(|| mode_rows(open)).into_iter().flatten()
+    };
     match kind {
         Kind::Default | Kind::Nothing => block,
-        Kind::Button => block.child(buttons_to_drive(open)),
-        Kind::Key => block.child(keys_row(open)).child(desktop_note(open.theme)),
+        Kind::Button => block.child(buttons_to_drive(open)).children(modes()),
+        Kind::Key => block
+            .child(keys_row(open))
+            .children(modes())
+            .child(desktop_note(open.theme)),
         Kind::Mouse => block
             .child(mouse_row(open))
             .child(wheel_row(open))
+            .children(modes())
+            .child(desktop_note(open.theme)),
+        Kind::Macro => block
+            .children(macro_rows(open))
             .child(desktop_note(open.theme)),
     }
 }
@@ -526,6 +569,7 @@ fn kind_row(open: OpenBinding<'_>, shown: Kind) -> Div {
         (Kind::Button, text::KIND_BUTTON, show(Kind::Button)),
         (Kind::Key, text::KIND_KEY, show(Kind::Key)),
         (Kind::Mouse, text::KIND_MOUSE, show(Kind::Mouse)),
+        (Kind::Macro, text::KIND_MACRO, show(Kind::Macro)),
         (
             Kind::Nothing,
             text::BINDING_NOTHING,
@@ -568,61 +612,24 @@ fn buttons_to_drive(open: OpenBinding<'_>) -> Div {
 }
 
 fn keys_row(open: OpenBinding<'_>) -> Div {
-    let capturing = open.view.capturing;
-    let words: SharedString = match open.binding {
-        _ if capturing => text::CAPTURING_KEY.into(),
-        Binding::Keys(chord) => text::chord_words(chord, open.view.key_label.as_ref()).into(),
-        _ => text::CAPTURE_KEY.into(),
+    let current = match open.binding {
+        Binding::Keys(chord) => Some(chord),
+        _ => None,
     };
-    let act = Rc::clone(&open.view.act);
-    let input = open.input;
-    let capture = control_button(open.id("capture"), words.clone())
-        .selected(capturing)
-        .tooltip(text::CAPTURE_TIP)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(GAP)
-                .text_size(SMALL_TEXT)
-                .child(icon(IconName::Keyboard))
-                .child(words),
-        )
-        .on_click(move |_, window, cx| act(ProfileAction::Capture(input), window, cx));
-    let escape = capturing.then(|| {
-        let pick = open.choose(Binding::Keys(Chord::of(Key::ESCAPE)));
-        control_button(open.id("bind-escape"), text::BIND_ESCAPE.into())
-            .child(div().text_size(SMALL_TEXT).child(text::BIND_ESCAPE))
-            .on_click(move |_, window, cx| pick(window, cx))
-    });
     row(open.theme)
         .child(explained(text::ROW_KEYS, text::KEYS_TIP, open.theme))
-        .child(
-            div()
-                .flex()
-                .gap(GAP)
-                .text_color(open.theme.foreground)
-                .children(escape)
-                .child(capture),
-        )
-}
-
-fn control_button(id: SharedString, label: SharedString) -> Button {
-    Button::new(id)
-        .outline()
-        .h(CONTROL)
-        .px(GAP)
-        .accessibility_label(label)
+        .child(capture_control(
+            open.id("binding").to_string(),
+            current,
+            CaptureFor::Binding(open.input),
+            open.view,
+            open.theme,
+        ))
 }
 
 fn mouse_row(open: OpenBinding<'_>) -> Div {
-    let segments = MouseButton::ALL.map(|button| {
-        let words = match button {
-            MouseButton::Forward => text::FORWARD_SHORT,
-            other => text::mouse_button_name(other),
-        };
-        open.segment(words, Binding::Mouse(button))
-    });
+    let segments = MouseButton::ALL
+        .map(|button| open.segment(text::mouse_button_short(button), Binding::Mouse(button)));
     row(open.theme)
         .child(explained(
             text::ROW_MOUSE_BUTTON,

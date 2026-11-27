@@ -161,14 +161,71 @@ use it. Changes apply at once.
   nothing.
 - **Sticks:** for each stick, dead zone, anti-dead zone, max zone, sensitivity, output
   curve and inverted axes; the two sticks can be swapped. A live readout shows your input
-  beside the tuned one, with the Controller's reports per second.
+  beside the tuned one, with the Controller's reports per second. A stick can instead
+  [move the mouse, scroll or press keys](#sticks-as-mouse-and-keys).
 - **Triggers:** for each trigger, dead zone, max zone, output curve, a **hair trigger**
   point past which any press is full, and the point at which a trigger bound to a button
   counts as pressed.
+- **Touchpad:** to the Virtual Controller, or [moving the mouse](#touchpad-as-mouse).
+- **Gyro:** off, or [moving the mouse or the right stick](#gyro-as-mouse-or-stick).
 - **Output Type:** the Controller's own, Xbox or PS4.
 
 Profiles can be renamed, duplicated, deleted, exported to a file and imported from one.
 DS4Windows profiles cannot be imported.
+
+#### Sticks as mouse and keys
+
+Under **Sticks**, **Left stick as** and **Right stick as** choose what a stick drives.
+A stick used for anything but the Virtual Controller rests centred on it.
+
+- **Mouse** moves the pointer and **Scroll** turns the wheel, both ways. Choose the
+  speed, the dead zone and the curve. At 100% a stick pushed fully moves the pointer
+  1000 pixels a second, which Windows' pointer speed and acceleration then change as they
+  do for a mouse.
+- **WASD**, **Arrows** and **Four keys** hold the key of the direction the stick points,
+  and two keys on a diagonal. With **Four keys**, capture each key as for a button.
+
+A resting stick is never quite centred, so a pointing stick ignores at least 6% of its
+travel and a key stick at least 25%.
+
+#### Touchpad as mouse
+
+Under **Touchpad**, set **Touchpad goes to** to **Mouse**. The Virtual Controller then
+no longer sees fingers on it.
+
+- One finger moves the pointer. Choose the **sensitivity** and **Invert vertical**.
+- **Tap to left click**, on to begin with, and **Two-finger right click**, off, click
+  when you touch briefly without moving.
+- Dragging two fingers scrolls, both ways.
+- The click of the touchpad keeps its Binding under **Buttons**. Bind it to **Mouse
+  left** to drag by pressing it down.
+
+#### Gyro as mouse or stick
+
+Under **Gyro**, set **Gyro moves** to **Mouse** or **Right stick**, to aim by turning
+the Controller.
+
+- **Active:** always, while a **Button** is held, or toggled by it. The button keeps
+  its Binding; give it **Nothing** if the game should not see it.
+- **Horizontal from:** turning the Controller (**Yaw**) or tilting it sideways
+  (**Roll**).
+- **Sensitivity** for each axis, a **dead zone** in degrees a second, and inversion.
+- As **Right stick** it adds to the stick you push, up to full.
+- **Drift:** if the pointer creeps while the Controller rests, put it down on a flat
+  surface and press **Measure**. heka keeps the result for that Controller.
+
+#### Toggle, turbo and macros
+
+A bound button, key, mouse button or wheel step can **Hold** while you hold its input,
+**Toggle** (one press holds it, the next releases it) or **Turbo** (press it again and
+again, 2 to 30 times a second, while held). Choose under **Press**, below the Binding.
+
+**Macro** plays steps you edit by hand: press or release a key, a combination or a mouse
+button, or wait. It runs **Once per press** or **While held**. Letting the button go
+stops it and releases everything it holds, so keep holding until a longer macro ends.
+
+Changing the Profile, a Binding, **Stop**, a disconnection and quitting cancel macros,
+toggles and turbo and release everything.
 
 #### Keyboard and mouse
 
