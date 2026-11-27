@@ -11,7 +11,8 @@ const API_HOST: &str = "api.github.com";
 const ACCEPT: &str = "application/vnd.github+json";
 const OK: u16 = 200;
 
-pub const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
@@ -63,7 +64,7 @@ pub enum CheckError {
 
 pub struct ReleaseCheck {
     running: &'static str,
-    checked: Option<Instant>,
+    next: Option<Instant>,
     newer: Option<Version>,
 }
 
@@ -71,7 +72,7 @@ impl ReleaseCheck {
     pub fn new(running: &'static str) -> Self {
         Self {
             running,
-            checked: None,
+            next: None,
             newer: None,
         }
     }
@@ -82,17 +83,19 @@ impl ReleaseCheck {
         enabled: bool,
         now: Instant,
     ) -> Option<Result<Option<Version>, CheckError>> {
-        let recently = self
-            .checked
-            .is_some_and(|at| now.saturating_duration_since(at) < CHECK_EVERY);
-        if !enabled || recently {
+        let waiting = self.next.is_some_and(|next| now < next);
+        if !enabled || waiting {
             return None;
         }
-        self.checked = Some(now);
         let found = self.ask(web);
-        if let Ok(newer) = found {
-            self.newer = newer;
-        }
+        let wait = match found {
+            Ok(newer) => {
+                self.newer = newer;
+                CHECK_EVERY
+            }
+            Err(_) => RETRY_AFTER,
+        };
+        self.next = Some(now + wait);
         Some(found)
     }
 

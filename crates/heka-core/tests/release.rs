@@ -224,7 +224,8 @@ fn after(start: Instant, seconds: u64) -> Instant {
     start + Duration::from_secs(seconds)
 }
 
-const DAY: u64 = 24 * 60 * 60;
+const HOUR: u64 = 60 * 60;
+const DAY: u64 = 24 * HOUR;
 
 #[test]
 fn heka_checks_at_start_and_once_a_day() {
@@ -242,14 +243,49 @@ fn heka_checks_at_start_and_once_a_day() {
 }
 
 #[test]
-fn a_failed_check_is_made_again_a_day_later() {
+fn a_failed_check_is_made_again_every_hour_until_one_succeeds() {
+    let offline = Fake {
+        answer: Err("no network".into()),
+        asked: RefCell::default(),
+    };
+    let refusing = Fake::answering(500, "");
+    let online = Fake::latest("v0.2.0");
+    let mut check = check("0.1.1");
+    let start = Instant::now();
+
+    assert!(check.poll(&offline, true, start).is_some());
+    assert_eq!(check.poll(&offline, true, after(start, HOUR - 1)), None);
+    assert!(check.poll(&refusing, true, after(start, HOUR)).is_some());
+    assert_eq!(
+        check.poll(&refusing, true, after(start, 2 * HOUR - 1)),
+        None
+    );
+    assert!(check.poll(&online, true, after(start, 2 * HOUR)).is_some());
+    assert_eq!(check.newer(), Some(version("0.2.0")));
+
+    assert_eq!(check.poll(&online, true, after(start, 3 * HOUR)), None);
+    assert_eq!(
+        check.poll(&online, true, after(start, 2 * HOUR + DAY - 1)),
+        None
+    );
+    assert!(
+        check
+            .poll(&online, true, after(start, 2 * HOUR + DAY))
+            .is_some()
+    );
+}
+
+#[test]
+fn switched_off_and_on_a_failed_check_still_waits_its_hour() {
     let web = Fake::answering(500, "");
     let mut check = check("0.1.1");
     let start = Instant::now();
 
     assert!(check.poll(&web, true, start).is_some());
-    assert_eq!(check.poll(&web, true, after(start, DAY - 1)), None);
-    assert!(check.poll(&web, true, after(start, DAY)).is_some());
+    assert_eq!(check.poll(&web, false, after(start, 10)), None);
+    assert_eq!(check.poll(&web, true, after(start, 20)), None);
+    assert_eq!(check.poll(&web, false, after(start, HOUR)), None);
+    assert!(check.poll(&web, true, after(start, HOUR + 1)).is_some());
 }
 
 #[test]

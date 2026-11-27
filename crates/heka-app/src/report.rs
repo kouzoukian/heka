@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use heka_core::hider::HidingWarning;
 use heka_core::mac::MacAddress;
 use heka_core::radio::TurnOffError;
+use heka_core::release::{CheckError, Version};
 use heka_core::supervisor::{BridgeError, ControllerView};
 
 use crate::text;
@@ -13,6 +14,7 @@ pub struct Reporter {
     turn_off_errors: BTreeMap<MacAddress, TurnOffError>,
     hiding: Vec<HidingWarning>,
     hid_error: Option<String>,
+    release: Option<String>,
 }
 
 impl Reporter {
@@ -56,6 +58,15 @@ impl Reporter {
             Some(error) => text::hid_error(error),
             None => text::log::LOOKING_AGAIN.into(),
         })
+    }
+
+    pub fn release_check(&mut self, found: &Result<Option<Version>, CheckError>) -> Option<String> {
+        let words = text::log::release_check(found);
+        if self.release == words {
+            return None;
+        }
+        self.release.clone_from(&words);
+        words
     }
 }
 

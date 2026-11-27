@@ -18,7 +18,7 @@ Release builds open no console, so a log is the only record a player can attach 
 
 ## What is logged
 
-Start and version, the drivers found at each check, Links found and gone, every Bridge change, each change made to HidHide, a newer release at each check that finds one, and errors. Errors that last, such as a failed Bridge or a hiding warning, are logged when they appear or change rather than at every retry. HidHide changes are recorded by `Hiding` as it makes them, so a retry that changes nothing records nothing.
+Start and version, the drivers found at each check, Links found and gone, every Bridge change, each change made to HidHide, a newer release, and errors. What lasts, such as a failed Bridge, a hiding warning or a newer release, is logged when they appear or change rather than at every retry. HidHide changes are recorded by `Hiding` as it makes them, so a retry that changes nothing records nothing.
 
 ## Wording
 

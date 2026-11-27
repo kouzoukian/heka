@@ -21,9 +21,9 @@ The one thing heka sends off the PC is a request for its latest release, so that
 
 ## When
 
-- At start, then 24 hours after the last attempt, whether or not it succeeded. Turning the switch on checks at once if none was made in those 24 hours.
+- At start, then 24 hours after a check that succeeded and 1 hour after one that failed, so that a PC whose network is late at logon still learns of a release the same day. Turning the switch on checks at once if one is due.
 - A thread of its own checks, so a slow answer holds up neither input nor the window. It wakes each minute to compare times, so that time spent asleep counts. It is not joined at quit.
-- A failure goes to the log and nowhere else. A release already found stays shown through a failed check; with the switch off, none is shown.
+- A failure goes to the log and nowhere else, when it appears or changes rather than at every retry. A release already found stays shown through a failed check; with the switch off, none is shown.
 
 ## Unsafe code
 

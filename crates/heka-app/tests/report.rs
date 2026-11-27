@@ -159,18 +159,37 @@ fn a_failure_to_turn_off_is_reported_when_it_appears_or_changes() {
 }
 
 #[test]
-fn a_newer_release_is_logged_with_its_page_and_no_newer_one_is_not() {
-    let newer = Version::parse("0.2.0").unwrap();
+fn a_newer_release_is_logged_with_its_page_once() {
+    let mut reporter = Reporter::default();
+    let newer = Ok(Some(Version::parse("0.2.0").unwrap()));
+    let words = "heka 0.2.0 is available: https://github.com/kouzoukian/heka/releases/tag/v0.2.0";
 
-    assert_eq!(text::log::release_check(&Ok(None)), None);
-    assert_eq!(
-        text::log::release_check(&Ok(Some(newer))).as_deref(),
-        Some("heka 0.2.0 is available: https://github.com/kouzoukian/heka/releases/tag/v0.2.0")
-    );
+    assert_eq!(reporter.release_check(&Ok(None)), None);
+    assert_eq!(reporter.release_check(&newer).as_deref(), Some(words));
+    assert_eq!(reporter.release_check(&newer), None);
+    assert_eq!(reporter.release_check(&Ok(None)), None);
+    assert_eq!(reporter.release_check(&newer).as_deref(), Some(words));
 }
 
 #[test]
-fn a_failed_release_check_is_logged_with_its_reason() {
+fn a_failed_release_check_is_logged_when_it_appears_or_changes() {
+    let mut reporter = Reporter::default();
+    let offline = Err(CheckError::NotFetched("WinHTTP error 12007".into()));
+    let words = "cannot check for a new release: WinHTTP error 12007";
+
+    assert_eq!(reporter.release_check(&offline).as_deref(), Some(words));
+    assert_eq!(reporter.release_check(&offline), None);
+    assert!(
+        reporter
+            .release_check(&Err(CheckError::Refused(403)))
+            .is_some()
+    );
+    assert_eq!(reporter.release_check(&Ok(None)), None);
+    assert_eq!(reporter.release_check(&offline).as_deref(), Some(words));
+}
+
+#[test]
+fn every_failed_release_check_says_why() {
     for (error, why) in [
         (
             CheckError::NotFetched("WinHTTP error 12007".into()),
@@ -187,7 +206,7 @@ fn a_failed_release_check_is_logged_with_its_reason() {
         ),
     ] {
         assert_eq!(
-            text::log::release_check(&Err(error)),
+            Reporter::default().release_check(&Err(error)),
             Some(format!("cannot check for a new release: {why}"))
         );
     }

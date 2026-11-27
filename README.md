@@ -239,9 +239,9 @@ heka sends no telemetry and does not update itself. It keeps its settings in
 At start and once a day, heka asks GitHub for its latest release. If that is newer than
 yours, the window says so and links to it; pre-releases are not announced. The request
 names only heka and its version, though GitHub sees your IP address, as with any visit.
-A check that fails is noted in [the log](#the-log) and nowhere else. To stop the checks,
-turn off **Check for new releases** in [App settings](#app-settings). heka makes no other
-request over the internet.
+A check that fails is noted in [the log](#the-log) and nowhere else, and tried again every
+hour until one succeeds. To stop the checks, turn off **Check for new releases** in
+[App settings](#app-settings). heka makes no other request over the internet.
 
 To update, quit heka and replace its files with those of the new release. If you move
 the folder, run heka once so that Start with Windows points to its new place.

@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use heka_app::{log, text};
+use heka_app::log;
+use heka_app::report::Reporter;
 use heka_core::release::{ReleaseCheck, Version};
 use heka_windows::web::WinHttp;
 
@@ -41,9 +42,10 @@ impl Releases {
 
 fn watch(mut enabled: bool, switched: &Receiver<bool>, newer: &Newer) {
     let mut check = ReleaseCheck::new(env!("CARGO_PKG_VERSION"));
+    let mut reporter = Reporter::default();
     loop {
         if let Some(found) = check.poll(&WinHttp, enabled, Instant::now()) {
-            if let Some(message) = text::log::release_check(&found) {
+            if let Some(message) = reporter.release_check(&found) {
                 log::line(&message);
             }
             *newer.lock().unwrap_or_else(PoisonError::into_inner) = check.newer();
