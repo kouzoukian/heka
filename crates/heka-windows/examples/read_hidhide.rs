@@ -1,5 +1,6 @@
 use heka_core::hiding::{HidHide, HidHideStatus};
-use heka_windows::hid::dualsense_usb_devices;
+use heka_core::link::LinkKind;
+use heka_windows::hid::dualsense_devices;
 use heka_windows::hidhide::{HidHideDriver, device_instance_path, journal_path, own_image_name};
 use hidapi::HidApi;
 
@@ -28,7 +29,7 @@ fn main() {
     println!("journal: {:?}", journal_path());
 
     let api = HidApi::new().expect("hidapi");
-    for info in dualsense_usb_devices(&api) {
+    for info in dualsense_devices(&api, LinkKind::Usb) {
         match device_instance_path(info.path()) {
             Ok(path) => println!("DualSense on USB would be hidden as: {path}"),
             Err(error) => println!("cannot resolve {:?}: {error:?}", info.path()),

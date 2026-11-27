@@ -27,10 +27,10 @@ pub fn controller_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
     })
 }
 
-pub fn dualsense_usb_devices(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
-    controller_devices(api).filter(|info| {
+pub fn dualsense_devices(api: &HidApi, kind: LinkKind) -> impl Iterator<Item = &DeviceInfo> {
+    controller_devices(api).filter(move |info| {
         dualsense::is_dualsense(info.vendor_id(), info.product_id())
-            && matches!(info.bus_type(), BusType::Usb)
+            && link_kind(info.bus_type()) == Some(kind)
     })
 }
 
@@ -224,12 +224,6 @@ fn read_dualshock4_mac(device: &HidDevice) -> Result<MacAddress, OpenError> {
     )
     .map_err(hid_error)?;
     dualshock4::parse_pairing_info(&report).map_err(address_error)
-}
-
-pub fn dualsense_usb_paths(api: &HidApi) -> Vec<CString> {
-    dualsense_usb_devices(api)
-        .map(|info| info.path().to_owned())
-        .collect()
 }
 
 pub fn controller_paths(api: &HidApi) -> Vec<CString> {
