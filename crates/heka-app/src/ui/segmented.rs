@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Div, IntoElement, ParentElement, SharedString, Styled, div,
+    AnyElement, Div, IntoElement, ParentElement, Pixels, SharedString, Styled, div,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
@@ -10,6 +10,13 @@ use gpui_component::{Selectable, Theme};
 use crate::text;
 use crate::ui::metrics::{CONTROL, GAP, SMALL_TEXT};
 use crate::ui::model::{Command, SendCommand};
+
+const BOX_PADDING: f32 = 2.;
+const BOX_BORDER: f32 = 1.;
+
+pub fn segment_height() -> Pixels {
+    CONTROL - px(2. * (BOX_PADDING + BOX_BORDER))
+}
 
 pub struct Segment {
     id: SharedString,
@@ -85,7 +92,7 @@ pub fn segmented(
         Button::new(segment.id)
             .ghost()
             .selected(segment.selected)
-            .h(CONTROL - px(6.))
+            .h(segment_height())
             .px(GAP)
             .rounded(px(3.))
             .map(|this| {
@@ -107,8 +114,8 @@ pub fn segmented(
     div()
         .flex()
         .gap(px(2.))
-        .p(px(2.))
-        .border_1()
+        .p(px(BOX_PADDING))
+        .border(px(BOX_BORDER))
         .border_color(theme.border)
         .rounded(theme.radius)
         .children(segments)

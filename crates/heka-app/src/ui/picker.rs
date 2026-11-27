@@ -13,6 +13,7 @@ use heka_core::feedback::Lightbar;
 
 use crate::text;
 use crate::ui::metrics::{CONTROL, GAP, INSET, SMALL_TEXT, icon};
+use crate::ui::segmented::segment_height;
 
 const WIDTH: f32 = 280.;
 const LABEL_WIDTH: f32 = 76.;
@@ -49,7 +50,7 @@ pub fn picker(state: &Entity<ColorPickerState>, custom: Option<Lightbar>, cx: &A
     let trigger = Button::new("custom-colour")
         .ghost()
         .selected(custom.is_some())
-        .h(CONTROL - px(6.))
+        .h(segment_height())
         .px(GAP)
         .rounded(px(3.))
         .map(|this| match custom {
