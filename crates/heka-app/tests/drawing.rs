@@ -21,6 +21,7 @@ fn the_drawing_stays_between_360_and_560_wide() {
 #[derive(Default)]
 struct Recorded {
     shapes: usize,
+    quads: Vec<Bounds<Pixels>>,
     unbuildable: Vec<String>,
 }
 
@@ -29,7 +30,9 @@ impl Surface for Recorded {
         self.shapes += 1;
     }
 
-    fn quad(&mut self, _: PaintQuad) {}
+    fn quad(&mut self, quad: PaintQuad) {
+        self.quads.push(quad.bounds);
+    }
 
     fn clipped(&mut self, _: Bounds<Pixels>, paint: &mut dyn FnMut(&mut dyn Surface)) {
         paint(self);
@@ -88,6 +91,42 @@ fn every_shape_of_either_pad_can_be_built() {
                 );
                 assert!(recorded.shapes > 20, "{output_type:?}");
             }
+        }
+    }
+}
+
+#[test]
+fn each_edge_button_shows_while_held_on_its_own_side_of_either_pad() {
+    let buttons = [
+        (Buttons::LEFT_FN, true),
+        (Buttons::RIGHT_FN, false),
+        (Buttons::LEFT_BACK, true),
+        (Buttons::RIGHT_BACK, false),
+    ];
+    for output_type in [OutputType::Xbox, OutputType::Ps4] {
+        let released = recorded(output_type, &PadModel::NEUTRAL, 1.).quads;
+        let mut marks = Vec::new();
+        for (button, on_the_left) in buttons {
+            let pad = PadModel {
+                buttons: button,
+                ..PadModel::NEUTRAL
+            };
+
+            let held = recorded(output_type, &pad, 1.).quads;
+
+            let added: Vec<_> = held
+                .into_iter()
+                .filter(|quad| !released.contains(quad))
+                .collect();
+            assert_eq!(added.len(), 1, "{output_type:?} {button:?}");
+            let mark = added[0];
+            assert_eq!(
+                mark.center().x < px(180.),
+                on_the_left,
+                "{output_type:?} {button:?}"
+            );
+            assert!(!marks.contains(&mark), "{output_type:?} {button:?}");
+            marks.push(mark);
         }
     }
 }

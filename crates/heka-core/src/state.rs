@@ -25,8 +25,12 @@ impl Buttons {
     pub const DPAD_DOWN: Self = Self(1 << 16);
     pub const DPAD_LEFT: Self = Self(1 << 17);
     pub const DPAD_RIGHT: Self = Self(1 << 18);
+    pub const LEFT_FN: Self = Self(1 << 19);
+    pub const RIGHT_FN: Self = Self(1 << 20);
+    pub const LEFT_BACK: Self = Self(1 << 21);
+    pub const RIGHT_BACK: Self = Self(1 << 22);
 
-    pub const NAMED: [(Self, &'static str); 19] = [
+    pub const NAMED: [(Self, &'static str); 23] = [
         (Self::CROSS, "Cross"),
         (Self::CIRCLE, "Circle"),
         (Self::SQUARE, "Square"),
@@ -46,6 +50,10 @@ impl Buttons {
         (Self::PS, "PS"),
         (Self::TOUCHPAD, "Touchpad"),
         (Self::MUTE, "Mute"),
+        (Self::LEFT_FN, "Left Fn"),
+        (Self::RIGHT_FN, "Right Fn"),
+        (Self::LEFT_BACK, "Left back"),
+        (Self::RIGHT_BACK, "Right back"),
     ];
 
     pub const fn contains(self, other: Self) -> bool {

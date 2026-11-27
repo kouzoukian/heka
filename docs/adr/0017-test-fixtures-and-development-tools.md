@@ -4,7 +4,7 @@
 
 - **Captured** fixtures are raw bytes read from a real Controller, one report per line in hex, under `crates/heka-core/tests/fixtures`. **Derived** reports are a captured report, or a layout from Linux `hid-playstation.c`, with bytes changed at documented offsets. Test helpers say which is which by name (`captured_*`, `derived`, `ds4_*`, `bluetooth_from_usb`).
 - No real Controller's MAC address is stored in the repository.
-- A DualSense is captured over USB with each button, each stick at each edge, each trigger fully pulled and two fingers, and over Bluetooth with Cross held. Other changed inputs are derived. No DualShock 4 was available, so all its reports are derived (#22).
+- A DualSense is captured over USB with each button, each stick at each edge, each trigger fully pulled and two fingers, and over Bluetooth with Cross held. Other changed inputs are derived. No DualShock 4 or DualSense Edge was available, so all their reports are derived (#22).
 
 ## Fixture provenance
 
@@ -28,7 +28,7 @@ Expected values are worked out independently of the code under test.
 
 - Output report bytes are written out by hand from the kernel's structs and `DS_OUTPUT_*` / `DS4_OUTPUT_*` bits.
 - CRCs come from Python's `zlib.crc32` (for example `zlib.crc32(bytes([0xA2])) == 0xEADA2D49`, and Bluetooth output as `zlib.crc32(bytes([0xA2]) + report[:74])`), the CRC-32/ISO-HDLC check value of `123456789`, and a bit-at-a-time CRC in the test helpers that does not share code with `heka_core::crc`.
-- DualSense USB input offsets: byte 8 is `buttons[0]` (hat; Square, Cross, Circle, Triangle in bits 4..7), byte 9 L1, R1, L2, R2, Create, Options, L3, R3 in bits 0..7, byte 10 PS, touchpad and mute in bits 0..2. `status[0]` is struct offset 52, byte 53. The Xbox mapping tests press one bit at a time from these.
+- DualSense USB input offsets: byte 8 is `buttons[0]` (hat; Square, Cross, Circle, Triangle in bits 4..7), byte 9 L1, R1, L2, R2, Create, Options, L3, R3 in bits 0..7, byte 10 PS, touchpad and mute in bits 0..2, and on an Edge left Fn, right Fn, left back and right back in bits 4..7. `status[0]` is struct offset 52, byte 53. The Xbox mapping tests press one bit at a time from these.
 - Calibration reports are written as the kernel reads them: biases, plus/minus values, speeds, then accelerometer pairs (DualSense y has a bias of 100). Expected motion is computed from the formula, for example DualSense pitch 1000 × 1024 × 1600 / 16000 = 102400, and accelerometer 2 × 8192 × (raw − bias) / (plus − minus); DualShock 4 gyro raw × 1000 × 1024 / (plus − minus), accelerometer (raw − middle) × 16384 / (plus − minus).
 - The virtual DualShock 4's calibration is ViGEmBus's (`sys/Ds4Pdo.cpp`, `HID_REPORT_ID_1`). Accelerometer x: plus 7807, minus −8402, range 16209, bias −297, so one g is raw 7808. One raw step is about 63 gyro units and 1 accelerometer unit, so a round trip costs under 1.5 steps.
 - ViGEmBus's virtual DualShock 4 takes a MAC address under `C0:13:37` (`GenerateRandomMacAddress`) and answers the pairing report with it byte-reversed from byte 1.

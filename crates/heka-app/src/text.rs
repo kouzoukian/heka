@@ -167,6 +167,7 @@ pub const R1: &str = "R1";
 pub const L2: &str = "L2";
 pub const R2: &str = "R2";
 pub const PS: &str = "PS";
+pub const FN: &str = "Fn";
 
 pub const LB: &str = "LB";
 pub const RB: &str = "RB";

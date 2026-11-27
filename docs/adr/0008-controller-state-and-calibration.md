@@ -2,7 +2,7 @@
 
 Every input report, whatever its model or Link, is parsed into one `ControllerState`, in DualSense terms.
 
-- Button names follow the DualSense; a DualShock 4's Share is `CREATE`. The d-pad is four buttons, so a diagonal is two. L2 and R2 are digital clicks beside the triggers' travel, which runs 0 (released) to 255.
+- Button names follow the DualSense; a DualShock 4's Share is `CREATE`. The d-pad is four buttons, so a diagonal is two. L2 and R2 are digital clicks beside the triggers' travel, which runs 0 (released) to 255. The DualSense Edge's two Fn and two back buttons are released on every other model, and neither Output Type has a button for them ([ADR 0009](0009-translation-to-output-types.md)).
 - Stick axes run 0 to 255, left to right and top to bottom.
 - Touch uses DualSense touchpad units, x 0..=1919 and y 0..=1079 (`DS_TOUCHPAD_*`). Both pads are 1920 wide; a DualShock 4's is 942 high (`DS4_TOUCHPAD_HEIGHT`) and its y is rescaled with rounding, so that going from the shorter pad to the taller one and back gives the same y. A finger's contact number, 0..=127, stays the same while it stays down.
 - Battery is 0..=100 in the Controller's steps of 10%, with a charge state that includes plugged in but not charging, and unknown, both of which come with a level of 0 that means nothing. A report may carry none.

@@ -15,6 +15,7 @@ const FACE: Xy = (282., 94.);
 const FACE_SPREAD: f32 = 20.;
 const LEFT_STICK: Xy = (132., 144.);
 const RIGHT_STICK: Xy = (228., 144.);
+pub const STICKS: [Xy; 2] = [LEFT_STICK, RIGHT_STICK];
 
 pub fn paint(painter: &mut Painter, pad: &PadModel) {
     let palette = painter.palette;

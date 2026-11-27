@@ -10,6 +10,10 @@ Sony publishes no layout. DualSense and DualSense Edge reports are read and buil
 - `status[0]`: capacity in the low nibble, each unit 10%, read as `min(capacity * 10 + 5, 100)`; charging state in the high nibble, where 0 is discharging, 1 charging, 2 full, `0xA` and `0xB` mean voltage or temperature out of range or a temperature error, and `0xF` a charging error.
 - Over Bluetooth the full report is `0x31`, 78 bytes with ID and CRC, and the struct starts at byte 2. It is read by copying it into a USB-shaped report, so whatever the USB parser reads a Bluetooth Link reads too. Until full reports are enabled the DualSense sends a minimal report `0x01` over Bluetooth.
 
+## DualSense Edge buttons
+
+The Edge's Fn and back buttons are bits 4..7 of `buttons[2]` (byte 10 over USB, byte 11 over Bluetooth): left Fn, right Fn, left back, right back. The kernel notes above do not cover them; the source is SDL `SDL_hidapi_ps5.c` (zlib, commit `3ebae2a7`, `SDL_GAMEPAD_BUTTON_PS5_*`). They are read only from product ID `0x0DF2`, which has report formats of its own, so a standard DualSense never reports them. They stay out of the button table shared with the DualShock 4, which uses bits 2..7 of that byte as its report counter ([ADR 0007](0007-dualshock4-reports.md)). Not tried on a real Edge (#22).
+
 ## Feature reports
 
 Reading them sends nothing to the Controller but the request.

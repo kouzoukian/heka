@@ -52,9 +52,13 @@ impl LinkHandle {
 
     fn send_input(&self, usb: Vec<u8>) {
         match self.1 {
-            ReportFormat::DualSenseBluetooth(_) => self.send(common::bluetooth_from_usb(&usb)),
+            ReportFormat::DualSenseBluetooth(_) | ReportFormat::DualSenseEdgeBluetooth(_) => {
+                self.send(common::bluetooth_from_usb(&usb))
+            }
             ReportFormat::DualShock4Bluetooth(_) => self.send(common::ds4_bluetooth_from_usb(&usb)),
-            ReportFormat::DualSenseUsb(_) | ReportFormat::DualShock4Usb(_) => self.send(usb),
+            ReportFormat::DualSenseUsb(_)
+            | ReportFormat::DualSenseEdgeUsb(_)
+            | ReportFormat::DualShock4Usb(_) => self.send(usb),
         }
     }
 

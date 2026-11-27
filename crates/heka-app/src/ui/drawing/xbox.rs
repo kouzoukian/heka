@@ -13,6 +13,7 @@ const DPAD: Xy = (132., 146.);
 const RIGHT_STICK: Xy = (228., 146.);
 const FACE: Xy = (272., 92.);
 const FACE_SPREAD: f32 = 20.;
+pub const STICKS: [Xy; 2] = [LEFT_STICK, RIGHT_STICK];
 
 const FACE_BUTTONS: [(Buttons, Xy, &str); 4] = [
     (Buttons::TRIANGLE, (0., -1.), text::Y),

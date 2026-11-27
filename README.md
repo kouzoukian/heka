@@ -73,7 +73,8 @@ until the light bar flashes.
 Controller and has never been tried on a real one. Please
 [report](https://github.com/kouzoukian/heka/issues) what works and what does not.
 
-The DualSense Edge's extra Fn and back buttons are not read by heka. The DualShock 3,
+heka reads the DualSense Edge's two Fn and two back buttons and lights them on the live
+drawing, but they do nothing in games. The DualShock 3,
 Sony's wireless USB adaptor and controllers from other makers are not supported.
 
 ## Using heka

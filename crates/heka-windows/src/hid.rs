@@ -114,16 +114,14 @@ fn dualsense_formats(
     let firmware_info = read_firmware_info(device);
     let calibration = read_dualsense_calibration(device, problems);
     let mode = dualsense::rumble_mode(product_id, firmware_info.as_deref());
-    match kind {
-        LinkKind::Usb => (
-            ReportFormat::DualSenseUsb(calibration),
-            FeedbackFormat::DualSenseUsb(mode),
-        ),
-        LinkKind::Bluetooth => (
-            ReportFormat::DualSenseBluetooth(calibration),
-            FeedbackFormat::dualsense_bluetooth(mode),
-        ),
-    }
+    let feedback = match kind {
+        LinkKind::Usb => FeedbackFormat::DualSenseUsb(mode),
+        LinkKind::Bluetooth => FeedbackFormat::dualsense_bluetooth(mode),
+    };
+    (
+        ReportFormat::dualsense(product_id, kind, calibration),
+        feedback,
+    )
 }
 
 fn dualshock4_formats(

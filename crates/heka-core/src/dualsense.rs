@@ -47,6 +47,20 @@ const BUTTON_BITS: [(usize, u8, Buttons); 15] = [
     (BUTTONS_2, 1 << 2, Buttons::MUTE),
 ];
 
+const EDGE_BUTTON_BITS: [(u8, Buttons); 4] = [
+    (1 << 4, Buttons::LEFT_FN),
+    (1 << 5, Buttons::RIGHT_FN),
+    (1 << 6, Buttons::LEFT_BACK),
+    (1 << 7, Buttons::RIGHT_BACK),
+];
+
+fn with_edge_buttons(mut state: ControllerState, buttons_2: u8) -> ControllerState {
+    for (mask, button) in EDGE_BUTTON_BITS {
+        state.buttons.set(button, buttons_2 & mask != 0);
+    }
+    state
+}
+
 pub(crate) fn buttons(bytes: &[u8]) -> Buttons {
     let mut buttons = hat_to_dpad(bytes[0] & HAT_MASK);
     for (byte, mask, button) in BUTTON_BITS {
@@ -161,9 +175,18 @@ pub fn parse_usb_input_report(
     })
 }
 
+pub fn parse_edge_usb_input_report(
+    report: &[u8],
+    calibration: &Calibration,
+) -> Result<ControllerState, ReportError> {
+    let state = parse_usb_input_report(report, calibration)?;
+    Ok(with_edge_buttons(state, report[BUTTONS_2]))
+}
+
 pub const BT_INPUT_REPORT_ID: u8 = 0x31;
 pub const BT_INPUT_REPORT_LEN: usize = 78;
 const BT_INPUT_COMMON: usize = 2;
+const BT_BUTTONS_2: usize = BT_INPUT_COMMON + BUTTONS_2 - 1;
 
 pub fn parse_bluetooth_input_report(
     report: &[u8],
@@ -183,6 +206,14 @@ pub fn parse_bluetooth_input_report(
     usb[0] = USB_INPUT_REPORT_ID;
     usb[1..].copy_from_slice(&report[BT_INPUT_COMMON..BT_INPUT_COMMON + USB_INPUT_REPORT_LEN - 1]);
     parse_usb_input_report(&usb, calibration)
+}
+
+pub fn parse_edge_bluetooth_input_report(
+    report: &[u8],
+    calibration: &Calibration,
+) -> Result<ControllerState, ReportError> {
+    let state = parse_bluetooth_input_report(report, calibration)?;
+    Ok(with_edge_buttons(state, report[BT_BUTTONS_2]))
 }
 
 fn battery(status: u8) -> Battery {

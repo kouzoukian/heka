@@ -27,11 +27,23 @@ pub fn controller_model(vendor_id: u16, product_id: u16) -> Option<ControllerMod
 pub enum ReportFormat {
     DualSenseUsb(Calibration),
     DualSenseBluetooth(Calibration),
+    DualSenseEdgeUsb(Calibration),
+    DualSenseEdgeBluetooth(Calibration),
     DualShock4Usb(Calibration),
     DualShock4Bluetooth(Calibration),
 }
 
 impl ReportFormat {
+    pub fn dualsense(product_id: u16, kind: LinkKind, calibration: Calibration) -> Self {
+        let edge = product_id == dualsense::PRODUCT_ID_DUALSENSE_EDGE;
+        match (edge, kind) {
+            (false, LinkKind::Usb) => Self::DualSenseUsb(calibration),
+            (false, LinkKind::Bluetooth) => Self::DualSenseBluetooth(calibration),
+            (true, LinkKind::Usb) => Self::DualSenseEdgeUsb(calibration),
+            (true, LinkKind::Bluetooth) => Self::DualSenseEdgeBluetooth(calibration),
+        }
+    }
+
     pub fn parse(self, report: &[u8]) -> Result<ControllerState, ReportError> {
         match self {
             Self::DualSenseUsb(calibration) => {
@@ -39,6 +51,12 @@ impl ReportFormat {
             }
             Self::DualSenseBluetooth(calibration) => {
                 dualsense::parse_bluetooth_input_report(report, &calibration)
+            }
+            Self::DualSenseEdgeUsb(calibration) => {
+                dualsense::parse_edge_usb_input_report(report, &calibration)
+            }
+            Self::DualSenseEdgeBluetooth(calibration) => {
+                dualsense::parse_edge_bluetooth_input_report(report, &calibration)
             }
             Self::DualShock4Usb(calibration) => {
                 dualshock4::parse_usb_input_report(report, &calibration)
@@ -51,14 +69,21 @@ impl ReportFormat {
 
     pub fn kind(self) -> LinkKind {
         match self {
-            Self::DualSenseUsb(_) | Self::DualShock4Usb(_) => LinkKind::Usb,
-            Self::DualSenseBluetooth(_) | Self::DualShock4Bluetooth(_) => LinkKind::Bluetooth,
+            Self::DualSenseUsb(_) | Self::DualSenseEdgeUsb(_) | Self::DualShock4Usb(_) => {
+                LinkKind::Usb
+            }
+            Self::DualSenseBluetooth(_)
+            | Self::DualSenseEdgeBluetooth(_)
+            | Self::DualShock4Bluetooth(_) => LinkKind::Bluetooth,
         }
     }
 
     pub fn model(self) -> ControllerModel {
         match self {
-            Self::DualSenseUsb(_) | Self::DualSenseBluetooth(_) => ControllerModel::DualSense,
+            Self::DualSenseUsb(_)
+            | Self::DualSenseBluetooth(_)
+            | Self::DualSenseEdgeUsb(_)
+            | Self::DualSenseEdgeBluetooth(_) => ControllerModel::DualSense,
             Self::DualShock4Usb(_) | Self::DualShock4Bluetooth(_) => ControllerModel::DualShock4,
         }
     }

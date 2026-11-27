@@ -1,3 +1,4 @@
+mod edge;
 mod ps4;
 mod shape;
 mod xbox;
@@ -69,16 +70,19 @@ pub fn paint(
     pad: &PadModel,
 ) -> Vec<Label> {
     let mut painter = Painter::new(origin, scale, palette, surface);
-    match output_type {
+    let (mut labels, sticks) = match output_type {
         OutputType::Xbox => {
             xbox::paint(&mut painter, pad);
-            xbox::labels(pad, &palette)
+            (xbox::labels(pad, &palette), xbox::STICKS)
         }
         OutputType::Ps4 => {
             ps4::paint(&mut painter, pad);
-            ps4::labels(pad, &palette)
+            (ps4::labels(pad, &palette), ps4::STICKS)
         }
-    }
+    };
+    edge::paint(&mut painter, pad, sticks);
+    labels.extend(edge::labels(pad, &palette, sticks));
+    labels
 }
 
 fn letter(
