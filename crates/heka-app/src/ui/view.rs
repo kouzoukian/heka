@@ -19,6 +19,7 @@ use heka_core::preferences::{LightbarChoice, PreferenceChange};
 use heka_core::profile::{Input, MAX_NAME_CHARS};
 use heka_core::profiles::Profiles;
 use heka_core::settings::MAX_NICKNAME_CHARS;
+use heka_core::shortcuts::ShortcutAction;
 use heka_core::tuning::{StickSide, TriggerSide};
 
 use crate::ui::app_settings::AppView;
@@ -28,6 +29,7 @@ use crate::ui::metrics::{GAP, INSET, ROW, SMALL_TEXT, TEXT, icon};
 use crate::ui::model::{Backend, Command, Screen, Selection, SendCommand, sorted_profiles};
 use crate::ui::profile::{Manage, ProfileAct, ProfileAction, ProfileView, Section, ToggleBinding};
 use crate::ui::settings::Fields;
+use crate::ui::shortcuts::{ShortcutsAct, ShortcutsAction, ShortcutsView};
 use crate::ui::{detail, panel, picker, placement};
 use crate::{text, theme};
 
@@ -124,6 +126,7 @@ struct MainView {
     trigger_side: TriggerSide,
     rule_open: Option<String>,
     programs: Option<Vec<String>>,
+    shortcut_open: Option<ShortcutAction>,
 }
 
 impl MainView {
@@ -211,6 +214,7 @@ impl MainView {
             trigger_side: TriggerSide::Left,
             rule_open: None,
             programs: None,
+            shortcut_open: None,
         }
     }
 
@@ -368,6 +372,16 @@ impl MainView {
         cx.notify();
     }
 
+    fn shortcuts_action(&mut self, action: ShortcutsAction, cx: &mut Context<Self>) {
+        let ShortcutsAction::Toggle(action) = action;
+        self.shortcut_open = if self.shortcut_open == Some(action) {
+            None
+        } else {
+            Some(action)
+        };
+        cx.notify();
+    }
+
     fn choose_program_file(&self, cx: &mut Context<Self>) {
         let Some(profile) = sorted_profiles(&self.screen.profiles)
             .first()
@@ -401,6 +415,7 @@ impl MainView {
         self.editing = None;
         self.rule_open = None;
         self.programs = None;
+        self.shortcut_open = None;
         self.manage = Manage::Idle;
         self.leave_settings();
         cx.notify();
@@ -494,6 +509,10 @@ impl MainView {
         let games_act: GamesAct = Rc::new(move |action, _: &mut Window, cx: &mut App| {
             let _ = view.update(cx, |view, cx| view.games_action(action, cx));
         });
+        let view = cx.weak_entity();
+        let shortcuts_act: ShortcutsAct = Rc::new(move |action, _: &mut Window, cx: &mut App| {
+            let _ = view.update(cx, |view, cx| view.shortcuts_action(action, cx));
+        });
         let showing = match self.page {
             Page::Controller => Showing::Live,
             Page::ControllerSettings => Showing::ControllerSettings(Fields {
@@ -516,6 +535,10 @@ impl MainView {
                     rule_open: self.rule_open.as_deref(),
                     programs: self.programs.as_deref(),
                     act: games_act,
+                },
+                shortcuts: ShortcutsView {
+                    open: self.shortcut_open,
+                    act: shortcuts_act,
                 },
             }),
             Page::Log => Showing::Log(&self.screen.log),

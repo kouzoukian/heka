@@ -491,6 +491,25 @@ pub const ROW_INVERT_X: &str = "Invert X";
 pub const ROW_INVERT_Y: &str = "Invert Y";
 pub const ROW_SWAP_STICKS: &str = "Swap sticks";
 pub const SWAP_STICKS_TIP: &str = "Exchanges the left and right stick";
+pub const GROUP_SHORTCUTS: &str = "Shortcuts";
+pub const ROW_SHORTCUTS: &str = "Controller shortcuts";
+pub const SHORTCUTS_NOTE: &str = "Hold PS and press a button. PS on its own works as before.";
+pub const SHORTCUTS_TURN_OFF_NOTE: &str =
+    "Turning off needs a two-second hold, for a Controller on Bluetooth.";
+pub const SHORTCUTS_HIDDEN_NOTE: &str =
+    "The other button does not reach the game while a shortcut is recognised.";
+pub const ROW_NEXT_PROFILE: &str = "Next Profile";
+pub const ROW_PREVIOUS_PROFILE: &str = "Previous Profile";
+pub const ROW_SHORTCUT_TURN_OFF: &str = "Turn off";
+pub const NO_BUTTON: &str = "No button";
+
+pub fn shortcut_choice(input: Option<Input>) -> String {
+    match input {
+        Some(input) => format!("PS + {}", input_name(input)),
+        None => NO_BUTTON.to_owned(),
+    }
+}
+
 pub fn shortcut_profile(controller: &str, profile: Option<&str>, rule: Option<&str>) -> String {
     let profile = profile.unwrap_or(DEFAULT_PROFILE);
     match rule {

@@ -12,10 +12,12 @@ use crate::ui::games::{GamesView, games_section};
 use crate::ui::model::{AppEntry, Command, Screen, SendCommand};
 use crate::ui::segmented::{Segment, on_off, segmented};
 use crate::ui::settings::{explained, group};
+use crate::ui::shortcuts::{ShortcutsView, shortcuts_section};
 
 pub struct AppView<'a> {
     pub entry: AppEntry,
     pub games: GamesView<'a>,
+    pub shortcuts: ShortcutsView,
 }
 
 pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx: &App) -> Div {
@@ -63,6 +65,7 @@ pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx:
                 theme,
             )),
         )
+        .child(shortcuts_section(&view.shortcuts, screen, send, theme))
         .child(games_section(&view.games, screen, send, theme))
         .child(group(text::FILES, theme))
         .child(

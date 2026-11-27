@@ -133,3 +133,9 @@ Holding PS and pressing another button switches the Controller's Profile or turn
 - **Switching Profile.** Next and previous move the Controller's own choice through the Default Profile and the Profiles by name, without regard to case, and wrap. A choice whose Profile is gone is treated as the Default Profile. Under a game rule the shortcut changes the choice that returns afterwards, and the note it leaves says that a rule applies.
 - **Turning off.** The button must be held with PS for two seconds, and the action comes with the first report after that, so it relies on the Controller sending reports, which the DualShock 4 and the DualSense do all the time. Letting go of either button first cancels it, and it happens once for a hold. Turning off needs a Bluetooth Link, as it does anywhere else ([ADR 0019](0019-turning-off-a-bluetooth-controller.md)).
 - **Two actions on one button** are not allowed. The settings refuse the choice; a file that has one gives the button to the first of next, previous and turn off, and leaves the later action without a button, which then never fires.
+
+### Shortcuts in the window
+
+The App settings have a Shortcuts group above the game rules: a switch, a note on how to use them, and one row for each action showing the chosen button as `PS + R1`. A row opens in place to list the buttons that can be chosen; a button that another action has is shown but cannot be pressed, and the rows are dimmed while the shortcuts are off.
+
+A shortcut that switches Profile is logged and shown as an information banner for five seconds, naming the Controller and the Profile, and saying when a game rule applies and the choice returns afterwards. It is not a Windows notification: heka has none yet (issue 25), and the banner is only seen while heka's window is open. Information banners are not counted as warnings in the status bar.
