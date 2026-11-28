@@ -7,4 +7,4 @@ heka tells the player about a Controller through Windows toasts, for low battery
 - Windows can turn notifications off for the player. `Show` then returns no error and nothing appears, so heka reads the setting and logs that the toast was not shown.
 - Low battery is said once at 20% or less while not charging, and again only after the Controller charges or rises above 30%. A Bridge failure is said once, and again after the Bridge has stayed up for 10 seconds, or after Stop or removal. A Controller present when heka starts is not announced as connected.
 - Each toast has a tag from the Controller and the kind of alert, so a repeat replaces the earlier one.
-- `examples/notification_spike.rs` ([ADR 0017](0017-test-fixtures-and-development-tools.md)) shows one toast. The delivery has not been seen on a PC with notifications turned on.
+- `examples/notification_spike.rs` ([ADR 0017](0017-test-fixtures-and-development-tools.md)) shows one toast. The toast was seen on a Windows PC with notifications turned on.
