@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod app_settings;
 pub mod autostart;
 pub mod bridge;
@@ -40,6 +41,7 @@ pub mod stick_use;
 pub mod supervisor;
 pub mod threads;
 pub mod touchpad;
+pub mod trigger_effect;
 pub mod tuning;
 pub mod virtual_controller;
 pub mod watch;

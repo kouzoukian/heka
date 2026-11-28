@@ -125,6 +125,21 @@ pub struct Battery {
     pub charge: Charge,
 }
 
+pub const LOW_BATTERY_PERCENT: u8 = 20;
+
+impl Battery {
+    pub fn level(self) -> Option<u8> {
+        match self.charge {
+            Charge::Discharging | Charge::Charging | Charge::Full => Some(self.percent),
+            Charge::NotCharging | Charge::Unknown => None,
+        }
+    }
+
+    pub fn is_low(self) -> bool {
+        self.charge == Charge::Discharging && self.percent <= LOW_BATTERY_PERCENT
+    }
+}
+
 pub const TOUCHPAD_WIDTH: u16 = 1920;
 pub const TOUCHPAD_HEIGHT: u16 = 1080;
 pub(crate) const DUALSHOCK4_TOUCHPAD_HEIGHT: u16 = 942;

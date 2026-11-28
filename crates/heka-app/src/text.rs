@@ -1,3 +1,4 @@
+use heka_core::alerts::Alert;
 use heka_core::desktop::{Chord, Key, MouseButton, WheelStep};
 use heka_core::discovery::{OpenError, Unopened};
 use heka_core::drift::DriftError;
@@ -9,6 +10,7 @@ use heka_core::hiding::{
 use heka_core::idle::IdleTime;
 use heka_core::lifecycle::MAX_BRIDGES;
 use heka_core::link::{ControllerModel, LinkKind, ReportError};
+use heka_core::mac::MacAddress;
 use heka_core::macros::{Mode, Target};
 use heka_core::profile::{Binding, Input, Output, Profile, ProfileError};
 use heka_core::radio::TurnOffError;
@@ -16,6 +18,7 @@ use heka_core::release::Version;
 use heka_core::state::{Battery, Charge};
 use heka_core::stick_use::{Direction, StickUse};
 use heka_core::supervisor::{BridgeError, DriftStatus};
+use heka_core::trigger_effect::EffectKind;
 use heka_core::tuning::Curve;
 use heka_core::virtual_controller::OutputType;
 
@@ -45,6 +48,7 @@ pub const BATTERY_NOT_CHARGING: &str = "Battery not charging";
 pub const OUTPUT_TYPE: &str = "Output Type";
 pub const XBOX: &str = "Xbox";
 pub const PS4: &str = "PS4";
+pub const HELD: &str = "Held";
 pub const HELD_HINT: &str = "Reconnect the Controller to keep its Virtual Controller.";
 
 pub const CONTROLLER_SETTINGS: &str = "Controller settings";
@@ -58,6 +62,12 @@ pub const SMALL_MOTOR: &str = "Small motor";
 pub const GROUP_LIGHTS: &str = "Lights";
 pub const ROW_LIGHTBAR: &str = "Light bar";
 pub const ROW_PLAYER_LIGHTS: &str = "Player lights";
+pub const ROW_BATTERY_COLOUR: &str = "Battery colour";
+pub const ROW_LOW_BATTERY_FLASH: &str = "Low battery flash";
+pub const ROW_MUTE_LIGHT: &str = "Mute light";
+pub const MUTE_BY_BUTTON: &str = "Button";
+pub const MUTE_BY_BUTTON_TIP: &str = "Toggled by the mute button";
+pub const MUTE_LIGHT_NOTE: &str = "The mute light does not change the microphone.";
 pub const ROW_HIDE: &str = "Hide from games";
 pub const GROUP_POWER: &str = "Power";
 pub const ROW_IDLE: &str = "Turn off when idle";
@@ -83,6 +93,12 @@ pub const RUMBLE_TEST_TIP: &str = "Runs a motor for a second at the chosen stren
 pub const LIGHTBAR_TIP: &str =
     "The colour while no game sets one. Default leaves the light bar to the Controller.";
 pub const PLAYER_LIGHTS_TIP: &str = "The white lights under the touchpad.";
+pub const BATTERY_COLOUR_TIP: &str =
+    "Shows the battery level as a colour. A game's colour still wins.";
+pub const LOW_BATTERY_FLASH_TIP: &str =
+    "Flashes at 20% or less while not charging, also over a game's colour.";
+pub const MUTE_LIGHT_TIP: &str =
+    "The light on the mute button. Default leaves it to the Controller.";
 pub const HIDE_TIP: &str = "Off lets games see the Controller too, which can cause double input. Restart a running game after a change.";
 pub const SETTINGS_NOTE: &str = "Rumble and lights apply while the Controller is Bridged.";
 
@@ -94,7 +110,44 @@ pub fn idle_time(time: IdleTime) -> String {
 }
 
 pub fn named(model: ControllerModel, short_mac: &str) -> String {
-    format!("{} {short_mac}", controller(model))
+    with_short_mac(controller(model), short_mac)
+}
+
+pub fn with_short_mac(model: &str, short_mac: &str) -> String {
+    format!("{model} {short_mac}")
+}
+
+pub fn tray_status(state: &str, battery: Option<&str>) -> String {
+    match battery {
+        Some(battery) => format!("{state}, {battery}"),
+        None => state.to_owned(),
+    }
+}
+
+pub fn tray_line(controller: &str, status: &str) -> String {
+    format!("{controller}: {status}")
+}
+
+pub fn tray_controller(controller: &str, state: &str, battery: Option<&str>) -> String {
+    tray_line(controller, &tray_status(state, battery))
+}
+
+pub fn notification_body(alert: &Alert) -> String {
+    match alert {
+        Alert::LowBattery { percent } => format!("Low battery, {percent}% left."),
+        Alert::BridgeFailed(error) => bridge_failed(&bridge_error(error)),
+        Alert::Connected => "Connected.".into(),
+        Alert::Removed => "Removed.".into(),
+    }
+}
+
+pub fn notification_tag(mac: MacAddress, alert: &Alert) -> String {
+    let kind = match alert {
+        Alert::LowBattery { .. } => "battery",
+        Alert::BridgeFailed(_) => "bridge",
+        Alert::Connected | Alert::Removed => "link",
+    };
+    format!("{kind} {mac}")
 }
 
 pub fn cannot_turn_off(controller: &str, error: &TurnOffError) -> String {
@@ -205,6 +258,13 @@ pub const KEEP_RUNNING: &str = "Keep running";
 pub const THEME_TIP: &str = "heka does not follow the Windows colour mode.";
 pub const DARK: &str = "Dark";
 pub const LIGHT: &str = "Light";
+pub const NOTIFICATIONS: &str = "Notifications";
+pub const ROW_NOTIFY_LOW_BATTERY: &str = "Low battery";
+pub const NOTIFY_LOW_BATTERY_TIP: &str = "At 20% or less while not charging, once per discharge.";
+pub const ROW_NOTIFY_BRIDGE_FAILED: &str = "A Bridge fails";
+pub const NOTIFY_BRIDGE_FAILED_TIP: &str = "When heka cannot Bridge a Controller.";
+pub const ROW_NOTIFY_CONNECTIONS: &str = "Connected or removed";
+pub const NOTIFY_CONNECTIONS_TIP: &str = "When a Controller connects or is removed.";
 pub const UPDATES: &str = "Updates";
 pub const ROW_CHECK_FOR_RELEASES: &str = "Check for new releases";
 pub const CHECK_FOR_RELEASES_TIP: &str = "At start and once a day. heka downloads nothing.";
@@ -671,6 +731,35 @@ pub const PRESS_CLICK: &str = "Click";
 pub const TRIGGERS_DEFAULT: &str =
     "The Default Profile does not tune triggers. Choose another Profile, or make a new one.";
 
+pub const GROUP_EFFECT: &str = "Adaptive effect";
+pub const ROW_EFFECT: &str = "Effect";
+pub const EFFECT_TIP: &str = "What the trigger itself does as you pull it.";
+pub const ROW_EFFECT_START: &str = "Starts at";
+pub const EFFECT_START_TIP: &str = "How far into the pull the effect begins.";
+pub const ROW_EFFECT_END: &str = "Breaks at";
+pub const EFFECT_END_TIP: &str = "How far into the pull the resistance gives way.";
+pub const ROW_EFFECT_STRENGTH: &str = "Strength";
+pub const EFFECT_STRENGTH_TIP: &str = "How strong the effect is.";
+pub const EFFECT_NOTE: &str = "DualSense only. A DualShock 4 ignores it.";
+
+pub fn effect_name(kind: EffectKind) -> &'static str {
+    match kind {
+        EffectKind::Off => OFF,
+        EffectKind::Resistance => "Resist",
+        EffectKind::Break => "Break",
+        EffectKind::Vibration => "Vibrate",
+    }
+}
+
+pub fn effect_tip(kind: EffectKind) -> &'static str {
+    match kind {
+        EffectKind::Off => "No effect",
+        EffectKind::Resistance => "Constant resistance",
+        EffectKind::Break => "Resistance up to a break point",
+        EffectKind::Vibration => "Vibration",
+    }
+}
+
 pub fn travel_percent(travel: u8) -> String {
     format!("{}%", (u32::from(travel) * 100 + 127) / 255)
 }
@@ -1026,6 +1115,26 @@ pub mod log {
     use heka_core::supervisor::BridgeError;
 
     pub const QUITTING: &str = "heka is quitting";
+
+    pub fn notified(title: &str, body: &str) -> String {
+        format!("Notified: {title}: {body}")
+    }
+
+    pub fn notifications_off(title: &str, body: &str) -> String {
+        format!("Windows notifications are off, so this was not shown: {title}: {body}")
+    }
+
+    pub fn cannot_notify(title: &str, body: &str, error: &str) -> String {
+        format!("Cannot show a notification ({title}: {body}): {error}")
+    }
+
+    pub fn cannot_update_tray(error: &str) -> String {
+        format!("Cannot update the tray icon: {error}")
+    }
+
+    pub fn cannot_register_notifications(error: &str) -> String {
+        format!("Cannot register heka for notifications: {error}")
+    }
     pub const LOOKING_AGAIN: &str = "Looking for Controllers again";
     pub const TRIMMED: &str = "Older entries were left out to keep the log small.";
     pub const NO_APPDATA: &str = "APPDATA is not set; settings are not saved";

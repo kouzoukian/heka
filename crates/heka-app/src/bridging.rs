@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use heka_app::report::Reporter;
 use heka_app::ui::model::controller_name;
 use heka_app::{log, text};
+use heka_core::alerts::{Alerts, Watched};
 use heka_core::app_settings::AppSettings;
 use heka_core::discovery::{Discovery, Finder, Found, FoundLink, OpenFailure, Unopened};
 use heka_core::feedback::Motor;
@@ -27,6 +28,7 @@ use heka_core::setup::{self, Driver, Setup};
 use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::{ControllerView, Supervisor};
 use heka_core::touchpad::TouchpadChange;
+use heka_core::trigger_effect::EffectChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::{OutputType, VirtualFailure};
 use heka_windows::bluetooth::BluetoothRadios;
@@ -37,6 +39,7 @@ use heka_windows::hid::{ControllerLink, OpenError, controller_paths};
 use heka_windows::hidhide;
 use hidapi::HidApi;
 
+use crate::notifications::Notifier;
 use crate::{profiles_file, settings_file};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -89,6 +92,7 @@ enum Command {
     ChangeStick(String, StickSide, StickChange),
     SetSwapSticks(String, bool),
     ChangeTrigger(String, TriggerSide, TriggerChange),
+    ChangeTriggerEffect(String, TriggerSide, EffectChange),
     ChangeStickUse(String, StickSide, StickUseChange),
     ChangeTouchpad(String, TouchpadChange),
     ChangeGyro(String, GyroChange),
@@ -241,6 +245,12 @@ impl Bridging {
             .send(Command::ChangeTrigger(profile, side, change));
     }
 
+    pub fn change_trigger_effect(&self, profile: String, side: TriggerSide, change: EffectChange) {
+        let _ = self
+            .commands
+            .send(Command::ChangeTriggerEffect(profile, side, change));
+    }
+
     pub fn change_stick_use(&self, profile: String, side: StickSide, change: StickUseChange) {
         let _ = self
             .commands
@@ -315,6 +325,8 @@ fn supervise(
     let mut watching_foreground = false;
     let mut foreground_unreadable = false;
     let mut shortcut_notice: Option<(Instant, String)> = None;
+    let mut alerts = Alerts::default();
+    let mut notifier = Notifier::default();
     loop {
         let command = inbox.recv_timeout(POLL_INTERVAL);
         let now = Instant::now();
@@ -472,6 +484,11 @@ fn supervise(
                     profile.change_trigger(side, change);
                 })
             }
+            Ok(Command::ChangeTriggerEffect(id, side, change)) => {
+                edit_profile(&mut supervisor, &id, now, |profile| {
+                    profile.change_trigger_effect(side, change);
+                })
+            }
             Ok(Command::CheckDrivers) => {
                 let (found, changes) = setup::check(&InstalledDrivers, &mut supervisor, now);
                 detected = found;
@@ -529,6 +546,14 @@ fn supervise(
             hider.warnings()
         };
         let controllers = supervisor.controllers();
+        let watched: Vec<Watched> = controllers
+            .iter()
+            .map(|view| Watched::of(view, controller_name(view)))
+            .collect();
+        let wanted = supervisor.settings().app().notifications;
+        for notification in alerts.observe(&watched, wanted, now) {
+            notifier.tell(&notification);
+        }
         for note in supervisor.take_shortcut_notes() {
             let name = controllers
                 .iter()

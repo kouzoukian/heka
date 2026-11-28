@@ -12,6 +12,7 @@ use crate::macros::{Macro, MacroChange, Mode};
 use crate::state::{Buttons, ControllerState, FineSticks, Stick, TOUCHPAD_WIDTH};
 use crate::stick_use::{StickRole, StickUseChange, Velocity};
 use crate::touchpad::{TouchpadChange, TouchpadSettings};
+use crate::trigger_effect::{EffectChange, EffectSettings, TriggerEffects};
 use crate::tuning::{
     StickChange, StickSide, StickTuning, TriggerChange, TriggerSide, TriggerTuning, fine,
     tuned_stick,
@@ -302,6 +303,10 @@ pub struct Profile {
     pub left_trigger: TriggerTuning,
     #[serde(skip_serializing_if = "TriggerTuning::is_neutral")]
     pub right_trigger: TriggerTuning,
+    #[serde(skip_serializing_if = "EffectSettings::is_default")]
+    left_trigger_effect: EffectSettings,
+    #[serde(skip_serializing_if = "EffectSettings::is_default")]
+    right_trigger_effect: EffectSettings,
     #[serde(skip_serializing_if = "TouchpadSettings::is_default")]
     touchpad: TouchpadSettings,
     #[serde(skip_serializing_if = "GyroSettings::is_default")]
@@ -331,6 +336,8 @@ impl Profile {
             right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            left_trigger_effect: EffectSettings::default(),
+            right_trigger_effect: EffectSettings::default(),
             touchpad: TouchpadSettings::default(),
             gyro: GyroSettings::default(),
         }
@@ -360,6 +367,8 @@ impl Profile {
             "right_stick_use",
             "left_trigger",
             "right_trigger",
+            "left_trigger_effect",
+            "right_trigger_effect",
             "touchpad",
             "gyro",
         ]
@@ -391,6 +400,7 @@ impl Profile {
         let stick = |key: &str| root.get(key).map(StickTuning::load).unwrap_or_default();
         let trigger = |key: &str| root.get(key).map(TriggerTuning::load).unwrap_or_default();
         let stick_use = |key: &str| root.get(key).map(StickRole::load).unwrap_or_default();
+        let effect = |key: &str| root.get(key).map(EffectSettings::load).unwrap_or_default();
         Some(Self {
             name,
             output_type,
@@ -405,6 +415,8 @@ impl Profile {
             right_stick_use: stick_use("right_stick_use"),
             left_trigger: trigger("left_trigger"),
             right_trigger: trigger("right_trigger"),
+            left_trigger_effect: effect("left_trigger_effect"),
+            right_trigger_effect: effect("right_trigger_effect"),
             touchpad: root
                 .get("touchpad")
                 .map(TouchpadSettings::load)
@@ -535,6 +547,20 @@ impl Profile {
         }
     }
 
+    pub fn trigger_effect(&self, side: TriggerSide) -> &EffectSettings {
+        match side {
+            TriggerSide::Left => &self.left_trigger_effect,
+            TriggerSide::Right => &self.right_trigger_effect,
+        }
+    }
+
+    pub fn change_trigger_effect(&mut self, side: TriggerSide, change: EffectChange) {
+        match side {
+            TriggerSide::Left => self.left_trigger_effect.change(change),
+            TriggerSide::Right => self.right_trigger_effect.change(change),
+        }
+    }
+
     pub fn is_plain(&self) -> bool {
         self.output_type.is_none()
             && self.bindings.is_empty()
@@ -545,6 +571,8 @@ impl Profile {
             && self.right_stick_use.is_default()
             && self.left_trigger.is_neutral()
             && self.right_trigger.is_neutral()
+            && self.left_trigger_effect.is_default()
+            && self.right_trigger_effect.is_default()
             && self.touchpad.is_default()
             && self.gyro.is_default()
     }
@@ -578,6 +606,7 @@ pub struct Mapper {
     right_stick_use: StickRole,
     left_trigger: TriggerTuning,
     right_trigger: TriggerTuning,
+    trigger_effects: TriggerEffects,
     touchpad: TouchpadSettings,
     gyro: GyroSettings,
 }
@@ -595,6 +624,7 @@ impl Default for Mapper {
             right_stick_use: StickRole::default(),
             left_trigger: TriggerTuning::default(),
             right_trigger: TriggerTuning::default(),
+            trigger_effects: TriggerEffects::default(),
             touchpad: TouchpadSettings::default(),
             gyro: GyroSettings::default(),
         }
@@ -611,6 +641,10 @@ impl Mapper {
             right_stick_use: profile.right_stick_use,
             left_trigger: profile.left_trigger,
             right_trigger: profile.right_trigger,
+            trigger_effects: TriggerEffects {
+                left: profile.left_trigger_effect.effect(),
+                right: profile.right_trigger_effect.effect(),
+            },
             touchpad: profile.touchpad,
             gyro: profile.gyro,
             ..Self::default()
@@ -720,6 +754,10 @@ impl Mapper {
             ..*state
         };
         Mapped { shown, desktop }
+    }
+
+    pub fn trigger_effects(&self) -> TriggerEffects {
+        self.trigger_effects
     }
 
     pub fn mouse_touchpad(&self) -> Option<&TouchpadSettings> {

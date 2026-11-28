@@ -50,6 +50,7 @@ impl Fake {
             name: text::DUALSENSE,
             nickname: None,
             has_player_lights: true,
+            has_mute_light: true,
             preferences: Preferences::default(),
             experimental: false,
             active_link,
@@ -105,6 +106,7 @@ impl Fake {
         controllers[2].name = text::DUALSHOCK4;
         controllers[2].experimental = true;
         controllers[2].has_player_lights = false;
+        controllers[2].has_mute_light = false;
         controllers[1].nickname = Some("Sofa".into());
         let error = BridgeError::VirtualController("made-up error for the preview".into());
         controllers[3].error = Some(text::bridge_error(&error));
@@ -225,6 +227,7 @@ impl Backend for Fake {
                 on_close: self.app.borrow().on_close,
                 check_for_releases: self.app.borrow().check_for_releases,
                 theme: self.app.borrow().theme,
+                notifications: self.app.borrow().notifications,
             },
             newer_release: self
                 .newer_release
@@ -318,6 +321,12 @@ impl Backend for Fake {
             Command::ChangeTrigger(id, side, change) => {
                 if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
                     profile.change_trigger(*side, *change);
+                }
+                return;
+            }
+            Command::ChangeTriggerEffect(id, side, change) => {
+                if let Some(profile) = self.profiles.borrow_mut().get_mut(id) {
+                    profile.change_trigger_effect(*side, *change);
                 }
                 return;
             }
