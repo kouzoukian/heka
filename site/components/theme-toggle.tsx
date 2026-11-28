@@ -1,7 +1,7 @@
 'use client';
 
 import { useTheme } from 'fumadocs-ui/provider/base';
-import { Contrast } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
@@ -13,7 +13,8 @@ export function ThemeToggle({ className }: { className?: string }) {
       aria-label="Switch theme"
       onClick={() => setTheme(resolvedTheme === 'light' ? 'dark' : 'light')}
     >
-      <Contrast />
+      <Sun className="hidden dark:block" />
+      <Moon className="dark:hidden" />
     </button>
   );
 }
