@@ -1,13 +1,16 @@
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{App, AsyncApp};
-use heka_app::text;
-use heka_app::ui::model::{Backend, Command};
+use heka_app::tray_model::{self, TrayController};
+use heka_app::ui::model::{Backend, Command, ControllerEntry};
 use heka_app::ui::view::Page;
+use heka_app::{log, text};
 use heka_windows::metrics;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::window_backend::WindowBackend;
@@ -25,6 +28,102 @@ struct Items {
     settings: MenuItem,
     start_with_windows: CheckMenuItem,
     quit: MenuItem,
+}
+
+const CONTROLLERS_AT: usize = 3;
+
+struct Row {
+    shown: TrayController,
+    menu: Submenu,
+    toggle: MenuItem,
+}
+
+impl Row {
+    fn new(shown: TrayController) -> Result<Self, String> {
+        let toggle = MenuItem::new(shown.action, true, None);
+        let menu = Submenu::new(&shown.label, true);
+        menu.append(&toggle).map_err(|error| error.to_string())?;
+        Ok(Self {
+            shown,
+            menu,
+            toggle,
+        })
+    }
+
+    fn show(&mut self, latest: TrayController) {
+        if latest.label != self.shown.label {
+            self.menu.set_text(&latest.label);
+        }
+        if latest.action != self.shown.action {
+            self.toggle.set_text(latest.action);
+        }
+        self.shown = latest;
+    }
+}
+
+struct Controllers {
+    menu: Menu,
+    separator: PredefinedMenuItem,
+    rows: Vec<Row>,
+    tooltip: String,
+}
+
+impl Controllers {
+    fn show(&mut self, tray: &TrayIcon, entries: &[ControllerEntry]) -> Result<(), String> {
+        let latest = tray_model::controllers(entries);
+        let same = latest.len() == self.rows.len()
+            && latest
+                .iter()
+                .zip(&self.rows)
+                .all(|(latest, row)| latest.mac == row.shown.mac);
+        if same {
+            for (row, latest) in self.rows.iter_mut().zip(latest) {
+                row.show(latest);
+            }
+        } else {
+            self.replace(latest)?;
+        }
+        let tooltip = tray_model::tooltip(entries);
+        if tooltip != self.tooltip {
+            tray.set_tooltip(Some(&tooltip))
+                .map_err(|error| error.to_string())?;
+            self.tooltip = tooltip;
+        }
+        Ok(())
+    }
+
+    fn replace(&mut self, latest: Vec<TrayController>) -> Result<(), String> {
+        if !self.rows.is_empty() {
+            for row in self.rows.drain(..) {
+                self.menu
+                    .remove(&row.menu)
+                    .map_err(|error| error.to_string())?;
+            }
+            self.menu
+                .remove(&self.separator)
+                .map_err(|error| error.to_string())?;
+        }
+        for (index, shown) in latest.into_iter().enumerate() {
+            let row = Row::new(shown)?;
+            self.menu
+                .insert(&row.menu, CONTROLLERS_AT + index)
+                .map_err(|error| error.to_string())?;
+            self.rows.push(row);
+        }
+        if !self.rows.is_empty() {
+            self.menu
+                .insert(&self.separator, CONTROLLERS_AT + self.rows.len())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn command(&self, chosen: &MenuId) -> Option<Command> {
+        self.rows
+            .iter()
+            .find(|row| row.toggle.id() == chosen)
+            .map(|row| row.shown.command.clone())
+    }
 }
 
 pub fn install(
@@ -53,6 +152,12 @@ pub fn install(
         &items.quit,
     ])
     .map_err(|error| error.to_string())?;
+    let controllers = Controllers {
+        menu: menu.clone(),
+        separator: PredefinedMenuItem::separator(),
+        rows: Vec::new(),
+        tooltip: text::APP_NAME.to_owned(),
+    };
     let tray = TrayIconBuilder::new()
         .with_icon(icon()?)
         .with_tooltip(text::APP_NAME)
@@ -62,7 +167,7 @@ pub fn install(
         .map_err(|error| error.to_string())?;
 
     cx.spawn(async move |cx: &mut AsyncApp| {
-        run(cx, tray, &items, &backend, &requests, &show).await;
+        run(cx, tray, &items, controllers, &backend, &requests, &show).await;
         cx.update(|cx| cx.quit());
     })
     .detach();
@@ -71,8 +176,9 @@ pub fn install(
 
 async fn run(
     cx: &mut AsyncApp,
-    _tray: TrayIcon,
+    tray: TrayIcon,
     items: &Items,
+    mut controllers: Controllers,
     backend: &WindowBackend,
     requests: &Receiver<Request>,
     show: &impl Fn(&mut App, Option<Page>),
@@ -108,11 +214,16 @@ async fn run(
             } else if event.id == items.start_with_windows.id() {
                 let enable = !backend.starts_with_windows();
                 backend.command(Command::SetStartWithWindows(enable));
+            } else if let Some(command) = controllers.command(&event.id) {
+                backend.command(command);
             }
         }
         let enabled = backend.starts_with_windows();
         if items.start_with_windows.is_checked() != enabled {
             items.start_with_windows.set_checked(enabled);
+        }
+        if let Err(error) = controllers.show(&tray, &backend.controllers(Instant::now())) {
+            log::line(&text::log::cannot_update_tray(&error));
         }
         if wants_window {
             cx.update(|cx| show(cx, page));

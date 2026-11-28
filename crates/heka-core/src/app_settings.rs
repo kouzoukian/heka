@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::alerts::Notifications;
 use crate::autostart;
 use crate::game_rules::GameRules;
 use crate::shortcuts::Shortcuts;
@@ -31,6 +32,8 @@ pub struct AppSettings {
     pub on_close: CloseAction,
     pub check_for_releases: bool,
     pub theme: ThemeChoice,
+    #[serde(skip_serializing_if = "Notifications::is_default")]
+    pub notifications: Notifications,
     #[serde(skip_serializing_if = "GameRules::is_empty")]
     pub game_rules: GameRules,
     #[serde(skip_serializing_if = "Shortcuts::is_default")]
@@ -45,6 +48,9 @@ pub enum AppChange {
     OnClose(CloseAction),
     CheckForReleases(bool),
     Theme(ThemeChoice),
+    NotifyLowBattery(bool),
+    NotifyBridgeFailed(bool),
+    NotifyConnections(bool),
 }
 
 impl Default for AppSettings {
@@ -54,6 +60,7 @@ impl Default for AppSettings {
             on_close: CloseAction::default(),
             check_for_releases: true,
             theme: ThemeChoice::default(),
+            notifications: Notifications::default(),
             game_rules: GameRules::default(),
             shortcuts: Shortcuts::default(),
             window: None,
@@ -72,6 +79,7 @@ impl AppSettings {
             check_for_releases: given(entry, "check_for_releases")
                 .unwrap_or(Self::default().check_for_releases),
             theme: field(entry, "theme"),
+            notifications: Notifications::load(entry.get("notifications")),
             game_rules: GameRules::load(entry.get("game_rules")),
             shortcuts: Shortcuts::load(entry.get("shortcuts")),
             window: given::<WindowPlacement>(entry, "window")
@@ -85,6 +93,9 @@ impl AppSettings {
             AppChange::OnClose(on_close) => self.on_close = on_close,
             AppChange::CheckForReleases(check) => self.check_for_releases = check,
             AppChange::Theme(theme) => self.theme = theme,
+            AppChange::NotifyLowBattery(notify) => self.notifications.low_battery = notify,
+            AppChange::NotifyBridgeFailed(notify) => self.notifications.bridge_failed = notify,
+            AppChange::NotifyConnections(notify) => self.notifications.connections = notify,
         }
     }
 

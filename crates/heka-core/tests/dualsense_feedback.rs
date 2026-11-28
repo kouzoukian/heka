@@ -6,6 +6,7 @@ use heka_core::dualsense::{
 };
 use heka_core::feedback::{Feedback, Lightbar, PlayerLights, Rumble};
 use heka_core::link::FeedbackFormat;
+use heka_core::trigger_effect::{TriggerEffect, TriggerEffects};
 
 fn rumble(large: u8, small: u8) -> Feedback {
     Feedback {
@@ -308,4 +309,118 @@ fn a_dualsense_without_readable_firmware_info_falls_back_to_compatible_rumble() 
             RumbleMode::Compatible
         );
     }
+}
+
+#[test]
+fn the_mute_light_is_set_without_touching_the_microphone() {
+    for (lit, value) in [(false, 0x00), (true, 0x01)] {
+        let feedback = Feedback {
+            mute_light: Some(lit),
+            ..Feedback::OFF
+        };
+        let report = usb_output_report(&feedback, RumbleMode::Compatible);
+        assert_eq!(
+            report.to_vec(),
+            expected(&[(0, 0x02), (1, 0x03), (2, 0x01), (9, value)])
+        );
+    }
+}
+
+#[test]
+fn no_mute_light_leaves_the_controllers_own_alone() {
+    let report = usb_output_report(&rumble(1, 2), RumbleMode::Compatible);
+    assert_eq!((report[2] & 0x01, report[9]), (0, 0));
+}
+
+#[test]
+fn a_right_trigger_effect_is_flagged_and_sent_beside_the_rumble() {
+    let feedback = Feedback {
+        trigger_effects: TriggerEffects {
+            left: None,
+            right: Some(TriggerEffect::Break {
+                start: 20,
+                end: 70,
+                strength: 100,
+            }),
+        },
+        ..rumble(0xC8, 0x40)
+    };
+    let report = usb_output_report(&feedback, RumbleMode::Compatible);
+    assert_eq!(
+        report.to_vec(),
+        expected(&[
+            (0, 0x02),
+            (1, 0x07),
+            (3, 0x40),
+            (4, 0xC8),
+            (11, 0x25),
+            (12, 0x84),
+            (14, 0x07),
+        ])
+    );
+}
+
+#[test]
+fn both_triggers_and_the_lights_fit_in_one_report() {
+    let feedback = Feedback {
+        trigger_effects: TriggerEffects {
+            left: Some(TriggerEffect::Off),
+            right: Some(TriggerEffect::Off),
+        },
+        player_lights: Some(PlayerLights::One),
+        mute_light: Some(true),
+        ..coloured(1, 2, 3)
+    };
+    let report = usb_output_report(&feedback, RumbleMode::CompatibleV2);
+    assert_eq!(
+        report.to_vec(),
+        expected(&[
+            (0, 0x02),
+            (1, 0x0E),
+            (2, 0x15),
+            (9, 0x01),
+            (11, 0x05),
+            (22, 0x05),
+            (39, 0x04),
+            (44, 0x04),
+            (45, 1),
+            (46, 2),
+            (47, 3),
+        ])
+    );
+}
+
+#[test]
+fn a_bluetooth_report_carries_the_mute_light_and_trigger_effects() {
+    let feedback = Feedback {
+        mute_light: Some(true),
+        trigger_effects: TriggerEffects {
+            left: Some(TriggerEffect::Resistance {
+                start: 30,
+                strength: 60,
+            }),
+            right: None,
+        },
+        ..Feedback::OFF
+    };
+    let report = bluetooth_output_report(&feedback, RumbleMode::Compatible, 0);
+    assert_eq!(
+        report.to_vec(),
+        expected_bluetooth(
+            &[
+                (0, 0x31),
+                (2, 0x10),
+                (3, 0x0B),
+                (4, 0x01),
+                (11, 0x01),
+                (24, 0x21),
+                (25, 0xF8),
+                (26, 0x03),
+                (28, 0x48),
+                (29, 0x92),
+                (30, 0x24),
+            ],
+            0x99E6_5970
+        )
+    );
 }

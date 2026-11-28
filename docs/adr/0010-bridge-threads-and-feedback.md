@@ -30,6 +30,8 @@ When both ends carry Feedback, a second thread passes it from the Virtual Contro
 - A Controller is assumed at rest until heka first sends Feedback, so a Bridge that asks for nothing never sends an output report.
 - A report that cannot be written leaves what the Controller shows unknown. It is written again every 100 ms until it goes through, without waiting for new Feedback; Feedback that differs is written at once. A moving lightbar effect waits for the retry, so that it does not hurry it. A light still unwritten is carried into the Feedback that replaces it, since Feedback without a light would leave the old one.
 - A rumble test belongs to the Bridge it was asked of. For a second the Feedback thread sends one motor at full, scaled by the chosen strength, in place of the rumble games ask for, then shows theirs again; their lights come through meanwhile. It ends early when told to, and with its Bridge, so a later Bridge never carries it on. Without a Bridge there is no test, as nothing is sent to such a Controller.
+- The thread also follows the Mapper (for the Profile's trigger effects), the Controller's battery and its mute button, which the Preferences' lights and the mute light depend on. It keeps following after the feedback source closes, so lights and effects the player chose still change.
+- When a Bridge ends, lights and trigger effects go back to rest with the motors: the default lightbar colour, player lights and mute light as the Controller had them, triggers off.
 - When the Bridge ends the motors are stopped, since nothing else will, in up to 5 attempts, with none started after half a second. On a lost Link one attempt is made, which fails harmlessly.
 
 ## Watch

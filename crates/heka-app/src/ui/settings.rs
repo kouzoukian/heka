@@ -11,7 +11,7 @@ use gpui_component::{ActiveTheme, Disableable, Sizable, Theme};
 use gpui_kit_assets::IconName;
 use heka_core::feedback::{Lightbar, Motor, PlayerLights};
 use heka_core::idle::IdleTime;
-use heka_core::preferences::{LightbarChoice, PreferenceChange, RumbleStrength};
+use heka_core::preferences::{LightbarChoice, MuteLight, PreferenceChange, RumbleStrength};
 
 use crate::text;
 use crate::ui::banners::{clamped, strip, text_button};
@@ -53,6 +53,17 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
         line(text::ROW_PLAYER_LIGHTS, text::PLAYER_LIGHTS_TIP)
             .child(player_lights_switch(entry, send, theme))
     });
+    let mute_light = entry.has_mute_light.then(|| {
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .child(
+                line(text::ROW_MUTE_LIGHT, text::MUTE_LIGHT_TIP)
+                    .child(mute_light_switch(entry, send, theme)),
+            )
+            .child(strip("mute-light-note", 1, theme).child(clamped(text::MUTE_LIGHT_NOTE.into())))
+    });
     div()
         .flex()
         .flex_col()
@@ -84,7 +95,16 @@ pub fn settings(entry: &ControllerEntry, fields: Fields, send: &SendCommand, cx:
                 cx,
             )),
         )
+        .child(
+            line(text::ROW_BATTERY_COLOUR, text::BATTERY_COLOUR_TIP)
+                .child(battery_colour_switch(entry, send, theme)),
+        )
+        .child(
+            line(text::ROW_LOW_BATTERY_FLASH, text::LOW_BATTERY_FLASH_TIP)
+                .child(flash_switch(entry, send, theme)),
+        )
         .children(player_lights)
+        .children(mute_light)
         .child(group(text::GROUP_POWER, theme))
         .child(line(text::ROW_IDLE, text::IDLE_TIP).child(idle_switch(entry, send, theme)))
         .child(strip("settings-note", 1, theme).child(clamped(text::SETTINGS_NOTE.into())))
@@ -219,6 +239,48 @@ fn player_lights_switch(entry: &ControllerEntry, send: &SendCommand, theme: &The
             entry.preferences.player_lights == lights,
             Some(entry.prefer(PreferenceChange::PlayerLights(lights))),
         )
+    });
+    segmented(segments, send, theme)
+}
+
+fn battery_colour_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+    on_off(
+        format!("battery-colour-{}", entry.mac),
+        entry.preferences.battery_colour,
+        |shown| entry.prefer(PreferenceChange::BatteryColour(shown)),
+        send,
+        theme,
+    )
+}
+
+fn flash_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+    on_off(
+        format!("flash-{}", entry.mac),
+        entry.preferences.low_battery_flash,
+        |flash| entry.prefer(PreferenceChange::LowBatteryFlash(flash)),
+        send,
+        theme,
+    )
+}
+
+fn mute_light_switch(entry: &ControllerEntry, send: &SendCommand, theme: &Theme) -> Div {
+    let choices = [
+        (text::DEFAULT, None),
+        (text::OFF, Some(MuteLight::Off)),
+        (text::ON, Some(MuteLight::On)),
+        (text::MUTE_BY_BUTTON, Some(MuteLight::Button)),
+    ];
+    let segments = choices.map(|(words, light)| {
+        let segment = Segment::words(
+            id(entry, "mute", words),
+            words,
+            entry.preferences.mute_light == light,
+            Some(entry.prefer(PreferenceChange::MuteLight(light))),
+        );
+        match light {
+            Some(MuteLight::Button) => segment.explained(text::MUTE_BY_BUTTON_TIP),
+            _ => segment,
+        }
     });
     segmented(segments, send, theme)
 }

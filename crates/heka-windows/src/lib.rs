@@ -8,6 +8,7 @@ pub mod hid;
 pub mod hidhide;
 pub mod keyboard;
 pub mod metrics;
+pub mod notification;
 pub mod single_instance;
 pub mod vigem;
 pub mod web;

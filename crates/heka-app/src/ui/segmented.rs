@@ -45,6 +45,12 @@ impl Segment {
         }
     }
 
+    pub fn explained(mut self, tip: impl Into<SharedString>) -> Self {
+        self.label = tip.into();
+        self.tooltip = true;
+        self
+    }
+
     pub fn picture(
         id: impl Into<SharedString>,
         label: impl Into<SharedString>,

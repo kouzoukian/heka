@@ -18,7 +18,7 @@ use heka_windows::autostart::RunKey;
 use heka_windows::foreground;
 use heka_windows::keyboard::{self, KeyHook};
 
-use crate::bridging::{Bridging, Status};
+use crate::bridging::{Bridging, Snapshot, Status};
 use crate::releases::Releases;
 use crate::settings_file;
 
@@ -54,6 +54,10 @@ impl WindowBackend {
         self.app.borrow().on_close
     }
 
+    pub fn controllers(&self, now: Instant) -> Vec<ControllerEntry> {
+        entries(&self.bridging.snapshot(), now)
+    }
+
     fn set_start_with_windows(&self, enabled: bool) {
         if let Err(error) = self.autostart.borrow_mut().set_enabled(enabled) {
             log::line(&text::log::cannot_change_autostart(&error.to_string()));
@@ -81,6 +85,7 @@ impl WindowBackend {
             on_close: app.on_close,
             check_for_releases: app.check_for_releases,
             theme: app.theme,
+            notifications: app.notifications,
         }
     }
 }
@@ -117,13 +122,11 @@ impl Backend for WindowBackend {
             .iter()
             .filter(|(at, _)| now.saturating_duration_since(*at) < SHORTCUT_NOTICE_TIME)
             .map(|(_, words)| Notice::info(words.clone()));
+        let controllers = entries(&snapshot, now);
         let missing = snapshot
             .setup
             .map(|setup| setup.missing())
             .unwrap_or_default();
-        let bus_missing = missing
-            .iter()
-            .any(|missing| missing.driver == Driver::ViGEmBus);
         let app = self.app_entry();
         Screen {
             starting: snapshot.status == Status::Starting,
@@ -137,11 +140,7 @@ impl Backend for WindowBackend {
                 .chain(profile_notice)
                 .chain(shortcut_notice)
                 .collect(),
-            controllers: snapshot
-                .controllers
-                .iter()
-                .map(|view| ControllerEntry::from_view(view, now, bus_missing))
-                .collect(),
+            controllers,
             profiles: snapshot
                 .profiles
                 .list()
@@ -233,6 +232,9 @@ impl Backend for WindowBackend {
             Command::ChangeTrigger(profile, side, change) => {
                 bridging.change_trigger(profile, side, change);
             }
+            Command::ChangeTriggerEffect(profile, side, change) => {
+                bridging.change_trigger_effect(profile, side, change);
+            }
         }
     }
 
@@ -257,6 +259,20 @@ impl Backend for WindowBackend {
     fn key_label(&self, key: Key) -> Option<String> {
         keyboard::key_label(key)
     }
+}
+
+fn entries(snapshot: &Snapshot, now: Instant) -> Vec<ControllerEntry> {
+    let bus_missing = snapshot.setup.as_ref().is_some_and(|setup| {
+        setup
+            .missing()
+            .iter()
+            .any(|missing| missing.driver == Driver::ViGEmBus)
+    });
+    snapshot
+        .controllers
+        .iter()
+        .map(|view| ControllerEntry::from_view(view, now, bus_missing))
+        .collect()
 }
 
 fn open_log_folder() {

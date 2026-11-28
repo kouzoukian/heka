@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gpui::{App, Div, ParentElement, Styled, div};
 use gpui_component::{ActiveTheme, Theme};
 use gpui_kit_assets::IconName;
+use heka_core::alerts::Notifications;
 use heka_core::app_settings::{AppChange, CloseAction, ThemeChoice};
 
 use crate::text;
@@ -56,6 +57,7 @@ pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx:
             )),
         )
         .child(line(text::ROW_THEME, text::THEME_TIP).child(theme_switch(app.theme, send, theme)))
+        .child(notification_rows(app.notifications, send, theme))
         .child(group(text::UPDATES, theme))
         .child(
             line(text::ROW_CHECK_FOR_RELEASES, text::CHECK_FOR_RELEASES_TIP).child(on_off(
@@ -79,6 +81,48 @@ pub fn app_settings(view: &AppView<'_>, screen: &Screen, send: &SendCommand, cx:
                 .on_click(move |_, _, _| open(Command::OpenSettingsFolder)),
             ),
         )
+}
+
+fn notification_rows(chosen: Notifications, send: &SendCommand, theme: &Theme) -> Div {
+    let line = |id: &'static str,
+                label: &'static str,
+                tip: &'static str,
+                on: bool,
+                change: fn(bool) -> AppChange| {
+        row(theme).child(explained(label, tip, theme)).child(on_off(
+            id,
+            on,
+            |on| Command::ChangeAppSetting(change(on)),
+            send,
+            theme,
+        ))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .child(group(text::NOTIFICATIONS, theme))
+        .child(line(
+            "notify-low-battery",
+            text::ROW_NOTIFY_LOW_BATTERY,
+            text::NOTIFY_LOW_BATTERY_TIP,
+            chosen.low_battery,
+            AppChange::NotifyLowBattery,
+        ))
+        .child(line(
+            "notify-bridge-failed",
+            text::ROW_NOTIFY_BRIDGE_FAILED,
+            text::NOTIFY_BRIDGE_FAILED_TIP,
+            chosen.bridge_failed,
+            AppChange::NotifyBridgeFailed,
+        ))
+        .child(line(
+            "notify-connections",
+            text::ROW_NOTIFY_CONNECTIONS,
+            text::NOTIFY_CONNECTIONS_TIP,
+            chosen.connections,
+            AppChange::NotifyConnections,
+        ))
 }
 
 fn closing_switch(chosen: CloseAction, send: &SendCommand, theme: &Theme) -> Div {

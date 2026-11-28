@@ -92,7 +92,7 @@ impl FeedbackSource for VigemPs4Feedback {
                     green: notification.lightbar.green,
                     blue: notification.lightbar.blue,
                 }),
-                player_lights: None,
+                ..Feedback::OFF
             }),
             Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
             Err(_) => FeedbackEvent::Closed,
@@ -139,7 +139,7 @@ impl FeedbackSource for VigemXboxFeedback {
                     small: notification.small_motor,
                 },
                 lightbar: None,
-                player_lights: None,
+                ..Feedback::OFF
             }),
             Err(RecvTimeoutError::Timeout) => FeedbackEvent::Timeout,
             Err(_) => FeedbackEvent::Closed,

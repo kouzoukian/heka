@@ -18,10 +18,14 @@ use heka_core::link::{
 };
 use heka_core::live_mapper::LiveMapper;
 use heka_core::macros::Mode;
-use heka_core::preferences::{LightbarChoice, LivePreferences, Preferences, RumbleStrength};
+use heka_core::preferences::{
+    LightbarChoice, LivePreferences, MuteLight, Preferences, RumbleStrength,
+};
 use heka_core::profile::{Binding, Input, Mapper, Output, Profile};
 use heka_core::state::{Buttons, ControllerState};
 use heka_core::threads::{SystemThreads, Task, Threads};
+use heka_core::trigger_effect::{EffectChange, EffectKind, TriggerEffect, TriggerEffects};
+use heka_core::tuning::TriggerSide;
 use heka_core::virtual_controller::{
     OutputType, VirtualController, VirtualError, VirtualFailure, VirtualFailures,
 };
@@ -1485,4 +1489,386 @@ fn a_turbo_button_goes_on_repeating_while_no_report_arrives() {
             Buttons::NONE
         ]
     );
+}
+
+const MUTE_BUTTON: (usize, u8) = (10, 0x04);
+
+fn charge(status: u8) -> Step {
+    Step::Report(common::derived(&[(53, status)]))
+}
+
+fn lightbar(lightbar: Lightbar) -> Feedback {
+    Feedback {
+        lightbar: Some(lightbar),
+        ..Feedback::OFF
+    }
+}
+
+fn mute_light(lit: bool) -> Feedback {
+    Feedback {
+        mute_light: Some(lit),
+        ..Feedback::OFF
+    }
+}
+
+fn last_report(written: &Arc<Mutex<Written>>) -> Option<Vec<u8>> {
+    written.lock().unwrap().reports.last().cloned()
+}
+
+fn wait_for(written: &Arc<Mutex<Written>>, feedback: Feedback) {
+    let expected = output_report(feedback);
+    wait_until(|| last_report(written).as_ref() == Some(&expected));
+}
+
+#[test]
+fn the_battery_colour_follows_the_reports_and_gives_way_to_the_game() {
+    let Following {
+        bridge,
+        written,
+        game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        battery_colour: true,
+        ..Preferences::default()
+    });
+
+    steps.send(charge(0x01)).unwrap();
+    wait_for(&written, lightbar(Lightbar::of_battery(15)));
+    steps.send(charge(0x07)).unwrap();
+    wait_for(&written, lightbar(Lightbar::of_battery(75)));
+
+    game.send(lightbar(PINK)).unwrap();
+    wait_for(&written, lightbar(PINK));
+    steps.send(charge(0x02)).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(last_report(&written), Some(output_report(lightbar(PINK))));
+    bridge.stop();
+}
+
+#[test]
+fn a_low_battery_flashes_over_the_games_colour_until_it_charges() {
+    let Following {
+        bridge,
+        written,
+        game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        low_battery_flash: true,
+        ..Preferences::default()
+    });
+    game.send(lightbar(PINK)).unwrap();
+    wait_for(&written, lightbar(PINK));
+
+    steps.send(charge(0x00)).unwrap();
+    wait_for(&written, lightbar(Lightbar::DARK));
+    wait_for(&written, lightbar(PINK));
+    wait_for(&written, lightbar(Lightbar::DARK));
+
+    steps.send(charge(0x10)).unwrap();
+    wait_for(&written, lightbar(PINK));
+    std::thread::sleep(Duration::from_millis(1100));
+    assert_eq!(last_report(&written), Some(output_report(lightbar(PINK))));
+    bridge.stop();
+}
+
+#[test]
+fn a_flash_that_ends_with_no_colour_to_show_goes_back_to_the_default() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        low_battery_flash: true,
+        ..Preferences::default()
+    });
+    steps.send(charge(0x01)).unwrap();
+    wait_for(&written, lightbar(Lightbar::DARK));
+
+    steps.send(charge(0x11)).unwrap();
+    wait_for(&written, lightbar(Lightbar::DEFAULT));
+    bridge.stop();
+}
+
+#[test]
+fn the_mute_button_toggles_the_mute_light() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        mute_light: Some(MuteLight::Button),
+        ..Preferences::default()
+    });
+    wait_for(&written, mute_light(false));
+    let press = || Step::Report(common::derived(&[MUTE_BUTTON]));
+    let release = || Step::Report(common::derived(&[]));
+
+    steps.send(release()).unwrap();
+    steps.send(press()).unwrap();
+    wait_for(&written, mute_light(true));
+    steps.send(press()).unwrap();
+    steps.send(release()).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(last_report(&written), Some(output_report(mute_light(true))));
+
+    steps.send(press()).unwrap();
+    wait_for(&written, mute_light(false));
+    bridge.stop();
+}
+
+#[test]
+fn a_mute_button_already_held_when_the_bridge_starts_toggles_nothing() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        mute_light: Some(MuteLight::Button),
+        ..Preferences::default()
+    });
+    wait_for(&written, mute_light(false));
+
+    steps
+        .send(Step::Report(common::derived(&[MUTE_BUTTON])))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+
+    assert_eq!(reports(&written).len(), 1);
+    bridge.stop();
+}
+
+#[test]
+fn a_toggled_mute_light_stays_lit_on_another_link() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps: steps,
+        ..
+    } = following(Preferences {
+        mute_light: Some(MuteLight::Button),
+        ..Preferences::default()
+    });
+    steps.send(Step::Report(common::derived(&[]))).unwrap();
+    steps
+        .send(Step::Report(common::derived(&[MUTE_BUTTON])))
+        .unwrap();
+    wait_for(&written, mute_light(true));
+    let BridgeEnd::Stopped { controller, .. } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+
+    let (other, _steps, on_other) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
+    wait_for(&on_other, mute_light(true));
+    bridge.stop();
+}
+
+#[test]
+fn choosing_the_mute_button_starts_with_the_light_off() {
+    let Following {
+        bridge,
+        preferences,
+        written,
+        game: _game,
+        _steps: steps,
+    } = following(Preferences::default());
+    steps.send(Step::Report(common::derived(&[]))).unwrap();
+    steps
+        .send(Step::Report(common::derived(&[MUTE_BUTTON])))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    preferences.set(Preferences {
+        mute_light: Some(MuteLight::Button),
+        ..Preferences::default()
+    });
+    wait_for(&written, mute_light(false));
+    std::thread::sleep(Duration::from_millis(150));
+
+    assert_eq!(reports(&written), [output_report(mute_light(false))]);
+    bridge.stop();
+}
+
+#[test]
+fn a_mute_light_no_longer_chosen_is_put_out() {
+    let Following {
+        bridge,
+        preferences,
+        written,
+        game: _game,
+        _steps,
+    } = following(Preferences {
+        mute_light: Some(MuteLight::On),
+        ..Preferences::default()
+    });
+    wait_for(&written, mute_light(true));
+
+    preferences.set(Preferences::default());
+    wait_for(&written, mute_light(false));
+    bridge.stop();
+}
+
+#[test]
+fn stopping_the_bridge_puts_the_lights_back_as_they_were() {
+    let Following {
+        bridge,
+        written,
+        game: _game,
+        _steps,
+        ..
+    } = following(Preferences {
+        lightbar: Some(LightbarChoice::Colour(PINK)),
+        player_lights: Some(PlayerLights::One),
+        mute_light: Some(MuteLight::On),
+        ..Preferences::default()
+    });
+    wait_until(|| reports(&written).len() == 1);
+
+    bridge.stop();
+
+    assert_eq!(
+        last_report(&written),
+        Some(output_report(Feedback {
+            lightbar: Some(Lightbar::DEFAULT),
+            player_lights: Some(PlayerLights::Off),
+            mute_light: Some(false),
+            ..Feedback::OFF
+        }))
+    );
+}
+
+fn resisting() -> Mapper {
+    let mut profile = Profile::named("Heavy");
+    profile.change_trigger_effect(
+        TriggerSide::Left,
+        EffectChange::Kind(EffectKind::Resistance),
+    );
+    Mapper::new(&profile)
+}
+
+fn effects(left: Option<TriggerEffect>) -> Feedback {
+    Feedback {
+        trigger_effects: TriggerEffects { left, right: None },
+        ..Feedback::OFF
+    }
+}
+
+const RESISTANCE: TriggerEffect = TriggerEffect::Resistance {
+    start: 30,
+    strength: 60,
+};
+
+struct Resisting {
+    bridge: Bridge,
+    mapper: Arc<LiveMapper>,
+    written: Arc<Mutex<Written>>,
+    game: Sender<Feedback>,
+    _steps: Sender<Step>,
+}
+
+fn resisting_bridge() -> Resisting {
+    let (link, steps, written) = FakeLink::live();
+    let (controller, _, game) = FakeController::with_feedback();
+    let mapper = Arc::new(LiveMapper::default());
+    mapper.set(resisting());
+    let mut controller = Plugged::new(controller);
+    controller.map_with(Arc::clone(&mapper));
+    Resisting {
+        bridge: Bridge::resume(OpenLink::new(link), controller, Arc::default()).unwrap(),
+        mapper,
+        written,
+        game,
+        _steps: steps,
+    }
+}
+
+#[test]
+fn a_profiles_trigger_effect_is_sent_as_the_bridge_starts_and_stays_with_rumble() {
+    let Resisting {
+        bridge,
+        mapper: _mapper,
+        written,
+        game,
+        _steps,
+    } = resisting_bridge();
+    wait_for(&written, effects(Some(RESISTANCE)));
+
+    game.send(rumble(200, 64)).unwrap();
+    wait_for(
+        &written,
+        Feedback {
+            rumble: rumble(200, 64).rumble,
+            ..effects(Some(RESISTANCE))
+        },
+    );
+    bridge.stop();
+}
+
+#[test]
+fn changing_to_a_profile_without_the_effect_turns_it_off() {
+    let Resisting {
+        bridge,
+        mapper,
+        written,
+        game: _game,
+        _steps,
+    } = resisting_bridge();
+    wait_for(&written, effects(Some(RESISTANCE)));
+
+    mapper.set(Mapper::default());
+    wait_for(&written, effects(Some(TriggerEffect::Off)));
+    bridge.stop();
+}
+
+#[test]
+fn a_trigger_effect_is_turned_off_with_its_bridge_and_sent_again_on_another_link() {
+    let Resisting {
+        bridge,
+        mapper: _mapper,
+        written,
+        game: _game,
+        _steps,
+    } = resisting_bridge();
+    wait_for(&written, effects(Some(RESISTANCE)));
+
+    let BridgeEnd::Stopped { controller, .. } = bridge.stop() else {
+        panic!("expected Stopped");
+    };
+    assert_eq!(
+        last_report(&written),
+        Some(output_report(effects(Some(TriggerEffect::Off))))
+    );
+
+    let (other, _steps, on_other) = FakeLink::live();
+    let bridge = Bridge::resume(OpenLink::new(other), controller, Arc::default()).unwrap();
+    wait_for(&on_other, effects(Some(RESISTANCE)));
+    bridge.stop();
+}
+
+#[test]
+fn chosen_lights_are_followed_after_the_virtual_controller_stops_sending_feedback() {
+    let Following {
+        bridge,
+        preferences,
+        written,
+        game,
+        _steps,
+    } = following(Preferences::default());
+    drop(game);
+
+    preferences.set(Preferences {
+        mute_light: Some(MuteLight::On),
+        ..Preferences::default()
+    });
+    wait_for(&written, mute_light(true));
+    bridge.stop();
 }

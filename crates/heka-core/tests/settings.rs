@@ -1,7 +1,7 @@
 use heka_core::feedback::{Lightbar, PlayerLights};
 use heka_core::idle::IdleTime;
 use heka_core::mac::MacAddress;
-use heka_core::preferences::{LightbarChoice, Preferences, RumbleStrength};
+use heka_core::preferences::{LightbarChoice, MuteLight, Preferences, RumbleStrength};
 use heka_core::settings::{ControllerSettings, MAX_NICKNAME_CHARS, Settings};
 use heka_core::virtual_controller::OutputType;
 
@@ -24,7 +24,10 @@ fn a_missing_settings_file_gives_defaults() {
                 rumble: RumbleStrength::FULL,
                 swap_motors: false,
                 lightbar: None,
+                battery_colour: false,
+                low_battery_flash: false,
                 player_lights: None,
+                mute_light: None,
                 hide: true,
             },
         }
@@ -105,7 +108,10 @@ fn a_nickname_and_preferences_survive_a_save_and_load() {
                 green: 2,
                 blue: 3,
             })),
+            battery_colour: true,
+            low_battery_flash: true,
             player_lights: Some(PlayerLights::Four),
+            mute_light: Some(MuteLight::Button),
             hide: false,
         },
     );
@@ -351,4 +357,27 @@ fn the_gyro_drift_is_remembered_and_a_broken_one_ignored() {
     assert_eq!(loaded.controller(mac).gyro_drift, [0; 3]);
     assert!(loaded.controller(mac).stopped);
     assert!(!Settings::default().to_json().contains("gyro_drift"));
+}
+
+#[test]
+fn the_new_lights_are_off_and_unwritten_until_chosen() {
+    let mut settings = Settings::default();
+    settings.set_preferences(MAC, Preferences::default());
+    let text = settings.to_json();
+
+    for field in ["battery_colour", "low_battery_flash", "mute_light"] {
+        assert!(!text.contains(field), "{field}");
+    }
+}
+
+#[test]
+fn the_chosen_lights_are_read_by_name() {
+    let text = r#"{"controllers": {"11:22:33:44:55:66": {
+        "battery_colour": true, "low_battery_flash": true, "mute_light": "on"
+    }}}"#;
+    let preferences = Settings::load(Some(text)).controller(MAC).preferences;
+
+    assert!(preferences.battery_colour);
+    assert!(preferences.low_battery_flash);
+    assert_eq!(preferences.mute_light, Some(MuteLight::On));
 }

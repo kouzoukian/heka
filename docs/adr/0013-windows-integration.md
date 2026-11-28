@@ -31,6 +31,7 @@ The first copy creates the auto-reset event `Local\heka.show-window` and waits o
 - Closing the window leaves heka in the tray, unless the player chose that it quits. Quitting, from the tray menu or by closing the window, removes every Virtual Controller and restores every Hidden Controller first. Either way it goes through the tray's task, so the tray icon is gone first.
 - heka opens no window when started with `--tray`, or when the player chose to start in the tray. A second launch still opens it.
 - If the tray icon cannot be added, for example before the taskbar runs, closing the window quits and the window is shown.
+- The tray menu lists the Controllers, each with its state and battery, above the other items, and its tooltip summarises them. Its text is only set again when it changes.
 - GPUI has no tray API. `tray-icon` creates a hidden window on the GPUI thread, so GPUI's message loop dispatches its messages (`examples/tray_spike.rs` proves it). Its events, and requests from a second copy, are drained every 100 ms. Left click opens the window; the menu is on the right button. The tray icon is gone before the app quits, so it never lingers.
 
 ## Icon and version information

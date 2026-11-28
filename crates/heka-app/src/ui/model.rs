@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use heka_core::alerts::Notifications;
 use heka_core::app_settings::{AppChange, CloseAction, ThemeChoice};
 use heka_core::capture::KeyListener;
 use heka_core::desktop::Key;
@@ -22,6 +23,7 @@ use heka_core::state::{Battery, Stick};
 use heka_core::stick_use::StickUseChange;
 use heka_core::supervisor::{ControllerView, DriftStatus};
 use heka_core::touchpad::TouchpadChange;
+use heka_core::trigger_effect::EffectChange;
 use heka_core::tuning::{StickChange, StickSide, TriggerChange, TriggerSide};
 use heka_core::virtual_controller::OutputType;
 use heka_core::window_placement::WindowPlacement;
@@ -87,6 +89,7 @@ pub enum Command {
     ChangeMacro(String, Input, MacroChange),
     MeasureDrift(MacAddress),
     ChangeTrigger(String, TriggerSide, TriggerChange),
+    ChangeTriggerEffect(String, TriggerSide, EffectChange),
     AddGameRule(String, String),
     SetGameRule(String, String),
     RemoveGameRule(String),
@@ -100,6 +103,7 @@ pub struct AppEntry {
     pub on_close: CloseAction,
     pub check_for_releases: bool,
     pub theme: ThemeChoice,
+    pub notifications: Notifications,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,6 +245,7 @@ pub struct ControllerEntry {
     pub name: &'static str,
     pub nickname: Option<String>,
     pub has_player_lights: bool,
+    pub has_mute_light: bool,
     pub preferences: Preferences,
     pub experimental: bool,
     pub active_link: Option<LinkKind>,
@@ -299,6 +304,7 @@ impl ControllerEntry {
             name: text::controller(*model),
             nickname: nickname.clone(),
             has_player_lights: *model == ControllerModel::DualSense,
+            has_mute_light: *model == ControllerModel::DualSense,
             preferences: *preferences,
             experimental: *model == ControllerModel::DualShock4,
             active_link: *active_link,

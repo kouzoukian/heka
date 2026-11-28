@@ -2,6 +2,7 @@ mod common;
 
 use heka_core::feedback::{Feedback, Lightbar, Rumble};
 use heka_core::link::FeedbackFormat;
+use heka_core::trigger_effect::{TriggerEffect, TriggerEffects};
 
 fn feedback(large: u8, small: u8, colour: Option<(u8, u8, u8)>) -> Feedback {
     Feedback {
@@ -74,4 +75,27 @@ fn feedback_off_stops_both_motors_on_either_link() {
         FeedbackFormat::DualShock4Bluetooth.reports(&Feedback::OFF),
         [bluetooth(&[(3, 0x01)])]
     );
+}
+
+#[test]
+fn a_dualshock4_ignores_the_mute_light_and_trigger_effects() {
+    let dualsense_only = Feedback {
+        mute_light: Some(true),
+        trigger_effects: TriggerEffects {
+            left: Some(TriggerEffect::Resistance {
+                start: 30,
+                strength: 60,
+            }),
+            right: Some(TriggerEffect::Off),
+        },
+        ..feedback(0xC8, 0x40, Some((1, 2, 3)))
+    };
+    let plain = feedback(0xC8, 0x40, Some((1, 2, 3)));
+
+    for mut format in [
+        FeedbackFormat::DualShock4Usb,
+        FeedbackFormat::DualShock4Bluetooth,
+    ] {
+        assert_eq!(format.reports(&dualsense_only), format.reports(&plain));
+    }
 }
