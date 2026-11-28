@@ -28,7 +28,7 @@ Events are sent from the input thread after the Virtual Controller has the repor
 
 ## What Windows does not allow
 
-Windows silently ignores input sent to a window of an elevated program unless the sender is elevated too, and `SendInput` does not say so. That includes releases: a key held while such a program comes to the front can stay down, and the `Desk` cannot know, so the README says to press it once. Anti-cheat software may ignore or penalise sent input. heka neither elevates itself nor tries to get round either; the README and the Profile page say so.
+Windows silently ignores input sent to a window of an elevated program unless the sender is elevated too, and `SendInput` does not say so. That includes releases: a key held while such a program comes to the front can stay down, and the `Desk` cannot know, so the documentation says to press it once. Anti-cheat software may ignore or penalise sent input. heka neither elevates itself nor tries to get round either; the documentation and the Profile page say so.
 
 ## Capturing a key
 

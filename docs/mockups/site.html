@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>heka site mockup</title>
+<style>
+@font-face { font-family: "Google Sans Code"; src: url("../../crates/heka-app/fonts/GoogleSansCode-VariableFont_wght.ttf"); font-weight: 300 800; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #0e0e0e; color: #999999; font: 13px/1.5 "Google Sans Code", ui-monospace, Consolas, monospace; padding: 24px 16px; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+:focus-visible { outline: 1px solid #79b8ff; outline-offset: 2px; }
+
+.bar { max-width: 1120px; margin: 0 auto 16px; display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; }
+.bar h1 { margin: 0 auto 0 0; font-size: 15px; font-weight: 600; color: #f8f8f8; }
+.bar label { display: flex; align-items: center; gap: 8px; }
+.seg { display: flex; gap: 2px; padding: 2px; border: 1px solid #2a2a2a; border-radius: 4px; }
+.seg button { height: 20px; padding: 0 8px; border-radius: 3px; font-size: 11px; }
+.seg button[aria-pressed="true"] { background: #2a2a2a; color: #f8f8f8; }
+
+.frame { margin: 0 auto; width: 100%; max-width: 1120px; border: 1px solid #2a2a2a; }
+.frame.phone { max-width: 375px; }
+
+.site {
+  --bg: #1a1a1a; --side: #141414; --muted-bg: #1f1f1f; --border: #2a2a2a; --accent: #2a2a2a;
+  --fg: #bbbbbb; --bright: #f8f8f8; --muted: #999999;
+  --blue: #79b8ff; --on-blue: #141414; --warn: #ffab70; --warn-bg: #ffab7014;
+  container-type: inline-size; background: var(--bg); color: var(--fg); font-size: 14px; line-height: 22px;
+}
+.site.light {
+  --bg: #ffffff; --side: #fbfbfb; --muted-bg: #f6f6f6; --border: #e9e9e9; --accent: #ededed;
+  --fg: #212121; --bright: #000000; --muted: #606060;
+  --blue: #1976d2; --on-blue: #ffffff; --warn: #e65100; --warn-bg: #e6510012;
+}
+.site svg { width: 16px; height: 16px; flex: none; }
+.wrap { width: 100%; max-width: 888px; margin: 0 auto; padding: 0 24px; }
+
+.top { background: var(--side); border-bottom: 1px solid var(--border); }
+.top .wrap { height: 48px; display: flex; align-items: center; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 8px; margin-right: auto; color: var(--bright); font-weight: 600; font-size: 15px; }
+.brand img { width: 20px; height: 20px; }
+.nav { height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; border-radius: 4px; color: var(--muted); font-size: 13px; }
+.nav:hover { background: var(--accent); color: var(--bright); }
+.nav.square { width: 32px; padding: 0; }
+
+.hero { padding-top: 64px; padding-bottom: 48px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
+.hero h2 { margin: 0; font-size: 32px; line-height: 42px; font-weight: 600; color: var(--bright); letter-spacing: -.01em; max-width: 36ch; text-wrap: balance; }
+.hero p { margin: 0; color: var(--muted); max-width: 62ch; text-wrap: pretty; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.btn { height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted-bg); color: var(--fg); }
+.btn:hover { background: var(--accent); }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: var(--on-blue); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn .meta { font-weight: 400; font-size: 12px; opacity: .8; }
+.facts { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 24px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 12px; }
+.shot { margin: 16px 0 0; width: 100%; }
+.shot img { display: block; width: 100%; max-width: 840px; height: auto; margin: 0 auto; border: 1px solid var(--border); border-radius: 6px; }
+
+.install { border-top: 1px solid var(--border); padding-top: 48px; padding-bottom: 48px; }
+.install h3 { margin: 0 0 24px; font-size: 20px; line-height: 28px; font-weight: 600; color: var(--bright); }
+.steps { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 6px; counter-reset: step; }
+.steps > li { counter-increment: step; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 4px 16px; padding: 16px; }
+.steps > li + li { border-top: 1px solid var(--border); }
+.steps > li::before { content: counter(step); grid-row: 1 / span 3; width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 4px; background: var(--muted-bg); font-size: 12px; color: var(--bright); }
+.steps h4 { margin: 0; font-size: 14px; line-height: 24px; font-weight: 600; color: var(--bright); }
+.steps p { margin: 0; color: var(--muted); grid-column: 2; }
+.steps b { color: var(--fg); font-weight: 600; }
+.link { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+.drivers { grid-column: 2; margin-top: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--side); }
+.driver { display: grid; grid-template-columns: 96px 104px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; }
+.driver + .driver { border-top: 1px solid var(--border); }
+.driver strong { color: var(--bright); font-weight: 600; }
+.driver span { font-size: 12px; line-height: 18px; color: var(--muted); }
+.tag { justify-self: start; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; }
+.tag.required { color: var(--blue) !important; border-color: var(--blue); }
+.driver .btn { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 4px; }
+.note { margin-top: 16px; display: flex; gap: 12px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--warn-bg); }
+.note svg { color: var(--warn); margin-top: 3px; }
+.note p { margin: 0; }
+.next { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 12px; }
+
+.foot { border-top: 1px solid var(--border); background: var(--side); font-size: 12px; line-height: 18px; color: var(--muted); }
+.foot .wrap { padding-top: 24px; padding-bottom: 24px; display: flex; flex-direction: column; gap: 12px; }
+.foot nav { display: flex; flex-wrap: wrap; gap: 4px 24px; }
+.foot nav a { color: var(--fg); }
+.foot nav a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.foot p { margin: 0; max-width: 80ch; }
+
+@container (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  .nav.text { padding: 0 8px; }
+  .hero { padding-top: 40px; padding-bottom: 32px; }
+  .hero h2 { font-size: 24px; line-height: 32px; }
+  .actions { flex-direction: column; align-self: stretch; }
+  .btn.primary .meta { display: none; }
+  .facts { flex-direction: column; }
+  .install { padding-top: 32px; padding-bottom: 32px; }
+  .steps > li { grid-template-columns: 24px minmax(0, 1fr); gap: 4px 12px; padding: 16px 12px; }
+  .drivers { grid-column: 1 / -1; }
+  .driver { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .driver .what { grid-column: 1 / -1; }
+  .driver .btn { grid-column: 1 / -1; }
+}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>heka site: landing page</h1>
+  <label>Theme
+    <span class="seg" data-set="theme">
+      <button type="button" data-value="dark" aria-pressed="true">Dark</button>
+      <button type="button" data-value="light" aria-pressed="false">Light</button>
+    </span>
+  </label>
+  <label>Width
+    <span class="seg" data-set="width">
+      <button type="button" data-value="desktop" aria-pressed="true">Desktop</button>
+      <button type="button" data-value="phone" aria-pressed="false">Phone</button>
+    </span>
+  </label>
+  <label>Download button
+    <span class="seg" data-set="release">
+      <button type="button" data-value="found" aria-pressed="true">Version found</button>
+      <button type="button" data-value="fallback" aria-pressed="false">Fallback</button>
+    </span>
+  </label>
+</div>
+
+<div class="frame">
+  <div class="site">
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="#"><img src="../../crates/heka-app/icon/heka.png" alt="">heka</a>
+        <a class="nav text" href="#">Docs</a>
+        <a class="nav text" href="https://github.com/kouzoukian/heka">GitHub</a>
+        <button type="button" class="nav square" data-toggle-theme aria-label="Switch theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="wrap hero">
+        <h2>Use your DualSense or DualShock 4 as an Xbox or PS4 controller in Windows games.</h2>
+        <p>heka is a tray app. It creates a Virtual Controller that games see in place of your Controller, and hides the real one so they do not see it twice.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/kouzoukian/heka/releases/latest">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            <span data-release="found">Download for Windows</span>
+            <span class="meta" data-release="found">v0.2.0 · 10.3 MB</span>
+            <span data-release="fallback" hidden>Download from GitHub Releases</span>
+          </a>
+          <a class="btn" href="#install">How to install</a>
+        </div>
+        <ul class="facts">
+          <li>Windows 10 or 11, 64-bit</li>
+          <li>Portable zip, no installer</li>
+          <li>Free and open source, no telemetry</li>
+        </ul>
+        <figure class="shot">
+          <img src="../../site/public/screenshots/controller-dark.png" alt="heka's window: a DualSense on Bluetooth, Bridged as an Xbox controller, with its battery level and a drawing of its input">
+        </figure>
+      </section>
+
+      <section class="wrap install" id="install">
+        <h3>Install heka</h3>
+        <ol class="steps">
+          <li>
+            <h4>Install the drivers</h4>
+            <p>Use their official installers, and restart Windows if asked.</p>
+            <div class="drivers">
+              <div class="driver">
+                <strong>ViGEmBus</strong>
+                <span class="tag required">Required</span>
+                <span class="what">Creates the Virtual Controllers. Its author retired it in 2023, so it gets no further updates.</span>
+                <a class="btn" href="https://github.com/nefarius/ViGEmBus/releases/latest">Get ViGEmBus</a>
+              </div>
+              <div class="driver">
+                <strong>HidHide</strong>
+                <span class="tag">Recommended</span>
+                <span class="what">Hides Controllers from games. Without it, games may see each Controller twice.</span>
+                <a class="btn" href="https://github.com/nefarius/HidHide/releases/latest">Get HidHide</a>
+              </div>
+            </div>
+          </li>
+          <li>
+            <h4>Download and extract heka</h4>
+            <p>Extract the zip to a folder you will keep.</p>
+          </li>
+          <li>
+            <h4>Close other controller tools</h4>
+            <p>DS4Windows, DualSenseX and Steam Input compete with heka. <a class="link" href="#">See conflicts</a>.</p>
+          </li>
+          <li>
+            <h4>Run heka.exe</h4>
+            <p>It is not code signed, so Windows SmartScreen may warn the first time: choose <b>More info</b>, then <b>Run anyway</b>.</p>
+          </li>
+          <li>
+            <h4>Connect your Controller</h4>
+            <p>It is Bridged automatically, as an Xbox controller until you choose otherwise. To pair over Bluetooth, hold <b>PS</b> and <b>Create</b> (DualSense) or <b>PS</b> and <b>Share</b> (DualShock 4) until the light bar flashes, then add it in Windows' Bluetooth settings.</p>
+          </li>
+        </ol>
+        <div class="note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3M12 9v4M12 17h.01"/></svg>
+          <p><b>DualShock 4 support is experimental.</b> It has never been tried on a real one. <a class="link" href="https://github.com/kouzoukian/heka/issues">Report what works and what does not</a>.</p>
+        </div>
+        <div class="next">
+          <a class="btn" href="#">Read the docs</a>
+          <a class="btn" href="#">Troubleshooting</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <nav>
+          <a href="#">Docs</a>
+          <a href="https://github.com/kouzoukian/heka">GitHub</a>
+          <a href="https://github.com/kouzoukian/heka/releases">All releases</a>
+          <a href="https://github.com/kouzoukian/heka#license">MIT or Apache-2.0</a>
+        </nav>
+        <p>heka is not affiliated with or endorsed by Sony Interactive Entertainment or Microsoft. PlayStation, DualSense, DualShock and Xbox are trademarks of their owners.</p>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script>
+const site = document.querySelector(".site");
+const frame = document.querySelector(".frame");
+const apply = {
+  theme: value => site.classList.toggle("light", value === "light"),
+  width: value => frame.classList.toggle("phone", value === "phone"),
+  release: value => document.querySelectorAll("[data-release]").forEach(node => { node.hidden = node.dataset.release !== value; }),
+};
+function choose(name, value) {
+  apply[name](value);
+  document.querySelectorAll(`[data-set="${name}"] button`).forEach(button => button.setAttribute("aria-pressed", String(button.dataset.value === value)));
+}
+document.querySelectorAll("[data-set] button").forEach(button => button.addEventListener("click", () => choose(button.parentElement.dataset.set, button.dataset.value)));
+document.querySelector("[data-toggle-theme]").addEventListener("click", () => choose("theme", site.classList.contains("light") ? "dark" : "light"));
+for (const [name, value] of new URLSearchParams(location.search)) if (apply[name]) choose(name, value);
+</script>
+</body>
+</html>

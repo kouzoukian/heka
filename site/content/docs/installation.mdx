@@ -1,0 +1,31 @@
+---
+title: Installation
+---
+
+You need Windows 10 or 11 (x64) and these drivers:
+
+| Driver | Needed? | What it does |
+| ------ | ------- | ------------ |
+| [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases/latest) | **Required** | Creates the Virtual Controllers. Without it heka only lists Controllers and shows their input. Its author retired it in 2023, so it gets no further updates. |
+| [HidHide](https://github.com/nefarius/HidHide/releases/latest) | Recommended | Hides Controllers from games. Without it, games may see each Controller twice. |
+
+1. Install both drivers with their official installers, and restart Windows if asked.
+   heka never downloads or runs an installer itself.
+2. Download `heka-v<version>-windows-x64.zip` from
+   [Releases](https://github.com/kouzoukian/heka/releases/latest) and extract it to a
+   folder you will keep.
+3. Close other controller tools (see [Conflicts](/docs/conflicts)).
+4. Run `heka.exe`. It is not code signed, so Windows SmartScreen may warn the first time:
+   choose **More info**, then **Run anyway**.
+5. Connect your Controller. It is Bridged automatically, as an Xbox controller until you
+   choose otherwise.
+
+If a driver is missing, heka says which one and links to its installer. Press
+**Check again** after installing it. heka itself needs no Visual C++ Redistributable or
+Rust toolchain.
+
+## Bluetooth
+
+To connect over Bluetooth, pair the Controller in Windows' Bluetooth settings. To start
+pairing, hold **PS** and **Create** (DualSense) or **PS** and **Share** (DualShock 4)
+until the light bar flashes.

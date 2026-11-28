@@ -1,0 +1,33 @@
+---
+title: Files, updating and removing
+---
+
+heka sends no telemetry and does not update itself. It keeps its settings and Profiles in
+`%APPDATA%\heka`, and its log and its record of HidHide changes in `%LOCALAPPDATA%\heka`.
+
+At start and once a day, heka asks GitHub for its latest release. If that is newer than
+yours, the window says so and links to it; pre-releases are not announced. The request
+names only heka and its version, though GitHub sees your IP address, as with any visit.
+A check that fails is noted in [the log](#the-log) and nowhere else, and tried again every
+hour until one succeeds. To stop the checks, turn off **Check for new releases** in
+[App settings](/docs/using/app-settings). heka makes no other request over the internet.
+
+To update, quit heka and replace its files with those of the new release. If you move
+the folder, run heka once so that Start with Windows points to its new place.
+
+To remove it, turn off **Start with Windows**, choose **Quit**, then delete heka's folder
+and the two folders above. Notifications leave one registry key,
+`HKCU\Software\Classes\AppUserModelId\Kouzoukian.Heka`, which you can delete. If heka was
+killed, run it once and quit before deleting anything, so that it restores your
+Controllers.
+
+## The log
+
+`%LOCALAPPDATA%\heka\heka.log` is the current run and `heka.previous.log` the one before
+it, each at most 1 MiB. They hold, with the time of each: heka's start and version, the
+drivers found, Controllers connecting and disconnecting, Bridges, what heka changed in
+HidHide, a newer release, errors and crashes.
+
+The log names your Controllers by their **Bluetooth addresses**, and it holds device paths
+and the folder heka runs from, which may include your Windows user name. heka sends it
+nowhere. Remove what you would rather not share before attaching it to a report.

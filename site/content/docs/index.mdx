@@ -1,0 +1,32 @@
+---
+title: Introduction
+---
+
+**Use your DualSense or DualShock 4 as an Xbox or PS4 controller in Windows games.**
+A tray app written in Rust.
+
+heka reads your PlayStation controller (the **Controller**), creates a **Virtual
+Controller** that games see in its place, and Hides the real one so that games do not see
+it twice. The live pairing of the two is a **Bridge**.
+
+## Features
+
+- **Xbox 360 or DualShock 4 output**, chosen and remembered for each Controller.
+- **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
+- **Profiles:** remap buttons, also to keyboard keys and the mouse, and tune sticks and
+  triggers, chosen for each Controller.
+- **Lights:** battery level as a colour, a flash when the battery is low, and the mute
+  light.
+- **Adaptive triggers** (DualSense): resistance, a break point or vibration, per Profile.
+- **Notifications** for low battery, a failed Bridge, and Controllers connecting or leaving.
+- **Profiles by game:** the program in front can apply its own Profile.
+- **Controller shortcuts:** hold **PS** to switch Profile or turn off a Controller.
+- **USB and Bluetooth.** A Controller on both is listed once and read over USB.
+- **Turn off a Controller on Bluetooth**, with a button or after it is left unused.
+- **Brief disconnections:** the Virtual Controller stays for 30 seconds while the
+  Controller reconnects.
+- **No double input:** the real Controller is hidden from games through HidHide.
+- **Up to 4 Controllers**, each with its own name, rumble strength and lights.
+- **A log** you can read in the window and attach to a report. It stays on your PC.
+- **New releases** are announced in the window. heka downloads nothing.
+- **Portable:** a zip with no installer. No telemetry.

@@ -1,0 +1,13 @@
+---
+title: Troubleshooting
+---
+
+- **A connected Controller is not listed.** If heka says it was found but cannot be
+  opened, quit other controller tools, which may hold it exclusively. In the HidHide
+  Configuration Client, check whether the Controller is already hidden: if so, untick it,
+  or add `heka.exe` to the allowed applications. Close the client again.
+- **The game sees two controllers.** See [Hiding Controllers](/docs/hiding).
+- **The game sees none.** Check that the Controller's state says **Bridged**, and try the
+  other Output Type.
+- **Reporting a problem.** [Open an issue](https://github.com/kouzoukian/heka/issues) and
+  attach [the log](/docs/files#the-log), after reading what it holds.

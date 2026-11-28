@@ -1,0 +1,21 @@
+---
+title: Conflicts with other tools
+---
+
+Run one controller tool at a time. Other tools read the same Controller, send it their
+own rumble and light bar colours, and may create their own virtual controllers.
+
+- **DS4Windows**: does the same job as heka. Quit it, from its tray icon too, before
+  starting heka. If it is on HidHide's allowed list, it still sees Controllers that heka
+  Hides.
+- **DualSenseX**: quit it before starting heka. Otherwise the two compete for rumble and
+  the light bar, and games may see an extra controller.
+- **Steam Input**: Steam can read a PlayStation controller itself and give games its own
+  virtual controller, which causes double input. Turn off Steam Input for PlayStation
+  controllers in Steam's controller settings. If Steam was already running when heka Hid
+  the Controller, restart Steam.
+- **A game does not respond, or reads the wrong buttons**: some games need Steam Input on
+  and others need it off. Try both in the game's own controller setting in Steam, and
+  close and reopen the game after each change. With it on, pick a gamepad layout: a layout
+  that sends keyboard, mouse or game actions replaces the buttons of the Virtual
+  Controller.
