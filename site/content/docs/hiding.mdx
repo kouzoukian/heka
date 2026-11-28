@@ -1,0 +1,27 @@
+---
+title: Hiding Controllers
+---
+
+While a Controller is Bridged or Held, heka Hides it with HidHide: it adds the Controller
+to HidHide's hidden devices, adds itself to the allowed applications and turns hiding on.
+When the Bridge ends, or heka quits, it undoes what it changed. Entries that you or
+another tool added stay as they were.
+
+With **Hide from games** off for a Controller, heka does not Hide it: games see it
+beside its Virtual Controller, which can cause double input. Turn it off only for a
+game or app that needs the Controller itself.
+
+- **A game or app that opened the Controller before it was Hidden keeps seeing it.** Start
+  heka before the game. If you see double input, restart the game, or unplug the
+  Controller and plug it back in within 30 seconds.
+- **Close the HidHide Configuration Client.** While it (or HidHideCLI) is open, heka
+  cannot change HidHide and shows that HidHide is busy. heka keeps trying, both to Hide
+  and to restore.
+- **Applications on HidHide's allowed list still see Hidden Controllers.**
+- Leave HidHide's inverse application cloak off. With it on, a Controller is hidden only
+  from the applications in the list, and heka warns you.
+- While hiding is on, everything else in HidHide's hidden devices is hidden too.
+- Do not add the same Controller to HidHide by hand while heka is Bridging it: heka cannot
+  tell that entry from its own and removes it afterwards.
+- **If heka is killed or the PC loses power, Controllers can stay Hidden.** Start heka
+  again: it restores them.

@@ -1,0 +1,5 @@
+{
+  "title": "Using heka",
+  "defaultOpen": true,
+  "pages": ["controller-settings", "tray", "app-settings", "shortcuts", "game-rules"]
+}

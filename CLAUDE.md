@@ -1,6 +1,10 @@
 ## No code comments
 
-Write code without comments, doc comments included; `cargo run -p heka-lint` fails on one. A non-obvious decision goes into `docs/adr/`, owed work into a GitHub issue. See `docs/adr/0003-no-code-comments.md`.
+Write code without comments, doc comments included; `cargo run -p heka-lint` fails on one, and `pnpm --dir site check` does for the website. A non-obvious decision goes into `docs/adr/`, owed work into a GitHub issue. See `docs/adr/0003-no-code-comments.md`.
+
+## User documentation
+
+The user manual is `site/content/docs`; change it together with the behaviour it describes. `README.md` covers only install and building. See `docs/adr/0025-the-website.md`.
 
 ## Agent skills
 

@@ -1,0 +1,12 @@
+---
+title: Game rules
+---
+
+A game rule gives a program a Profile: while that program is in front, every Controller
+uses it, and afterwards each returns to its own. Add rules in
+[App settings](/docs/using/app-settings), picking a running program or a file. A rule whose
+Profile sets an Output Type lasts until its program exits or another rule applies, so that
+a running game keeps its Virtual Controller when you switch away.
+
+While there is a rule, heka checks which program is in front. Rules also work for programs
+run as administrator in most cases, and heka says when it cannot see one.

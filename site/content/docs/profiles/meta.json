@@ -1,0 +1,12 @@
+{
+  "title": "Profiles",
+  "defaultOpen": true,
+  "pages": [
+    "sticks",
+    "touchpad",
+    "gyro",
+    "adaptive-triggers",
+    "macros",
+    "keyboard-and-mouse"
+  ]
+}
