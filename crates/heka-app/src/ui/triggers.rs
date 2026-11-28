@@ -5,20 +5,26 @@ use gpui::{
     div, px,
 };
 use gpui_component::Theme;
+use heka_core::trigger_effect::{BREAK_LAST_END, EffectChange, EffectKind, EffectSettings};
 use heka_core::tuning::{Curve, TriggerChange, TriggerSide, TriggerTuning};
 
 use crate::text;
+use crate::ui::banners::{clamped, strip};
 use crate::ui::detail::row;
 use crate::ui::metrics::{GAP, INSET, SMALL_TEXT};
 use crate::ui::model::{Command, ControllerEntry, ProfileEntry, SendCommand};
 use crate::ui::panel::faint;
 use crate::ui::profile::{ProfileAct, ProfileAction};
 use crate::ui::segmented::{Pick, Segment, picked, segmented};
-use crate::ui::settings::explained;
+use crate::ui::settings::{explained, group};
 use crate::ui::sticks::{DEAD_ZONES, MAX_ZONES, choices};
 
 pub const HAIR_POINTS: [u16; 5] = [10, 20, 30, 50, 70];
 pub const PRESS_POINTS: [u16; 7] = [20, 30, 40, 50, 60, 70, 80];
+pub const EFFECT_STARTS: [u16; 6] = [0, 10, 30, 50, 70, 90];
+pub const BREAK_STARTS: [u16; 6] = [20, 30, 40, 50, 60, 70];
+pub const BREAK_ENDS: [u16; 6] = [30, 40, 50, 60, 70, 80];
+pub const EFFECT_STRENGTHS: [u16; 5] = [20, 40, 60, 80, 100];
 
 const BAR_HEIGHT: f32 = 96.;
 const BAR_WIDTH: f32 = 24.;
@@ -42,6 +48,21 @@ pub fn point_choices(presets: &[u16], current: Option<u8>) -> Vec<u16> {
         Some(point) => choices(presets, u16::from(point)),
         None => presets.to_vec(),
     }
+}
+
+pub fn effect_starts(effect: &EffectSettings) -> Vec<u16> {
+    let presets = match effect.effect {
+        EffectKind::Break => &BREAK_STARTS,
+        _ => &EFFECT_STARTS,
+    };
+    choices(presets, u16::from(effect.start))
+}
+
+pub fn effect_ends(effect: &EffectSettings) -> Vec<u16> {
+    BREAK_ENDS
+        .into_iter()
+        .filter(|&end| end > u16::from(effect.start) && end <= u16::from(BREAK_LAST_END))
+        .collect()
 }
 
 pub fn readout(raw: Option<[u8; 2]>, shown: Option<(u8, u8)>, side: TriggerSide) -> TravelReadout {
@@ -81,8 +102,91 @@ pub fn triggers_section(
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .children(rows(profile, side, &tuning, send, theme)),
+                .children(rows(profile, side, &tuning, send, theme))
+                .child(effect_rows(profile, side, send, theme)),
         )
+}
+
+fn effect_rows(
+    profile: &ProfileEntry,
+    side: TriggerSide,
+    send: &SendCommand,
+    theme: &Theme,
+) -> Div {
+    let id = &profile.id;
+    let effect = *profile.profile.trigger_effect(side);
+    let command = |change: EffectChange| Command::ChangeTriggerEffect(id.clone(), side, change);
+    let kinds = EffectKind::ALL.map(|kind| {
+        Segment::words(
+            format!("effect-{id}-{side:?}-{kind:?}"),
+            text::effect_name(kind),
+            effect.effect == kind,
+            Some(command(EffectChange::Kind(kind))),
+        )
+        .explained(text::effect_tip(kind))
+    });
+    let percent_row = |label: &'static str,
+                       tip: &'static str,
+                       key: &'static str,
+                       values: Vec<u16>,
+                       current: u8,
+                       change: fn(u8) -> EffectChange| {
+        let segments = values.into_iter().map(|value| {
+            Segment::words(
+                format!("effect-{id}-{side:?}-{key}-{value}"),
+                text::percent_of(value),
+                value == u16::from(current),
+                Some(command(change(value as u8))),
+            )
+        });
+        row(theme)
+            .child(explained(label, tip, theme))
+            .child(segmented(segments, send, theme))
+    };
+    let start = (effect.effect != EffectKind::Off).then(|| {
+        percent_row(
+            text::ROW_EFFECT_START,
+            text::EFFECT_START_TIP,
+            "start",
+            effect_starts(&effect),
+            effect.start,
+            EffectChange::Start,
+        )
+    });
+    let end = (effect.effect == EffectKind::Break).then(|| {
+        percent_row(
+            text::ROW_EFFECT_END,
+            text::EFFECT_END_TIP,
+            "end",
+            effect_ends(&effect),
+            effect.end,
+            EffectChange::End,
+        )
+    });
+    let strength = (effect.effect != EffectKind::Off).then(|| {
+        percent_row(
+            text::ROW_EFFECT_STRENGTH,
+            text::EFFECT_STRENGTH_TIP,
+            "strength",
+            choices(&EFFECT_STRENGTHS, u16::from(effect.strength)),
+            effect.strength,
+            EffectChange::Strength,
+        )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .flex_none()
+        .child(group(text::GROUP_EFFECT, theme))
+        .child(
+            row(theme)
+                .child(explained(text::ROW_EFFECT, text::EFFECT_TIP, theme))
+                .child(segmented(kinds, send, theme)),
+        )
+        .children(start)
+        .children(end)
+        .children(strength)
+        .child(strip("trigger-effect-note", 1, theme).child(clamped(text::EFFECT_NOTE.into())))
 }
 
 fn side_switch(side: TriggerSide, act: &ProfileAct, theme: &Theme) -> Div {

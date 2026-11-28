@@ -13,6 +13,10 @@ heka-core.workspace = true
 hidapi.workspace = true
 vigem-rust.workspace = true
 
+[dependencies.windows]
+workspace = true
+features = ["Data_Xml_Dom", "UI_Notifications"]
+
 [dependencies.windows-sys]
 workspace = true
 features = [

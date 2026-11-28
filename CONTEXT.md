@@ -24,7 +24,7 @@ The kind of Virtual Controller a Controller drives: Xbox or PS4. Remembered per 
 _Avoid_: mode
 
 **Profile**:
-A named set of choices for how a Controller's input becomes what games receive: its Bindings and, optionally, an Output Type. A Controller uses the Default Profile, which changes nothing and cannot be edited or deleted, until the player chooses another. Remembered per Controller.
+A named set of choices for how a Controller's input becomes what games receive: its Bindings, its Trigger effects and, optionally, an Output Type. A Controller uses the Default Profile, which changes nothing and cannot be edited or deleted, until the player chooses another. Remembered per Controller.
 _Avoid_: mapping, configuration, preset
 
 **Binding**:
@@ -46,8 +46,16 @@ Rumble and lightbar colour that a game sends to a Virtual Controller and that re
 _Avoid_: output, notification
 
 **Preferences**:
-What the player chose for one Controller: how strongly it rumbles, whether its motors are swapped, the lightbar colour while no game sets one, its player lights and whether it is Hidden. They shape the Feedback on its way to the Controller.
+What the player chose for one Controller: how strongly it rumbles, whether its motors are swapped, the lightbar colour while no game sets one, whether the lightbar shows the battery or flashes when it is low, its player lights, its mute light and whether it is Hidden. They shape the Feedback on its way to the Controller.
 _Avoid_: configuration
+
+**Trigger effect**:
+What a DualSense trigger does under the finger as it is pulled: constant resistance, resistance up to a break point, or vibration. Chosen in a Profile.
+_Avoid_: haptics, force feedback
+
+**Notification**:
+A Windows toast heka shows about a Controller: low battery, a failed Bridge, or one connecting or removed.
+_Avoid_: alert, banner
 
 **Held**:
 A Bridge whose Controller has lost every Link. The Virtual Controller stays, with everything released, for a limited time.

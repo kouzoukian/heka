@@ -6,20 +6,20 @@ use std::time::{Duration, Instant};
 
 use crate::desktop::Desk;
 use crate::feedback::{
-    Feedback, FeedbackEvent, FeedbackSource, Lightbar, Motor, PlayerLights, RUMBLE_TEST_TIME,
-    Rumble,
+    Claimed, Feedback, FeedbackEvent, FeedbackSource, Motor, RUMBLE_TEST_TIME, Rumble,
 };
 use crate::idle::Activity;
 use crate::link::{FeedbackFormat, LinkRead, LinkReader, LinkWriter, ReportFormat};
 use crate::live_gyro::{FollowedGyro, LiveGyro};
 use crate::live_mapper::LiveMapper;
 use crate::live_shortcuts::LiveShortcuts;
-use crate::preferences::{LightbarChoice, LivePreferences, Preferences};
+use crate::preferences::{Conditions, LivePreferences, MuteLight, Preferences};
 use crate::rate::RateMeter;
 use crate::running::RunningMapper;
 use crate::shortcuts::ShortcutDetector;
-use crate::state::ControllerState;
+use crate::state::{Battery, Buttons, ControllerState};
 use crate::threads::{SystemThreads, Threads, Worker};
+use crate::trigger_effect::TriggerEffects;
 use crate::virtual_controller::{VirtualController, VirtualError, VirtualFailure, VirtualFailures};
 
 const READ_BUFFER_LEN: usize = 128;
@@ -52,6 +52,10 @@ impl LiveInput {
 
     pub fn latest_raw(&self) -> Option<ControllerState> {
         self.seen().raw
+    }
+
+    pub fn battery(&self) -> Option<Battery> {
+        self.seen().raw.and_then(|raw| raw.battery)
     }
 
     pub fn report_rate(&self) -> Option<f32> {
@@ -121,6 +125,7 @@ pub struct Plugged {
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
     gyro: Arc<LiveGyro>,
+    mute_toggled: Arc<AtomicBool>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -140,6 +145,7 @@ impl Plugged {
             shortcuts: Arc::default(),
             desk: Arc::default(),
             gyro: Arc::default(),
+            mute_toggled: Arc::default(),
             failures: Arc::default(),
         }
     }
@@ -295,6 +301,7 @@ pub struct Bridge {
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
     gyro: Arc<LiveGyro>,
+    mute_toggled: Arc<AtomicBool>,
     failures: Arc<VirtualFailures>,
 }
 
@@ -332,6 +339,7 @@ impl Bridge {
             shortcuts,
             desk,
             gyro,
+            mute_toggled,
             failures,
         } = controller;
         let flags = Arc::new(Flags::default());
@@ -347,15 +355,20 @@ impl Bridge {
             shortcuts: Arc::clone(&shortcuts),
             desk: Arc::clone(&desk),
             gyro: Arc::clone(&gyro),
+            mute_toggled: Arc::clone(&mute_toggled),
             failures: Arc::clone(&failures),
         };
         match (source, writer) {
             (Some(source), Some(writer)) => {
                 let started = Worker::spawn(threads, "heka-feedback", (source, writer), {
                     let flags = Arc::clone(&flags);
-                    move |(source, writer)| {
-                        run_feedback(source, writer, asked, &preferences, &flags)
-                    }
+                    let followed = Followed {
+                        preferences,
+                        mapper: Arc::clone(&mapper),
+                        live: Arc::clone(&live),
+                        mute_toggled: Arc::clone(&mute_toggled),
+                    };
+                    move |(source, writer)| run_feedback(source, writer, asked, &followed, &flags)
                 });
                 match started {
                     Ok(worker) => bridge.feedback = Some(worker),
@@ -378,6 +391,7 @@ impl Bridge {
             shortcuts,
             desk,
             gyro,
+            mute_toggled,
         };
         let started = Worker::spawn(
             threads,
@@ -461,6 +475,7 @@ impl Bridge {
             shortcuts: Arc::clone(&self.shortcuts),
             desk: Arc::clone(&self.desk),
             gyro: Arc::clone(&self.gyro),
+            mute_toggled: Arc::clone(&self.mute_toggled),
             failures: Arc::clone(&self.failures),
         }
     }
@@ -508,6 +523,7 @@ struct Shared {
     shortcuts: Arc<LiveShortcuts>,
     desk: Arc<Desk>,
     gyro: Arc<LiveGyro>,
+    mute_toggled: Arc<AtomicBool>,
 }
 
 fn run(
@@ -523,7 +539,9 @@ fn run(
         shortcuts,
         desk,
         gyro,
+        mute_toggled,
     } = shared;
+    let mut mute_was_down = None;
     let mut running = RunningMapper::new(desk);
     let mut gyro = FollowedGyro::new(gyro);
     running.set_drift(gyro.drift());
@@ -550,6 +568,11 @@ fn run(
                     continue;
                 };
                 let now = Instant::now();
+                let mute_down = state.buttons.contains(Buttons::MUTE);
+                if mute_down && mute_was_down == Some(false) {
+                    mute_toggled.fetch_xor(true, Ordering::AcqRel);
+                }
+                mute_was_down = Some(mute_down);
                 gyro.read(Some(&state.motion), now);
                 let observed = detector.observe(configured.get(), state.buttons, now);
                 if let Some(action) = observed.action {
@@ -604,6 +627,7 @@ struct Output {
     format: FeedbackFormat,
     wanted: Feedback,
     shown: Option<Feedback>,
+    claimed: Claimed,
     retry_at: Instant,
 }
 
@@ -614,12 +638,13 @@ impl Output {
             writer,
             wanted: Feedback::OFF,
             shown: Some(Feedback::OFF),
+            claimed: Claimed::default(),
             retry_at: Instant::now(),
         }
     }
 
     fn show(&mut self, feedback: Feedback) {
-        let feedback = self.with_unwritten_lights(feedback);
+        let feedback = self.with_unwritten(feedback);
         let waiting = self.shown.is_none() && feedback == self.wanted;
         self.wanted = feedback;
         if !waiting && !self.is_up_to_date() {
@@ -633,8 +658,8 @@ impl Output {
         }
     }
 
-    fn stop_motors(&mut self, link_lost: &AtomicBool) {
-        self.wanted = self.with_unwritten_lights(Feedback::OFF);
+    fn rest(&mut self, link_lost: &AtomicBool) {
+        self.wanted = Feedback::OFF.or_at_rest(self.claimed);
         let started = Instant::now();
         for attempt in 1..=STOP_ATTEMPTS {
             if self.is_up_to_date() {
@@ -655,15 +680,16 @@ impl Output {
         self.shown == Some(self.wanted)
     }
 
-    fn with_unwritten_lights(&self, mut feedback: Feedback) -> Feedback {
+    fn with_unwritten(&self, feedback: Feedback) -> Feedback {
         if self.shown.is_none() {
-            feedback.lightbar = feedback.lightbar.or(self.wanted.lightbar);
-            feedback.player_lights = feedback.player_lights.or(self.wanted.player_lights);
+            feedback.or(self.wanted)
+        } else {
+            feedback
         }
-        feedback
     }
 
     fn write(&mut self) {
+        self.claimed = self.claimed.and(self.wanted.claims());
         let reports = self.format.reports(&self.wanted);
         let written = reports.iter().all(|report| {
             let written = self.writer.write(report).is_ok();
@@ -677,71 +703,110 @@ impl Output {
     }
 }
 
-fn shaped(
+struct Followed {
+    preferences: Arc<LivePreferences>,
+    mapper: Arc<LiveMapper>,
+    live: Arc<LiveInput>,
+    mute_toggled: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Shaping {
     preferences: Preferences,
+    effects: TriggerEffects,
     testing: Option<Motor>,
-    asked: Feedback,
-    elapsed: Duration,
-) -> Feedback {
-    let mut feedback = preferences.apply(asked, elapsed);
-    if let Some(motor) = testing {
-        feedback.rumble = preferences.rumble.scale(Rumble::only(motor));
+    battery: Option<Battery>,
+    mute_toggled: bool,
+}
+
+impl Shaping {
+    fn claims(&self) -> Claimed {
+        let effects = Feedback {
+            trigger_effects: self.effects,
+            ..Feedback::OFF
+        };
+        self.preferences.claims(self.battery).and(effects.claims())
     }
-    feedback
+
+    fn shape(&self, asked: Feedback, elapsed: Duration) -> Feedback {
+        let conditions = Conditions {
+            elapsed,
+            battery: self.battery,
+            mute_toggled: self.mute_toggled,
+        };
+        let mut feedback = self.preferences.apply(asked, conditions);
+        feedback.trigger_effects = self.effects;
+        if let Some(motor) = self.testing {
+            feedback.rumble = self.preferences.rumble.scale(Rumble::only(motor));
+        }
+        feedback
+    }
+
+    fn moves(&self) -> bool {
+        self.preferences.moves(self.battery)
+    }
 }
 
 fn run_feedback(
     mut source: Box<dyn FeedbackSource>,
     writer: Box<dyn LinkWriter>,
     mut asked: Feedback,
-    preferences: &LivePreferences,
+    followed: &Followed,
     flags: &Flags,
 ) -> FeedbackParts {
     let stopping = || flags.stop.load(Ordering::Acquire);
     let mut output = Output::new(writer);
     let started = Instant::now();
-    let mut applied = preferences.get();
-    let mut testing = None;
-    output.show(shaped(applied, testing, asked, started.elapsed()));
+    let mut mapper = followed.mapper.follow();
+    let shaping = |effects| Shaping {
+        preferences: followed.preferences.get(),
+        effects,
+        testing: flags.tested_motor(),
+        battery: followed.live.battery(),
+        mute_toggled: followed.mute_toggled.load(Ordering::Acquire),
+    };
+    let mut applied = shaping(mapper.current().trigger_effects());
+    let mut closed = false;
+    output.show(applied.shape(asked, started.elapsed()));
     while !stopping() {
-        let event = source.next(FEEDBACK_POLL);
-        let motor = flags.tested_motor();
-        let chosen = preferences.get();
-        if chosen != applied || motor != testing {
-            let mut next = shaped(chosen, motor, asked, started.elapsed());
-            if applied.lightbar.is_some() {
-                next.lightbar = next.lightbar.or(Some(Lightbar::DEFAULT));
-            }
-            if applied.player_lights.is_some() {
-                next.player_lights = next.player_lights.or(Some(PlayerLights::Off));
-            }
-            applied = chosen;
-            testing = motor;
-            output.show(next);
-        }
-        match event {
+        let event = if closed {
+            thread::sleep(FEEDBACK_POLL);
+            FeedbackEvent::Timeout
+        } else {
+            source.next(FEEDBACK_POLL)
+        };
+        let told = match event {
             FeedbackEvent::Feedback(feedback) => {
                 asked = feedback;
-                output.show(shaped(applied, testing, asked, started.elapsed()));
+                true
             }
-            FeedbackEvent::Timeout
-                if applied.lightbar.is_some_and(LightbarChoice::moves)
-                    && output.shown.is_some() =>
-            {
-                output.show(shaped(applied, testing, asked, started.elapsed()));
-            }
-            FeedbackEvent::Timeout => {}
+            FeedbackEvent::Timeout => false,
             FeedbackEvent::Closed => {
-                output.show(Feedback::OFF);
-                while !output.is_up_to_date() && !stopping() {
-                    thread::sleep(FEEDBACK_POLL);
-                    output.retry();
-                }
-                break;
+                closed = true;
+                true
             }
+        };
+        mapper.refresh();
+        let mut now = shaping(mapper.current().trigger_effects());
+        let chosen = now.preferences.mute_light;
+        if chosen == Some(MuteLight::Button) && applied.preferences.mute_light != chosen {
+            followed.mute_toggled.store(false, Ordering::Release);
+            now.mute_toggled = false;
+        }
+        let moving = now.moves() && output.shown.is_some();
+        if told || moving || now != applied {
+            let mut heard = asked;
+            if closed {
+                heard.rumble = Rumble::OFF;
+            }
+            let next = now
+                .shape(heard, started.elapsed())
+                .or_at_rest(applied.claims());
+            applied = now;
+            output.show(next);
         }
         output.retry();
     }
-    output.stop_motors(&flags.link_lost);
+    output.rest(&flags.link_lost);
     (source, output.writer, asked)
 }

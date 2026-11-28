@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridging;
+mod notifications;
 mod profiles_file;
 mod releases;
 mod settings_file;

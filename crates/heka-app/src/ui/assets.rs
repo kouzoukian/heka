@@ -28,7 +28,7 @@ icon_assets!(
 
 pub const APP_ICON: &str = "heka/icon.png";
 
-const APP_ICON_PNG: &[u8] = include_bytes!("../../icon/heka.png");
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../../icon/heka.png");
 
 pub struct Assets;
 

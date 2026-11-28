@@ -32,4 +32,7 @@ The defaults keep full rumble, leave the motors as games address them, leave the
 - The player's lightbar choice is a colour or an effect, saved as a colour object or a name (`"rainbow"`). An effect moves in 50 ms steps, so it adds at most 20 output reports a second, and the Feedback thread draws it from the time since its Bridge started.
 - A colour a game set wins over the player's. A dark lightbar counts as no colour, because a PS4 Virtual Controller reports one with every rumble, also for games that never set a colour.
 - `Feedback` with no lightbar leaves the Controller's as it is (an Xbox Virtual Controller has none). Player lights are only ever chosen by the player, never by a game; a DualShock 4 has none.
+- Lights are chosen in this order: a flash (low battery, 20% or less and not charging, in the colour showing or the default), a colour a game set, the colour of the battery level, the player's chosen colour. Battery colour and the flash are Preferences too, and only written when on.
+- The mute light is Off, On or Button (it follows the mute button's toggle). Unset leaves it to the Controller.
+- Notifications are app settings (`app.notifications`): low battery and a failed Bridge are on, connections off ([ADR 0024](0024-notifications.md)).
 - Rumble in `Feedback` is in Xbox terms: 0 to 255, large low-frequency (left) and small high-frequency (right) motors.

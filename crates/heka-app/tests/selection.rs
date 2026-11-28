@@ -16,6 +16,7 @@ fn controllers(macs: &[u8]) -> Vec<ControllerEntry> {
             name: "DualSense",
             nickname: None,
             has_player_lights: true,
+            has_mute_light: true,
             preferences: Preferences::default(),
             experimental: false,
             active_link: None,

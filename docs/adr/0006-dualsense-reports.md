@@ -33,6 +33,13 @@ Reading them sends nothing to the Controller but the request.
 - The default lightbar colour is the blue `dualsense_create` gives a DualSense when nothing chooses one.
 - Over USB the lightbar takes a colour at once. Over Bluetooth the DualSense keeps control of its lightbar until a setup report fades its own colour out (`dualsense_reset_leds`, `DS_OUTPUT_LIGHTBAR_SETUP_LIGHT_OUT`), so that report precedes the first colour and changes nothing else. It counts as sent once it has been written, so a failed write sends it again.
 
+## Mute light and trigger effects
+
+- The mute button's light is `mute_button_led` at common offset 8, selected by bit 0 of `valid_flag1` (`DS_OUTPUT_VALID_FLAG1_MUTE_LED_CONTROL_ENABLE`, Linux `hid-playstation.c`). The power-save bit is never set, so the microphone is not touched: the light and the microphone are separate.
+- Adaptive triggers are 11 bytes each at common offsets 10 (right) and 21 (left), selected by bits 2 (`0x04`, right) and 3 (`0x08`, left) of `valid_flag0`. Layout and flags follow SDL (`test/testcontroller.c`, `SDL_hidapi_ps5.c`, zlib licence).
+- The modes are Off `0x05`, Feedback `0x21`, Weapon `0x25` and Vibration `0x26`, with their parameter bytes as in Nielk1's `TriggerEffectGenerator` gist (MIT, commit `f73a299`). heka calls Feedback Resist and Weapon Break. Vibration runs at a fixed 30 Hz.
+- Over Bluetooth the same bytes sit two bytes later, like the rest of the common block.
+
 ## Rumble mode
 
 A DualSense imitates two-motor rumble with haptic actuators in one of two ways. `Compatible` is accepted by every firmware. `CompatibleV2` feels like classic rumble, is what the kernel notes newer firmware made the default, and exists from update version 2.21 (`0x0215`) and on every Edge. The mode is chosen as `dualsense_create` does; a DualSense whose firmware info cannot be read gets `Compatible`.

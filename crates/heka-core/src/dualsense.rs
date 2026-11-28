@@ -4,6 +4,7 @@ use crate::feedback::{Feedback, PlayerLights};
 use crate::link::ReportError;
 use crate::mac::MacAddress;
 use crate::state::{Battery, Buttons, Charge, ControllerState, Finger, Motion, Stick};
+use crate::trigger_effect::{TriggerEffect, ZONE};
 
 pub const VENDOR_ID: u16 = 0x054C;
 pub const PRODUCT_ID_DUALSENSE: u16 = 0x0CE6;
@@ -251,6 +252,9 @@ const OUT_VALID_FLAG0: usize = 1;
 const OUT_MOTOR_RIGHT: usize = 3;
 const OUT_MOTOR_LEFT: usize = 4;
 const OUT_VALID_FLAG1: usize = 2;
+const OUT_MUTE_LIGHT: usize = 9;
+const OUT_RIGHT_TRIGGER: usize = 11;
+const OUT_LEFT_TRIGGER: usize = 22;
 const OUT_VALID_FLAG2: usize = 39;
 const OUT_PLAYER_LEDS: usize = 44;
 const OUT_LIGHTBAR_RED: usize = 45;
@@ -259,6 +263,9 @@ const OUT_LIGHTBAR_BLUE: usize = 47;
 
 const FLAG0_COMPATIBLE_VIBRATION: u8 = 1 << 0;
 const FLAG0_HAPTICS_SELECT: u8 = 1 << 1;
+const FLAG0_RIGHT_TRIGGER_EFFECT: u8 = 1 << 2;
+const FLAG0_LEFT_TRIGGER_EFFECT: u8 = 1 << 3;
+const FLAG1_MIC_MUTE_LED_CONTROL_ENABLE: u8 = 1 << 0;
 const FLAG1_LIGHTBAR_CONTROL_ENABLE: u8 = 1 << 2;
 const FLAG2_COMPATIBLE_VIBRATION2: u8 = 1 << 2;
 const FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE: u8 = 1 << 4;
@@ -271,6 +278,58 @@ fn player_leds(lights: PlayerLights) -> u8 {
         PlayerLights::Three => 0b10101,
         PlayerLights::Four => 0b11011,
     }
+}
+
+pub const TRIGGER_EFFECT_LEN: usize = 11;
+const EFFECT_OFF: u8 = 0x05;
+const EFFECT_RESISTANCE: u8 = 0x21;
+const EFFECT_BREAK: u8 = 0x25;
+const EFFECT_VIBRATION: u8 = 0x26;
+const ZONES: u8 = 10;
+const FORCE_LEVELS: u8 = 8;
+const VIBRATION_HERTZ: u8 = 30;
+
+pub fn trigger_effect(effect: TriggerEffect) -> [u8; TRIGGER_EFFECT_LEN] {
+    let mut bytes = [0u8; TRIGGER_EFFECT_LEN];
+    match effect {
+        TriggerEffect::Off => bytes[0] = EFFECT_OFF,
+        TriggerEffect::Resistance { start, strength } => {
+            bytes[0] = EFFECT_RESISTANCE;
+            from_zone_on(&mut bytes, start, strength);
+        }
+        TriggerEffect::Break {
+            start,
+            end,
+            strength,
+        } => {
+            bytes[0] = EFFECT_BREAK;
+            let zones = (1u16 << (start / ZONE)) | (1u16 << (end / ZONE));
+            bytes[1..3].copy_from_slice(&zones.to_le_bytes());
+            bytes[3] = force(strength);
+        }
+        TriggerEffect::Vibration { start, strength } => {
+            bytes[0] = EFFECT_VIBRATION;
+            from_zone_on(&mut bytes, start, strength);
+            bytes[9] = VIBRATION_HERTZ;
+        }
+    }
+    bytes
+}
+
+fn from_zone_on(bytes: &mut [u8; TRIGGER_EFFECT_LEN], start: u8, strength: u8) {
+    let mut zones = 0u16;
+    let mut forces = 0u32;
+    for zone in (start / ZONE).min(ZONES - 1)..ZONES {
+        zones |= 1 << zone;
+        forces |= u32::from(force(strength)) << (3 * zone);
+    }
+    bytes[1..3].copy_from_slice(&zones.to_le_bytes());
+    bytes[3..7].copy_from_slice(&forces.to_le_bytes());
+}
+
+fn force(strength: u8) -> u8 {
+    let level = (u16::from(strength.min(100)) * u16::from(FORCE_LEVELS) + 50) / 100;
+    level.max(1) as u8 - 1
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -316,6 +375,24 @@ pub fn usb_output_report(feedback: &Feedback, mode: RumbleMode) -> [u8; USB_OUTP
     if let Some(lights) = feedback.player_lights {
         report[OUT_VALID_FLAG1] |= FLAG1_PLAYER_INDICATOR_CONTROL_ENABLE;
         report[OUT_PLAYER_LEDS] = player_leds(lights);
+    }
+    if let Some(lit) = feedback.mute_light {
+        report[OUT_VALID_FLAG1] |= FLAG1_MIC_MUTE_LED_CONTROL_ENABLE;
+        report[OUT_MUTE_LIGHT] = u8::from(lit);
+    }
+    let triggers = feedback.trigger_effects;
+    for (effect, flag, offset) in [
+        (
+            triggers.right,
+            FLAG0_RIGHT_TRIGGER_EFFECT,
+            OUT_RIGHT_TRIGGER,
+        ),
+        (triggers.left, FLAG0_LEFT_TRIGGER_EFFECT, OUT_LEFT_TRIGGER),
+    ] {
+        if let Some(effect) = effect {
+            report[OUT_VALID_FLAG0] |= flag;
+            report[offset..offset + TRIGGER_EFFECT_LEN].copy_from_slice(&trigger_effect(effect));
+        }
     }
     report
 }

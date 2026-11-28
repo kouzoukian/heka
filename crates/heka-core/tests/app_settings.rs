@@ -1,3 +1,4 @@
+use heka_core::alerts::Notifications;
 use heka_core::app_settings::{AppChange, AppSettings, CloseAction, ThemeChoice};
 use heka_core::mac::MacAddress;
 use heka_core::settings::Settings;
@@ -44,6 +45,7 @@ fn heka_keeps_running_and_opens_its_window_by_default() {
             on_close: CloseAction::KeepRunning,
             check_for_releases: true,
             theme: ThemeChoice::Dark,
+            notifications: Notifications::default(),
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: None,
@@ -81,6 +83,7 @@ fn app_settings_survive_a_save_and_load() {
         on_close: CloseAction::Quit,
         check_for_releases: false,
         theme: ThemeChoice::Light,
+        notifications: Notifications::default(),
         game_rules: Default::default(),
         shortcuts: Default::default(),
         window: Some(WindowPlacement {
@@ -111,6 +114,7 @@ fn the_file_names_the_app_settings() {
             on_close: CloseAction::Quit,
             check_for_releases: false,
             theme: ThemeChoice::Light,
+            notifications: Notifications::default(),
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: Some(placed(rect(10, 20, 700, 600))),
@@ -184,6 +188,7 @@ fn a_change_touches_only_what_it_names() {
             on_close: CloseAction::Quit,
             check_for_releases: false,
             theme: ThemeChoice::Light,
+            notifications: Notifications::default(),
             game_rules: Default::default(),
             shortcuts: Default::default(),
             window: Some(placed(rect(1, 2, 700, 600))),
@@ -298,4 +303,54 @@ fn a_renamed_monitor_is_still_found_by_its_place() {
     };
 
     assert_eq!(saved.monitor_in(&monitors), Some(&monitors[0]));
+}
+
+#[test]
+fn notifications_start_on_for_a_low_battery_and_a_failed_bridge_only() {
+    assert_eq!(
+        AppSettings::default().notifications,
+        Notifications {
+            low_battery: true,
+            bridge_failed: true,
+            connections: false,
+        }
+    );
+    assert!(!Settings::default().to_json().contains("notifications"));
+}
+
+#[test]
+fn each_kind_of_notification_is_turned_off_or_on_alone() {
+    let mut app = AppSettings::default();
+    app.change(AppChange::NotifyLowBattery(false));
+    app.change(AppChange::NotifyConnections(true));
+
+    let mut settings = Settings::default();
+    settings.set_app(app);
+    let reloaded = Settings::load(Some(&settings.to_json()));
+
+    assert_eq!(
+        reloaded.app().notifications,
+        Notifications {
+            low_battery: false,
+            bridge_failed: true,
+            connections: true,
+        }
+    );
+    let mut app = reloaded.app().clone();
+    app.change(AppChange::NotifyBridgeFailed(false));
+    assert!(!app.notifications.bridge_failed);
+}
+
+#[test]
+fn a_broken_notification_choice_gives_that_choice_alone_its_default() {
+    let text = r#"{"app": {"notifications": {"low_battery": "no", "connections": true}}}"#;
+
+    assert_eq!(
+        app(text).notifications,
+        Notifications {
+            low_battery: true,
+            bridge_failed: true,
+            connections: true,
+        }
+    );
 }
