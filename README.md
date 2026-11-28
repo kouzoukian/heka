@@ -25,6 +25,10 @@ it twice. The live pairing of the two is a **Bridge**.
 - **Rumble** with both, plus **lightbar colour, touchpad and motion** with PS4 output.
 - **Profiles:** remap buttons, also to keyboard keys and the mouse, and tune sticks and
   triggers, chosen for each Controller.
+- **Lights:** battery level as a colour, a flash when the battery is low, and the mute
+  light.
+- **Adaptive triggers** (DualSense): resistance, a break point or vibration, per Profile.
+- **Notifications** for low battery, a failed Bridge, and Controllers connecting or leaving.
 - **Profiles by game:** the program in front can apply its own Profile.
 - **Controller shortcuts:** hold **PS** to switch Profile or turn off a Controller.
 - **USB and Bluetooth.** A Controller on both is listed once and read over USB.
@@ -141,6 +145,12 @@ stays, with everything released, and carries on when the Controller returns.
   bar alone.
 - **Player lights** (DualSense only), the pattern of player 1 to 4 on the white lights
   under the touchpad. **Default** leaves them alone.
+- **Battery colour**, off unless you turn it on: the light bar shows the battery level.
+  A colour set by a game still wins.
+- **Low battery flash**, off unless you turn it on: the light bar flashes at 20% or less
+  while not charging, also over a game's colour.
+- **Mute light** (DualSense only): **Off**, **On** or **Button**, which the mute button
+  toggles. It does not change the microphone. **Default** leaves it alone.
 - **Turn off when idle**, off unless you choose 5, 10, 15 or 30 minutes. A Controller on
   Bluetooth is turned off after that long with no change to its buttons, sticks, triggers
   or touchpad; moving it does not count. It does nothing while the Controller is read over
@@ -214,6 +224,13 @@ the Controller.
 - **Drift:** if the pointer creeps while the Controller rests, put it down on a flat
   surface and press **Measure**. heka keeps the result for that Controller.
 
+#### Adaptive triggers
+
+DualSense only; a DualShock 4 ignores them. Each trigger of a Profile has an **Effect**:
+**No effect**, **Resist** (constant resistance from a point), **Break** (resistance that
+gives way at a point) or **Vibrate**. **Starts at**, **Breaks at** and **Strength** shape
+it. They apply while the Controller is Bridged and stop when the Bridge ends.
+
 #### Toggle, turbo and macros
 
 A bound button, key, mouse button or wheel step can **Hold** while you hold its input,
@@ -273,6 +290,9 @@ what concerns heka as a whole.
 - **Check for new releases**, on unless you turn it off. See
   [Files, updating and removing](#files-updating-and-removing).
 - **Settings folder**, where heka keeps `settings.json` and your Profiles.
+- **Notifications**: **Low battery** and **A Bridge fails** are on, **Connected or
+  removed** is off. They are Windows notifications, so they need Windows notifications
+  turned on; heka says in the log when they are off.
 - [Controller shortcuts](#controller-shortcuts) and [Game rules](#game-rules).
 
 heka reopens its window at the size and place you left it, or centred if that is no longer
@@ -288,8 +308,7 @@ Off until you turn them on in App settings. Hold **PS**, then press another butt
 | Previous Profile | **PS** + **L1**                                          |
 | Turn off         | **PS** + **Options**, held for two seconds, on Bluetooth |
 
-The other button does not reach the game, but **PS** does, so a game may react to it. A
-switch of Profile is announced in heka's window, not by a Windows notification.
+The other button does not reach the game, but **PS** does, so a game may react to it. 
 
 ### Game rules
 
@@ -306,7 +325,7 @@ run as administrator in most cases, and heka says when it cannot see one.
 
 Unless you choose otherwise in [App settings](#app-settings), closing the window leaves heka
 running in the notification area, with every Bridge. Click the tray icon to open the window
-again. Right-click it for **Open heka**, **Settings**, **Start with Windows** and **Quit**.
+again. Right-click it for the list of Controllers with their state and battery, **Open heka**, **Settings**, **Start with Windows** and **Quit**.
 Quitting removes the Virtual Controllers and restores the Hidden Controllers.
 
 ## Hiding Controllers
@@ -383,7 +402,8 @@ To update, quit heka and replace its files with those of the new release. If you
 the folder, run heka once so that Start with Windows points to its new place.
 
 To remove it, turn off **Start with Windows**, choose **Quit**, then delete heka's folder
-and the two folders above. If heka was killed, run it once and quit before deleting
+and the two folders above. Notifications leave one registry key,
+`HKCU\Software\Classes\AppUserModelId\Kouzoukian.Heka`, which you can delete. If heka was killed, run it once and quit before deleting
 anything, so that it restores your Controllers.
 
 ### The log

@@ -138,4 +138,12 @@ Holding PS and pressing another button switches the Controller's Profile or turn
 
 The App settings have a Shortcuts group above the game rules: a switch, a note on how to use them, and one row for each action showing the chosen button as `PS + R1`. A row opens in place to list the buttons that can be chosen; a button that another action has is shown but cannot be pressed, and the rows are dimmed while the shortcuts are off.
 
-A shortcut that switches Profile is logged and shown as an information banner for five seconds, naming the Controller and the Profile, and saying when a game rule applies and the choice returns afterwards. It is not a Windows notification: heka has none yet (issue 25), and the banner is only seen while heka's window is open. Information banners are not counted as warnings in the status bar.
+A shortcut that switches Profile is logged and shown as an information banner for five seconds, naming the Controller and the Profile, and saying when a game rule applies and the choice returns afterwards. It is not a Windows notification ([ADR 0024](0024-notifications.md) covers those), and the banner is only seen while heka's window is open. Information banners are not counted as warnings in the status bar.
+
+## Trigger effects
+
+A Profile may give each trigger an adaptive effect, saved as `left_trigger_effect` and `right_trigger_effect`: `{"effect": "break", "start": 30, "end": 70, "strength": 60}`, with `effect` one of `off`, `resistance`, `break` and `vibration`. Positions are percentages in steps of 10, strength 1 to 100; a break starts at 20 to 70 and ends 10 to 80, after its start. Values outside these load clamped, and an effect left off with the other values at their defaults is not written.
+
+- The Mapper carries the effects to the Feedback thread, so they follow a change of Profile and go back to off when the Bridge ends ([ADR 0010](0010-bridge-threads-and-feedback.md)).
+- Only a DualSense has them; a DualShock 4 ignores them.
+- The report bytes are in [ADR 0006](0006-dualsense-reports.md).
